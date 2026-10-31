@@ -12,7 +12,9 @@ A very simple Wayland compositor written in Rust with Smithay.
 
 * `make` builds a release binary at `./simplewm`
 * Nested (inside an existing Wayland session, for development): `make run` or `./simplewm`
-* On real hardware from a TTY: `make tty` or `./simplewm --tty`
+* On real hardware from a TTY: `./simplewm` (the TTY backend is chosen automatically when
+  no `WAYLAND_DISPLAY`, `WAYLAND_SOCKET` or `DISPLAY` is set). `--tty` (or `make tty`)
+  forces the TTY backend even inside a host session.
 * `make clean` removes build output
 
 Only the first connected monitor is used.
