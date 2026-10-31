@@ -2,6 +2,7 @@ mod grabs;
 mod handlers;
 mod input;
 mod panel;
+mod portal;
 mod screenshot;
 mod session_env;
 mod state;

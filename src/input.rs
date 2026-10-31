@@ -23,6 +23,7 @@ const BTN_LEFT: u32 = 0x110;
 enum KeyAction {
     Vt(i32),
     Panel(u32, Option<char>, bool),
+    Picker(u32, Option<char>, bool),
     CancelScreenshot,
     Swallow,
 }
@@ -63,6 +64,14 @@ impl State {
                                 KeyAction::Swallow
                             });
                         }
+                        // The File Picker takes all keys (Enter, Escape, arrows, typing).
+                        if state.panels.active == Some(PanelId::FilePicker) {
+                            if pressed {
+                                let ch = keysym.modified_sym().key_char();
+                                return FilterResult::Intercept(KeyAction::Picker(sym, ch, mods.ctrl));
+                            }
+                            return FilterResult::Intercept(KeyAction::Swallow);
+                        }
                         let editing_panel = state.panels.editing.map(|f| f.panel());
                         if editing_panel.is_some() && editing_panel == state.panels.active {
                             if pressed {
@@ -81,6 +90,7 @@ impl State {
                         }
                     }
                     Some(KeyAction::Panel(sym, ch, ctrl)) => self.panels.key(sym, ch, ctrl),
+                    Some(KeyAction::Picker(sym, ch, ctrl)) => self.picker_key(sym, ch, ctrl),
                     Some(KeyAction::CancelScreenshot) => self.cancel_screenshot(),
                     Some(KeyAction::Swallow) | None => {}
                 }
@@ -125,12 +135,18 @@ impl State {
                 pointer.frame(self);
             }
             InputEvent::PointerAxis { event } => {
-                // Scrolling over the Environment window scrolls its list.
-                if let Hit::Panel(PanelId::Environment, _) = self.hit_test(self.pointer_location) {
+                // Scrolling over the Environment or File Picker window scrolls its list.
+                if let Hit::Panel(id @ (PanelId::Environment | PanelId::FilePicker), _) =
+                    self.hit_test(self.pointer_location)
+                {
                     let amount = event
                         .amount(Axis::Vertical)
                         .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0);
-                    self.panels.scroll_environment(amount);
+                    if id == PanelId::Environment {
+                        self.panels.scroll_environment(amount);
+                    } else {
+                        self.panels.picker.scroll_by(amount);
+                    }
                     return;
                 }
                 let source = event.source();
@@ -233,6 +249,10 @@ impl State {
                         self.start_panel_move(id, button, serial);
                         return Press::Forward;
                     }
+                    // Closing the File Picker cancels the app's request.
+                    PanelHit::Close if id == PanelId::FilePicker => {
+                        self.finish_pick(crate::portal::PickResult::Cancelled);
+                    }
                     PanelHit::Close => {
                         self.panels.close(id);
                         self.focus_top();
@@ -256,6 +276,7 @@ impl State {
                     PanelHit::Field(i, idx) => self.panels.begin_edit(i, idx),
                     PanelHit::Remove(i) => self.panels.remove_entry(i),
                     PanelHit::Add => self.panels.add_entry(),
+                    PanelHit::Pick(h) => self.picker_click(h),
                     PanelHit::Body => self.panels.stop_editing(),
                 }
                 Press::Consume

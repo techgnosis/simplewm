@@ -8,6 +8,8 @@
 //!   Wayland socket, backend devices, protocols, and environment variables.
 //! * The Screenshot applet window sets the folder screenshots are saved in.
 //! * The Help applet window shows a few static notes about simplewm.
+//! * The File Picker window is not in the Control Panel: it opens when an app
+//!   asks for a file through the desktop portal (see `picker`).
 //!
 //! Panels stack, focus and move like client windows. Settings are stored in
 //! SQLite at ~/.config/simplewm/simplewm.db.
@@ -26,6 +28,10 @@ use crate::{
     ui::{self, CustomElement, Frame},
 };
 
+mod picker;
+
+pub use picker::{FilePicker, PickHit};
+
 pub const DEFAULT_LAUNCHER_ENTRY: &str = "/usr/bin/alacritty";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -35,6 +41,7 @@ pub enum PanelId {
     Environment,
     Screenshot,
     Help,
+    FilePicker,
 }
 
 impl PanelId {
@@ -46,6 +53,7 @@ impl PanelId {
             PanelId::Environment => "Environment",
             PanelId::Screenshot => "Screenshot",
             PanelId::Help => "Help",
+            PanelId::FilePicker => "File Picker",
         }
     }
 }
@@ -64,6 +72,8 @@ pub enum Field {
     /// Launcher entry `.0`.
     Launcher(usize),
     ScreenshotDir,
+    /// File name in the File Picker (Save).
+    PickName,
 }
 
 impl Field {
@@ -71,7 +81,13 @@ impl Field {
         match self {
             Field::Launcher(_) => PanelId::Launcher,
             Field::ScreenshotDir => PanelId::Screenshot,
+            Field::PickName => PanelId::FilePicker,
         }
+    }
+
+    /// Whether edits are saved to the settings database.
+    fn persistent(self) -> bool {
+        !matches!(self, Field::PickName)
     }
 }
 
@@ -150,6 +166,8 @@ pub enum PanelHit {
     Field(Field, usize),
     Remove(usize),
     Add,
+    // File Picker
+    Pick(PickHit),
 }
 
 type Rect = Rectangle<i32, Logical>;
@@ -277,7 +295,7 @@ fn applet_glyph(id: PanelId, tile: Rect) -> ([f32; 4], Vec<Rect>) {
             ];
             (TILE_SCREENSHOT, rects)
         }
-        PanelId::ControlPanel => (TILE_LAUNCHER, Vec::new()),
+        PanelId::ControlPanel | PanelId::FilePicker => (TILE_LAUNCHER, Vec::new()),
     }
 }
 
@@ -287,6 +305,8 @@ pub struct Panels {
     environment: PanelWindow,
     screenshot: PanelWindow,
     help: PanelWindow,
+    file_picker: PanelWindow,
+    pub picker: FilePicker,
     /// Environment rows (refreshed when the window is opened) and scroll state.
     env_rows: Vec<EnvRow>,
     env_scroll: usize,
@@ -318,6 +338,8 @@ impl Panels {
             environment: PanelWindow::default(),
             screenshot: PanelWindow::default(),
             help: PanelWindow::default(),
+            file_picker: PanelWindow::default(),
+            picker: FilePicker::default(),
             env_rows: Vec::new(),
             env_scroll: 0,
             env_scroll_acc: 0.0,
@@ -337,6 +359,7 @@ impl Panels {
             PanelId::Environment => &self.environment,
             PanelId::Screenshot => &self.screenshot,
             PanelId::Help => &self.help,
+            PanelId::FilePicker => &self.file_picker,
         }
     }
 
@@ -347,6 +370,7 @@ impl Panels {
             PanelId::Environment => &mut self.environment,
             PanelId::Screenshot => &mut self.screenshot,
             PanelId::Help => &mut self.help,
+            PanelId::FilePicker => &mut self.file_picker,
         }
     }
 
@@ -360,6 +384,19 @@ impl Panels {
 
     pub fn set_loc(&mut self, id: PanelId, loc: Point<i32, Logical>) {
         self.win_mut(id).loc = Some(loc);
+    }
+
+    /// Forget where a panel was, so the next `show` places it afresh.
+    pub fn forget_loc(&mut self, id: PanelId) {
+        self.win_mut(id).loc = None;
+    }
+
+    /// Title bar text.
+    fn title(&self, id: PanelId) -> &str {
+        match id {
+            PanelId::FilePicker => &self.picker.title,
+            _ => id.title(),
+        }
     }
 
     /// Non-empty launcher paths, in order.
@@ -391,6 +428,7 @@ impl Panels {
         match f {
             Field::Launcher(i) => &self.entries[i],
             Field::ScreenshotDir => &self.shot_dir,
+            Field::PickName => &self.picker.name,
         }
     }
 
@@ -398,6 +436,7 @@ impl Panels {
         match f {
             Field::Launcher(i) => &mut self.entries[i],
             Field::ScreenshotDir => &mut self.shot_dir,
+            Field::PickName => &mut self.picker.name,
         }
     }
 
@@ -417,6 +456,7 @@ impl Panels {
             PanelId::Environment => (ENV_W, ENV_H),
             PanelId::Screenshot => (SHOT_W, PAD + HEADER_H + FIELD_H + NOTE_H + PAD),
             PanelId::Help => (HELP_W, PAD + HELP_LINES.len() as i32 * HELP_ROW_H + PAD),
+            PanelId::FilePicker => self.picker_size(),
         }
     }
 
@@ -479,13 +519,13 @@ impl Panels {
     }
 
     /// Open a panel. The first time, the Control Panel is centered and applet
-    /// windows open offset from it.
+    /// windows open offset from it. The File Picker is always centered.
     pub fn show(&mut self, id: PanelId, out: Rect) {
         if self.win(id).loc.is_none() {
             let (w, h) = self.content_size(id);
             let min_y = out.loc.y + ui::BAR_HEIGHT + ui::TITLE_HEIGHT;
             let loc = match (id, self.control.loc) {
-                (PanelId::ControlPanel, _) | (_, None) => Point::from((
+                (PanelId::ControlPanel | PanelId::FilePicker, _) | (_, None) => Point::from((
                     out.loc.x + (out.size.w - w) / 2,
                     (out.loc.y + (out.size.h - h) / 3).max(min_y),
                 )),
@@ -552,6 +592,11 @@ impl Panels {
                     return Some(PanelHit::Field(f, self.char_at(text, f, field, p.x)));
                 }
             }
+            PanelId::FilePicker => {
+                if let Some(h) = self.picker_hit(text, p) {
+                    return Some(h);
+                }
+            }
             PanelId::Environment | PanelId::Help => {}
         }
         Some(PanelHit::Body)
@@ -560,15 +605,17 @@ impl Panels {
     // --- Text field editing ---------------------------------------------------
 
     pub fn begin_edit(&mut self, field: Field, cursor: usize) {
-        if self.editing.is_some() && self.editing != Some(field) {
-            self.save();
+        if let Some(old) = self.editing.filter(|&old| old != field) {
+            if old.persistent() {
+                self.save();
+            }
         }
         self.editing = Some(field);
         self.cursor = cursor.min(self.field_text(field).chars().count());
     }
 
     pub fn stop_editing(&mut self) {
-        if self.editing.take().is_some() {
+        if self.editing.take().is_some_and(Field::persistent) {
             self.save();
         }
     }
@@ -645,7 +692,7 @@ impl Panels {
                 }
             }
         }
-        if changed {
+        if changed && f.persistent() {
             self.save();
         }
     }
@@ -715,14 +762,16 @@ impl Panels {
             PanelId::Environment => self.render_environment(text, renderer, elems),
             PanelId::Screenshot => self.render_screenshot(text, renderer, elems),
             PanelId::Help => self.render_help(text, renderer, elems),
+            PanelId::FilePicker => self.render_picker(text, renderer, hovered, elems),
         }
 
         // Frame: content background, title bar with close button, borders.
         let f = self.frame(id, text);
         let active = self.active == Some(id);
+        let title = text.fit(self.title(id), f.title_text_max);
         let fb = &mut self.win_mut(id).frame;
         elems.push(ui::solid(buf(&mut fb.bg), f.content, BG));
-        elems.extend(ui::text_in(text, renderer, id.title(), f.title_text_x, f.title));
+        elems.extend(ui::text_in(text, renderer, &title, f.title_text_x, f.title));
         elems.extend(ui::text_centered(text, renderer, "×", f.close));
         let title_color = if active { ui::TITLE_FOCUSED } else { ui::TITLE_UNFOCUSED };
         let cc = if hovered == Some(PanelHit::Close) { ui::CLOSE_HOT } else { ui::CLOSE_COLOR };

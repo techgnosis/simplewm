@@ -1,8 +1,8 @@
 //! Publishing our display to the D-Bus / systemd activation environment.
 //!
-//! Services started on demand over D-Bus (notably `xdg-desktop-portal-gtk`, which draws
-//! file chooser dialogs) inherit systemd's user environment, not ours. Without
-//! `WAYLAND_DISPLAY` there they fail with "cannot open display" and apps get no dialog.
+//! Services started on demand over D-Bus (notably `xdg-desktop-portal`, which routes file
+//! chooser requests to us by `XDG_CURRENT_DESKTOP`, and other portal backends that open
+//! windows) inherit systemd's user environment, not ours.
 
 use std::ffi::OsStr;
 use std::process::Command;
@@ -19,20 +19,26 @@ pub fn export(socket_name: &OsStr) {
             .arg(wayland)
             .arg(format!("XDG_CURRENT_DESKTOP={DESKTOP}")),
     );
-    // Stop a backend left over from an earlier session so the next request starts a
-    // fresh one with the new environment.
-    stop_portal_backend();
+    // Stop a portal left over from an earlier session so the next request starts a
+    // fresh one that reads our environment and `simplewm-portals.conf`.
+    stop_portals();
 }
 
 /// Remove what `export` set, so nothing tries to reach our socket after we exit.
 pub fn unexport() {
     run(Command::new("systemctl")
         .args(["--user", "unset-environment", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP"]));
-    stop_portal_backend();
+    stop_portals();
 }
 
-fn stop_portal_backend() {
-    run(Command::new("systemctl").args(["--user", "stop", "xdg-desktop-portal-gtk.service"]));
+/// Stop the portal frontend and the GTK backend; D-Bus restarts them on demand.
+fn stop_portals() {
+    run(Command::new("systemctl").args([
+        "--user",
+        "stop",
+        "xdg-desktop-portal.service",
+        "xdg-desktop-portal-gtk.service",
+    ]));
 }
 
 fn run(command: &mut Command) {

@@ -111,6 +111,18 @@ impl State {
             })
             .expect("failed to init screenshot channel");
 
+        // File chooser requests from the desktop portal (answered by the File Picker).
+        let (portal_tx, portal_rx) = channel::channel::<crate::portal::PortalEvent>();
+        event_loop
+            .handle()
+            .insert_source(portal_rx, |event, _, state| {
+                if let channel::Event::Msg(event) = event {
+                    state.portal_event(event);
+                }
+            })
+            .expect("failed to init portal channel");
+        crate::portal::start(portal_tx);
+
         Self {
             start_time,
             display_handle: dh,

@@ -22,3 +22,5 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 rusqlite = { version = "0.41.1", features = ["bundled"] }
 png = "0.17"
+futures-channel = "0.3.34"
+zbus = "5"

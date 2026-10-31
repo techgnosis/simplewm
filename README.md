@@ -82,15 +82,33 @@ Applets:
 
 ## File dialogs (desktop portal)
 
-Apps like Firefox open file dialogs through `xdg-desktop-portal`, which starts
-`xdg-desktop-portal-gtk` on demand as a systemd user service. That service only sees
-systemd's environment, so in TTY mode simplewm exports `WAYLAND_DISPLAY` and
-`XDG_CURRENT_DESKTOP=simplewm` there at startup (via
-`dbus-update-activation-environment --systemd`) and removes them on exit. Nested mode
-leaves the host session's environment alone.
+simplewm draws file dialogs itself. Apps like Firefox ask `xdg-desktop-portal` for a file
+dialog; simplewm registers as that portal's file chooser backend (D-Bus name
+`org.freedesktop.impl.portal.desktop.simplewm`) and answers by opening the **File Picker**
+window:
 
-Optionally copy `simplewm-portals.conf` to `~/.config/xdg-desktop-portal/` so the
-portal picks the GTK backend explicitly rather than as a fallback.
+* Up / Home buttons and the current folder; double-click a folder to enter it
+* Double-click a file (or select it and press Open / Enter) to choose it; Ctrl-click
+  selects several when the app allows it
+* Save dialogs have a Name field (pre-filled by the app); saving over an existing file
+  asks you to press Save a second time
+* Hidden files toggle, and a Type button that cycles through the app's file filters
+* Esc, Cancel or the close button cancels; arrow keys move the selection, Backspace goes
+  up a folder
+* Only one File Picker is shown at a time; further requests wait their turn
+
+One-time setup: `make install-portal`. It copies `simplewm.portal` to
+`/usr/share/xdg-desktop-portal/portals/` (with sudo; the portal only looks there) and
+`simplewm-portals.conf` to `~/.config/xdg-desktop-portal/`. That config uses simplewm for
+file dialogs and turns every other portal off, so no other portal backend runs. Change
+`default=none` to `default=gtk` in it to keep the other portals.
+
+The `xdg-desktop-portal` frontend itself is still needed, but D-Bus starts it on demand.
+It runs as a systemd user service and only sees systemd's environment, so in TTY mode
+simplewm exports `WAYLAND_DISPLAY` and `XDG_CURRENT_DESKTOP=simplewm` there at startup
+(via `dbus-update-activation-environment --systemd`), restarts the portal so it picks them
+up, and removes them on exit. Nested mode leaves the host session's environment alone, so
+nested apps get the host's file dialogs.
 
 ## Defaults (not configurable)
 
