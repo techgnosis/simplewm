@@ -1,6 +1,7 @@
 mod grabs;
 mod handlers;
 mod input;
+mod panel;
 mod state;
 mod text;
 mod ui;
@@ -34,6 +35,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     event_loop.run(None, &mut state, |state| {
         state.space.refresh();
+        state.prune_stack();
         state.popups.cleanup();
         let _ = state.display_handle.flush_clients();
     })?;

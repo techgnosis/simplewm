@@ -12,12 +12,19 @@ use smithay::{
 };
 
 use crate::{
-    grabs::{Edges, MoveGrab, ResizeGrab},
+    grabs::{Edges, MoveGrab, PanelMoveGrab, ResizeGrab},
+    panel::{APPLETS, PanelHit, PanelId},
     state::{Backend, State},
     ui::{self, BarButton, Frame, Hit, MenuKind, bar_buttons},
 };
 
 const BTN_LEFT: u32 = 0x110;
+
+enum KeyAction {
+    Vt(i32),
+    Panel(u32, Option<char>, bool),
+    Swallow,
+}
 
 enum Press {
     Consume,
@@ -32,28 +39,40 @@ impl State {
                 let time = Event::time_msec(&event);
                 let key_state = event.state();
                 let keyboard = self.seat.get_keyboard().unwrap();
-                // The only intercepted keys are VT switches on a TTY.
-                let vt = keyboard.input::<i32, _>(
+                // Intercepted keys: VT switches on a TTY, and typing into the
+                // Control Panel while one of its text fields is being edited.
+                let action = keyboard.input::<KeyAction, _>(
                     self,
                     event.key_code(),
                     key_state,
                     serial,
                     time,
-                    |_, _, keysym| {
+                    |state, mods, keysym| {
                         let sym = keysym.modified_sym().raw();
-                        if key_state == KeyState::Pressed
-                            && (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12).contains(&sym)
-                        {
-                            FilterResult::Intercept((sym - keysyms::KEY_XF86Switch_VT_1 + 1) as i32)
-                        } else {
-                            FilterResult::Forward
+                        let pressed = key_state == KeyState::Pressed;
+                        if pressed && (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12).contains(&sym) {
+                            return FilterResult::Intercept(KeyAction::Vt(
+                                (sym - keysyms::KEY_XF86Switch_VT_1 + 1) as i32,
+                            ));
                         }
+                        if state.panels.active == Some(PanelId::Launcher) && state.panels.editing.is_some() {
+                            if pressed {
+                                let ch = keysym.modified_sym().key_char();
+                                return FilterResult::Intercept(KeyAction::Panel(sym, ch, mods.ctrl));
+                            }
+                            return FilterResult::Intercept(KeyAction::Swallow);
+                        }
+                        FilterResult::Forward
                     },
                 );
-                if let Some(vt) = vt {
-                    if let Some(Backend::Udev(udev)) = self.backend.as_mut() {
-                        udev.change_vt(vt);
+                match action {
+                    Some(KeyAction::Vt(vt)) => {
+                        if let Some(Backend::Udev(udev)) = self.backend.as_mut() {
+                            udev.change_vt(vt);
+                        }
                     }
+                    Some(KeyAction::Panel(sym, ch, ctrl)) => self.panels.key(sym, ch, ctrl),
+                    Some(KeyAction::Swallow) | None => {}
                 }
             }
             InputEvent::PointerMotion { event } => {
@@ -90,6 +109,14 @@ impl State {
                 pointer.frame(self);
             }
             InputEvent::PointerAxis { event } => {
+                // Scrolling over the Environment window scrolls its list.
+                if let Hit::Panel(PanelId::Environment, _) = self.hit_test(self.pointer_location) {
+                    let amount = event
+                        .amount(Axis::Vertical)
+                        .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0);
+                    self.panels.scroll_environment(amount);
+                    return;
+                }
                 let source = event.source();
                 let h_amount = event
                     .amount(Axis::Horizontal)
@@ -155,8 +182,12 @@ impl State {
         if let Some(menu) = self.ui.menu.take() {
             match hit {
                 Hit::Menu(Some(i)) if button == BTN_LEFT => self.menu_action(menu.kind, i),
-                Hit::BarButton(b) if button == BTN_LEFT && menu_for(b) != menu.kind => {
-                    self.open_bar_menu(b);
+                Hit::BarButton(b) if button == BTN_LEFT => {
+                    // Clicking the button of the open menu just closes it.
+                    let same = b == BarButton::Launcher && matches!(menu.kind, MenuKind::Launcher(_));
+                    if !same {
+                        self.bar_button(b);
+                    }
                 }
                 _ => {}
             }
@@ -175,7 +206,42 @@ impl State {
 
         match hit {
             Hit::BarButton(b) => {
-                self.open_bar_menu(b);
+                self.bar_button(b);
+                Press::Consume
+            }
+            Hit::Panel(id, h) => {
+                self.focus_panel(id);
+                match h {
+                    PanelHit::Title => {
+                        self.panels.stop_editing();
+                        self.start_panel_move(id, button, serial);
+                        return Press::Forward;
+                    }
+                    PanelHit::Close => {
+                        self.panels.close(id);
+                        self.focus_top();
+                    }
+                    PanelHit::Applet(i) => {
+                        if let Some((_, applet)) = APPLETS.get(i) {
+                            if *applet == PanelId::Environment {
+                                let rows = self.environment_rows();
+                                self.panels.set_environment(rows);
+                            }
+                            let out = self.output_geometry();
+                            self.panels.show(*applet, out);
+                            self.focus_panel(*applet);
+                        }
+                    }
+                    PanelHit::Quit => {
+                        tracing::info!("quit requested");
+                        self.panels.stop_editing();
+                        self.loop_signal.stop();
+                    }
+                    PanelHit::Field(i, idx) => self.panels.begin_edit(i, idx),
+                    PanelHit::Remove(i) => self.panels.remove_entry(i),
+                    PanelHit::Add => self.panels.add_entry(),
+                    PanelHit::Body => self.panels.stop_editing(),
+                }
                 Press::Consume
             }
             Hit::Close(w) => {
@@ -245,25 +311,43 @@ impl State {
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }
 
-    fn open_bar_menu(&mut self, b: BarButton) {
-        let out = self.output_geometry();
-        let Some((_, rect)) = bar_buttons(&self.ui.text, out).into_iter().find(|(x, _)| *x == b) else {
+    fn start_panel_move(&mut self, id: PanelId, button: u32, serial: Serial) {
+        let Some(initial_loc) = self.panels.loc(id) else {
             return;
         };
-        let anchor = (rect.loc.x, out.loc.y + ui::BAR_HEIGHT).into();
-        self.ui.open_menu(menu_for(b), anchor, out);
+        let pointer = self.seat.get_pointer().unwrap();
+        let start_data = GrabStartData {
+            focus: None,
+            button,
+            location: self.pointer_location,
+        };
+        pointer.set_grab(self, PanelMoveGrab { start_data, id, initial_loc }, serial, Focus::Clear);
+    }
+
+    fn bar_button(&mut self, b: BarButton) {
+        let out = self.output_geometry();
+        match b {
+            BarButton::ControlPanel => {
+                self.panels.show(PanelId::ControlPanel, out);
+                self.focus_panel(PanelId::ControlPanel);
+            }
+            BarButton::Launcher => {
+                let Some((_, rect)) = bar_buttons(&self.ui.text, out).into_iter().find(|(x, _)| *x == b) else {
+                    return;
+                };
+                let anchor = (rect.loc.x, out.loc.y + ui::BAR_HEIGHT).into();
+                let paths = self.panels.launcher_paths();
+                self.ui.open_menu(MenuKind::Launcher(paths), anchor, out);
+            }
+        }
     }
 
     fn menu_action(&mut self, kind: MenuKind, index: usize) {
         match kind {
-            MenuKind::Settings => {
-                // Only item: Quit
-                tracing::info!("quit requested");
-                self.loop_signal.stop();
-            }
-            MenuKind::Launcher => {
-                // Only item: Alacritty
-                self.spawn("alacritty");
+            MenuKind::Launcher(paths) => {
+                if let Some(path) = paths.get(index) {
+                    self.spawn(path);
+                }
             }
             MenuKind::Size(window) => self.apply_size(&window, index),
         }
@@ -296,14 +380,9 @@ impl State {
             state.size = Some((w.max(1), h.max(1)).into());
         });
         toplevel.send_pending_configure();
-        self.space.map_element(window.clone(), (x, y), false);
+        // Focus (and raise) first so the panel's stacking bookkeeping sees the
+        // window's old position.
         self.focus_window(Some(window));
-    }
-}
-
-fn menu_for(b: BarButton) -> MenuKind {
-    match b {
-        BarButton::Settings => MenuKind::Settings,
-        BarButton::Launcher => MenuKind::Launcher,
+        self.space.map_element(window.clone(), (x, y), false);
     }
 }

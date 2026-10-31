@@ -69,6 +69,16 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
         }
     }
 
+    state.startup_info.push(("Backend".into(), "nested (winit window in the host session)".into()));
+    state.startup_info.push((
+        "Host WAYLAND_DISPLAY".into(),
+        std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "(not set)".into()),
+    ));
+    if let Ok(Some(node)) = &render_node {
+        let path = node.dev_path().map(|p| p.display().to_string()).unwrap_or_else(|| format!("{node:?}"));
+        state.startup_info.push(("Render node (dmabuf)".into(), path));
+    }
+
     let damage_tracker = OutputDamageTracker::from_output(&output);
     state.backend = Some(Backend::Winit(WinitData {
         backend,

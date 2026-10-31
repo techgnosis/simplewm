@@ -15,7 +15,7 @@ use smithay::{
             protocol::wl_surface::WlSurface,
         },
     },
-    utils::{Logical, Point, Rectangle, SERIAL_COUNTER},
+    utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         dmabuf::{DmabufGlobal, DmabufState},
@@ -27,7 +27,10 @@ use smithay::{
     },
 };
 
-use crate::ui::{self, Ui};
+use crate::{
+    panel::{EnvRow, PanelId, Panels},
+    ui::{self, Ui},
+};
 
 pub enum Backend {
     Winit(crate::winit::WinitData),
@@ -62,8 +65,13 @@ pub struct State {
 
     pub output: Option<Output>,
     pub ui: Ui,
+    pub panels: Panels,
+    /// Stacking order of client windows and panels, bottom to top.
+    pub stack: Vec<StackEntry>,
     pub backend: Option<Backend>,
     pub windows_opened: u32,
+    /// Backend details recorded at startup, shown in the Environment applet.
+    pub startup_info: Vec<(String, String)>,
 }
 
 impl State {
@@ -110,8 +118,11 @@ impl State {
             cursor_status: CursorImageStatus::default_named(),
             output: None,
             ui: Ui::new(),
+            panels: Panels::new(),
+            stack: Vec::new(),
             backend: None,
             windows_opened: 0,
+            startup_info: Vec::new(),
         }
     }
 
@@ -179,10 +190,83 @@ impl State {
             .map(|(s, p)| (s, (p + render_loc).to_f64()))
     }
 
+    fn stack_raise(&mut self, entry: StackEntry) {
+        self.stack.retain(|e| *e != entry);
+        self.stack.push(entry);
+    }
+
+    /// Raise a client window to the top of the stack.
+    pub fn raise_window(&mut self, window: &Window) {
+        self.stack_raise(StackEntry::Window(window.clone()));
+        self.space.raise_element(window, true);
+    }
+
+    /// Forget a client window that is about to be unmapped.
+    pub fn note_unmap(&mut self, window: &Window) {
+        self.stack.retain(|e| *e != StackEntry::Window(window.clone()));
+    }
+
+    /// Drop stack entries for windows that no longer exist.
+    pub fn prune_stack(&mut self) {
+        let space = &self.space;
+        self.stack.retain(|e| match e {
+            StackEntry::Window(w) => w.alive() && space.elements().any(|x| x == w),
+            StackEntry::Panel(_) => true,
+        });
+    }
+
+    /// Visible stacking order, top-most first.
+    pub fn stack_top_down(&self) -> Vec<StackEntry> {
+        // Windows in the space but not (yet) in the stack go at the bottom.
+        let mut v: Vec<StackEntry> = self
+            .space
+            .elements()
+            .filter(|w| !self.stack.contains(&StackEntry::Window((*w).clone())))
+            .map(|w| StackEntry::Window(w.clone()))
+            .collect();
+        v.extend(self.stack.iter().filter(|e| match e {
+            StackEntry::Window(w) => w.alive() && self.space.elements().any(|x| x == w),
+            StackEntry::Panel(id) => self.panels.is_open(*id),
+        }).cloned());
+        v.reverse();
+        v
+    }
+
+    /// Focus whatever is on top of the stack (after something closed).
+    pub fn focus_top(&mut self) {
+        match self.stack_top_down().into_iter().next() {
+            Some(StackEntry::Window(w)) => self.focus_window(Some(&w)),
+            Some(StackEntry::Panel(id)) => self.focus_panel(id),
+            None => self.focus_window(None),
+        }
+    }
+
+    /// Give a panel focus: raise it and take keyboard focus away from client
+    /// windows.
+    pub fn focus_panel(&mut self, id: PanelId) {
+        if id != PanelId::Launcher {
+            self.panels.stop_editing();
+        }
+        self.panels.active = Some(id);
+        self.stack_raise(StackEntry::Panel(id));
+        for w in self.space.elements() {
+            w.set_activated(false);
+            if let Some(t) = w.toplevel() {
+                t.send_pending_configure();
+            }
+        }
+        let serial = SERIAL_COUNTER.next_serial();
+        if let Some(keyboard) = self.seat.get_keyboard() {
+            keyboard.set_focus(self, None, serial);
+        }
+    }
+
     pub fn focus_window(&mut self, window: Option<&Window>) {
         let serial = SERIAL_COUNTER.next_serial();
         if let Some(window) = window {
-            self.space.raise_element(window, true);
+            self.raise_window(window);
+            self.panels.active = None;
+            self.panels.stop_editing();
         }
         for w in self.space.elements() {
             let active = Some(w) == window;
@@ -232,6 +316,82 @@ impl State {
             out.loc.y + ui::BAR_HEIGHT + ui::TITLE_HEIGHT + 30 + 32 * n,
         )
             .into()
+    }
+}
+
+/// One entry in the stacking order: a client window or a panel.
+#[derive(Clone, PartialEq)]
+pub enum StackEntry {
+    Window(Window),
+    Panel(PanelId),
+}
+
+impl State {
+    /// Everything shown in the Environment applet: how simplewm was started.
+    pub fn environment_rows(&self) -> Vec<EnvRow> {
+        let item = |k: &str, v: String| EnvRow::Item(k.to_string(), v);
+        let mut rows = vec![EnvRow::Header("Wayland".into())];
+
+        let socket = self.socket_name.to_string_lossy().into_owned();
+        rows.push(item("WAYLAND_DISPLAY (for clients)", socket.clone()));
+        match std::env::var("XDG_RUNTIME_DIR") {
+            Ok(dir) => {
+                rows.push(item("XDG_RUNTIME_DIR", dir.clone()));
+                rows.push(item("Socket path", format!("{dir}/{socket}")));
+                rows.push(item("Socket lock file", format!("{dir}/{socket}.lock")));
+            }
+            Err(_) => rows.push(item("XDG_RUNTIME_DIR", "(not set)".into())),
+        }
+        for (k, v) in &self.startup_info {
+            rows.push(item(k, v.clone()));
+        }
+        if let Some(output) = &self.output {
+            let mode = output
+                .current_mode()
+                .map(|m| format!("{}x{} @ {:.2} Hz", m.size.w, m.size.h, m.refresh as f64 / 1000.0))
+                .unwrap_or_else(|| "(no mode)".into());
+            rows.push(item("Output", format!("{} — {}", output.name(), mode)));
+        }
+        rows.push(item("wl_seat", "seat0 (keyboard, pointer)".into()));
+        rows.push(item(
+            "Settings database",
+            crate::panel::db_path().map(|p| p.display().to_string()).unwrap_or_else(|| "(unavailable)".into()),
+        ));
+
+        rows.push(EnvRow::Header("Protocols (globals advertised to clients)".into()));
+        let dmabuf = if self.dmabuf_global.is_some() { "GPU buffers" } else { "not available" };
+        for (name, what) in [
+            ("wl_compositor", "surfaces"),
+            ("wl_subcompositor", "sub-surfaces"),
+            ("xdg_wm_base", "application windows and popups"),
+            ("zxdg_decoration_manager_v1", "decorations (server-side forced)"),
+            ("wl_shm", "shared-memory buffers"),
+            ("zwp_linux_dmabuf_v1", dmabuf),
+            ("wl_seat", "input"),
+            ("wl_data_device_manager", "clipboard, drag and drop"),
+            ("wl_output", "outputs"),
+            ("zxdg_output_manager_v1", "output details"),
+        ] {
+            rows.push(item(name, what.to_string()));
+        }
+
+        rows.push(EnvRow::Header("Process".into()));
+        rows.push(item("PID", std::process::id().to_string()));
+        if let Ok(exe) = std::env::current_exe() {
+            rows.push(item("Executable", exe.display().to_string()));
+        }
+        rows.push(item("Arguments", std::env::args().collect::<Vec<_>>().join(" ")));
+        if let Ok(cwd) = std::env::current_dir() {
+            rows.push(item("Working directory", cwd.display().to_string()));
+        }
+
+        let mut vars: Vec<(String, String)> = std::env::vars_os()
+            .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned()))
+            .collect();
+        vars.sort();
+        rows.push(EnvRow::Header(format!("Environment variables ({})", vars.len())));
+        rows.extend(vars.into_iter().map(|(k, v)| EnvRow::Item(k, v)));
+        rows
     }
 }
 

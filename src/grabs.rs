@@ -139,6 +139,37 @@ impl PointerGrab<State> for MoveGrab {
 }
 
 // ---------------------------------------------------------------------------
+// Move the Control Panel
+// ---------------------------------------------------------------------------
+
+pub struct PanelMoveGrab {
+    pub start_data: GrabStartData<State>,
+    pub id: crate::panel::PanelId,
+    pub initial_loc: Point<i32, Logical>,
+}
+
+impl PointerGrab<State> for PanelMoveGrab {
+    fn motion(
+        &mut self,
+        data: &mut State,
+        handle: &mut PointerInnerHandle<'_, State>,
+        _focus: Option<(WlSurface, Point<f64, Logical>)>,
+        event: &MotionEvent,
+    ) {
+        handle.motion(data, None, event);
+        let delta = event.location - self.start_data.location;
+        let mut loc = self.initial_loc + delta.to_i32_round();
+        let out = data.output_geometry();
+        loc.y = loc.y.max(out.loc.y + ui::BAR_HEIGHT + ui::TITLE_HEIGHT);
+        data.panels.set_loc(self.id, loc);
+    }
+
+    forward_rest!();
+
+    fn unset(&mut self, _data: &mut State) {}
+}
+
+// ---------------------------------------------------------------------------
 // Resize
 // ---------------------------------------------------------------------------
 

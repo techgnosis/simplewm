@@ -3,7 +3,8 @@
 A very simple Wayland compositor written in Rust with Smithay.
 
 * No keyboard shortcuts
-* No config file
+* No hand-edited config file; settings changed in the Control Panel are saved to
+  `~/.config/simplewm/simplewm.db` (SQLite)
 * Stacking, floating windows
 * Wayland only (no Xwayland / X11)
 
@@ -42,10 +43,31 @@ Mouse:
 
 There is a top bar. Its items (two buttons and a clock) are grouped in the middle:
 
-* Settings — opens a menu with a single item: Quit
-* Launcher — opens a menu with a single item: Alacritty
+* Control Panel — opens the Control Panel window (see below)
+* Launcher — opens a menu listing the executables configured in the Control Panel,
+  by file name (e.g. `alacritty`). Clicking one runs it.
 
 After the buttons is a clock (local time, e.g. `Sat 31 Oct  14:05`).
+
+## Control Panel
+
+Settings follow a Windows-style Control Panel model. The Control Panel is a
+compositor-drawn window showing one icon (with a name) per settings applet, plus a
+**Quit simplewm** button. Clicking an icon opens a separate window dedicated to
+that applet's settings. Panel windows stack, focus and move like any other window
+(drag the title bar; close with the red button).
+
+Applets:
+
+* **Launcher** — a list of text fields, one absolute executable path each, with a
+  Remove button per entry and an Add button. `/usr/bin/alacritty` is the default
+  first entry and can be removed. Click a field to edit it; Enter/Escape stops
+  editing, Tab/arrow keys move between fields. Changes are saved immediately.
+* **Environment** — a read-only, scrollable (mouse wheel) view of how simplewm was
+  started: the Wayland socket clients connect to (`WAYLAND_DISPLAY`, socket and
+  lock file paths), backend details (host compositor socket when nested; seat,
+  GPU device and connector on a TTY; dmabuf render node), the output, the
+  protocols advertised to clients, process info, and all environment variables.
 
 ## Defaults (not configurable)
 

@@ -216,11 +216,13 @@ impl XdgShellHandler for State {
             .cloned();
         if let Some(window) = window {
             self.ui.forget_window(&window);
+            self.note_unmap(&window);
             self.space.unmap_elem(&window);
         }
-        // Focus whatever is now on top.
-        let top = self.space.elements().last().cloned();
-        self.focus_window(top.as_ref());
+        // Focus whatever is now on top, unless a panel has focus.
+        if self.panels.active.is_none() {
+            self.focus_top();
+        }
     }
 
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {

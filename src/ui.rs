@@ -21,7 +21,12 @@ use smithay::{
     wayland::{compositor::with_states, shell::xdg::XdgToplevelSurfaceData},
 };
 
-use crate::{grabs::Edges, state::State, text::TextRenderer};
+use crate::{
+    grabs::Edges,
+    panel::{PanelHit, PanelId},
+    state::{StackEntry, State},
+    text::TextRenderer,
+};
 
 // ---------------------------------------------------------------------------
 // Layout constants
@@ -54,10 +59,10 @@ const BAR_BUTTON: [f32; 4] = [0.20, 0.22, 0.26, 1.0];
 const BAR_BUTTON_HOT: [f32; 4] = [0.30, 0.33, 0.40, 1.0];
 const MENU_BG: [f32; 4] = [0.14, 0.15, 0.18, 1.0];
 const MENU_HL: [f32; 4] = [0.25, 0.42, 0.70, 1.0];
-const TITLE_FOCUSED: [f32; 4] = [0.22, 0.32, 0.50, 1.0];
-const TITLE_UNFOCUSED: [f32; 4] = [0.27, 0.28, 0.31, 1.0];
-const CLOSE_COLOR: [f32; 4] = [0.80, 0.18, 0.18, 1.0];
-const CLOSE_HOT: [f32; 4] = [0.95, 0.30, 0.30, 1.0];
+pub const TITLE_FOCUSED: [f32; 4] = [0.22, 0.32, 0.50, 1.0];
+pub const TITLE_UNFOCUSED: [f32; 4] = [0.27, 0.28, 0.31, 1.0];
+pub const CLOSE_COLOR: [f32; 4] = [0.80, 0.18, 0.18, 1.0];
+pub const CLOSE_HOT: [f32; 4] = [0.95, 0.30, 0.30, 1.0];
 const SIZE_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.25];
 const ICON_SCREEN: [f32; 4] = [0.30, 0.32, 0.37, 1.0];
 const ICON_FILL: [f32; 4] = [0.45, 0.62, 0.90, 1.0];
@@ -165,14 +170,14 @@ impl Frame {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BarButton {
-    Settings,
+    ControlPanel,
     Launcher,
 }
 
 impl BarButton {
     pub fn label(self) -> &'static str {
         match self {
-            BarButton::Settings => "Settings",
+            BarButton::ControlPanel => "Control Panel",
             BarButton::Launcher => "Launcher",
         }
     }
@@ -196,11 +201,11 @@ fn clock_slot_width(text: &TextRenderer) -> i32 {
         .unwrap()
 }
 
-/// The bar items (Settings, Launcher, clock) are laid out as one group
+/// The bar items (Control Panel, Launcher, clock) are laid out as one group
 /// centered in the bar. Returns the button rects (in global coordinates) and
 /// the clock's x position.
 pub fn bar_layout(text: &TextRenderer, out: Rectangle<i32, Logical>) -> ([(BarButton, Rectangle<i32, Logical>); 2], i32) {
-    let labels = [BarButton::Settings, BarButton::Launcher];
+    let labels = [BarButton::ControlPanel, BarButton::Launcher];
     let widths = labels.map(|b| text.measure(b.label()) + 2 * BAR_BUTTON_PAD);
     let clock_w = clock_slot_width(text);
     let total = widths.iter().sum::<i32>() + BAR_GAP + CLOCK_GAP + clock_w;
@@ -208,7 +213,7 @@ pub fn bar_layout(text: &TextRenderer, out: Rectangle<i32, Logical>) -> ([(BarBu
     let mut x = out.loc.x + (out.size.w - total) / 2;
     let y = out.loc.y + 4;
     let h = BAR_HEIGHT - 8;
-    let mut rects = [(BarButton::Settings, Rectangle::default()); 2];
+    let mut rects = [(BarButton::ControlPanel, Rectangle::default()); 2];
     for (i, b) in labels.into_iter().enumerate() {
         rects[i] = (b, Rectangle::new((x, y).into(), (widths[i], h).into()));
         x += widths[i] + BAR_GAP;
@@ -245,17 +250,17 @@ const SIZE_LABELS: [&str; 7] = {
 
 #[derive(Clone, PartialEq)]
 pub enum MenuKind {
-    Settings,
-    Launcher,
+    /// Executable paths from the Control Panel's Launcher section.
+    Launcher(Vec<String>),
     Size(Window),
 }
 
 impl MenuKind {
-    pub fn items(&self) -> &'static [&'static str] {
+    pub fn items(&self) -> Vec<String> {
         match self {
-            MenuKind::Settings => &["Quit"],
-            MenuKind::Launcher => &["Alacritty"],
-            MenuKind::Size(_) => &SIZE_LABELS,
+            MenuKind::Launcher(paths) if paths.is_empty() => vec!["Add apps in Control Panel".into()],
+            MenuKind::Launcher(paths) => paths.iter().map(|p| crate::panel::exe_name(p)).collect(),
+            MenuKind::Size(_) => SIZE_LABELS.iter().map(|s| s.to_string()).collect(),
         }
     }
 }
@@ -318,6 +323,7 @@ fn size_icon(cell: Rectangle<i32, Logical>, region: [i32; 4]) -> (Rectangle<i32,
 
 pub enum Hit {
     Menu(Option<usize>),
+    Panel(PanelId, PanelHit),
     BarButton(BarButton),
     Bar,
     Close(Window),
@@ -348,7 +354,17 @@ impl State {
             return Hit::Bar;
         }
 
-        for window in self.space.elements().rev() {
+        for item in self.stack_top_down() {
+            let window = match item {
+                StackEntry::Panel(id) => {
+                    if let Some(h) = self.panels.hit(id, &self.ui.text, pos) {
+                        return Hit::Panel(id, h);
+                    }
+                    continue;
+                }
+                StackEntry::Window(w) => w,
+            };
+            let window = &window;
             let Some(content) = self.space.element_geometry(window) else {
                 continue;
             };
@@ -444,7 +460,7 @@ impl Ui {
                 ICON_CELL_H + MENU_ITEM_H + 2 * MENU_PAD,
             )
         } else {
-            self.list_menu_size(items)
+            self.list_menu_size(&items)
         };
         let mut loc = anchor;
         loc.x = loc.x.min(out.loc.x + out.size.w - w).max(out.loc.x);
@@ -455,7 +471,7 @@ impl Ui {
         });
     }
 
-    fn list_menu_size(&self, items: &[&str]) -> (i32, i32) {
+    fn list_menu_size(&self, items: &[String]) -> (i32, i32) {
         let w = items
             .iter()
             .map(|t| self.text.measure(t) + 2 * BAR_BUTTON_PAD)
@@ -474,7 +490,7 @@ impl Ui {
     }
 }
 
-fn solid(buf: &mut SolidColorBuffer, rect: Rectangle<i32, Logical>, color: [f32; 4]) -> CustomElement {
+pub(crate) fn solid(buf: &mut SolidColorBuffer, rect: Rectangle<i32, Logical>, color: [f32; 4]) -> CustomElement {
     buf.update(rect.size, color);
     SolidColorRenderElement::from_buffer(buf, rect.loc.to_physical(1), Scale::from(1.0), 1.0, Kind::Unspecified)
         .into()
@@ -485,13 +501,14 @@ fn text_elem(
     renderer: &mut GlesRenderer,
     s: &str,
     loc: Point<i32, Logical>,
+    alpha: f32,
 ) -> Option<CustomElement> {
     let (buf, _) = text.get(s)?;
     MemoryRenderBufferRenderElement::from_buffer(
         renderer,
         loc.to_f64().to_physical(1.0),
         &buf,
-        None,
+        Some(alpha),
         None,
         None,
         Kind::Unspecified,
@@ -501,19 +518,31 @@ fn text_elem(
 }
 
 /// Text vertically centered in `rect`, starting at x.
-fn text_in(
+pub(crate) fn text_in(
     text: &mut TextRenderer,
     renderer: &mut GlesRenderer,
     s: &str,
     x: i32,
     rect: Rectangle<i32, Logical>,
 ) -> Option<CustomElement> {
+    text_in_alpha(text, renderer, s, x, rect, 1.0)
+}
+
+/// Like `text_in`, faded by `alpha`.
+pub(crate) fn text_in_alpha(
+    text: &mut TextRenderer,
+    renderer: &mut GlesRenderer,
+    s: &str,
+    x: i32,
+    rect: Rectangle<i32, Logical>,
+    alpha: f32,
+) -> Option<CustomElement> {
     let y = rect.loc.y + (rect.size.h - text.line_height()) / 2;
-    text_elem(text, renderer, s, (x, y).into())
+    text_elem(text, renderer, s, (x, y).into(), alpha)
 }
 
 /// Text centered in `rect`.
-fn text_centered(
+pub(crate) fn text_centered(
     text: &mut TextRenderer,
     renderer: &mut GlesRenderer,
     s: &str,
@@ -603,12 +632,15 @@ impl State {
                     elems.push(solid(&mut ui.icon_screens[i], screen, ICON_SCREEN));
                 }
             } else {
+                let empty = matches!(&menu.kind, MenuKind::Launcher(p) if p.is_empty());
+                let alpha = if empty { 0.5 } else { 1.0 };
                 for (i, label) in menu.kind.items().iter().enumerate() {
                     let r = menu.item_rect(i);
-                    elems.extend(text_in(&mut ui.text, renderer, label, r.loc.x + BAR_BUTTON_PAD, r));
+                    elems.extend(text_in_alpha(&mut ui.text, renderer, label, r.loc.x + BAR_BUTTON_PAD, r, alpha));
                 }
             }
-            if let Some(i) = hl {
+            let empty = matches!(&menu.kind, MenuKind::Launcher(p) if p.is_empty());
+            if let Some(i) = hl.filter(|_| !empty) {
                 elems.push(solid(&mut ui.menu_hl, menu.item_rect(i), MENU_HL));
             }
             elems.push(solid(&mut ui.menu_bg, menu.rect, MENU_BG));
@@ -616,8 +648,7 @@ impl State {
 
         // --- top bar --------------------------------------------------------
         let open_bar = match ui.menu.as_ref().map(|m| &m.kind) {
-            Some(MenuKind::Settings) => Some(BarButton::Settings),
-            Some(MenuKind::Launcher) => Some(BarButton::Launcher),
+            Some(MenuKind::Launcher(_)) => Some(BarButton::Launcher),
             _ => None,
         };
         let (buttons, clock_x) = bar_layout(&ui.text, out);
@@ -634,9 +665,19 @@ impl State {
         elems.extend(text_in(&mut ui.text, renderer, &clock, clock_x, bar));
         elems.push(solid(&mut ui.bar_bg, bar, BAR_COLOR));
 
-        // --- windows (top to bottom) ---------------------------------------
-        let windows: Vec<Window> = self.space.elements().rev().cloned().collect();
-        for window in windows {
+        // --- windows and the Control Panel (top to bottom) ------------------
+        for item in self.stack_top_down() {
+            let window = match item {
+                StackEntry::Panel(id) => {
+                    let hover = match hovered {
+                        Hit::Panel(hid, h) if hid == id => Some(h),
+                        _ => None,
+                    };
+                    self.panels.render(id, &mut self.ui.text, renderer, hover, &mut elems);
+                    continue;
+                }
+                StackEntry::Window(w) => w,
+            };
             let Some(content) = self.space.element_geometry(&window) else {
                 continue;
             };

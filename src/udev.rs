@@ -157,6 +157,19 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
     };
     state.dmabuf_global = Some(global);
 
+    state.startup_info.push(("Backend".into(), "TTY (DRM/KMS + libinput)".into()));
+    state.startup_info.push(("Session".into(), "libseat".into()));
+    state.startup_info.push(("Seat".into(), seat_name.clone()));
+    state.startup_info.push(("GPU device".into(), gpu_path.display().to_string()));
+    if let Ok(Some(node)) = &render_node {
+        let path = node.dev_path().map(|p| p.display().to_string()).unwrap_or_else(|| format!("{node:?}"));
+        state.startup_info.push(("Render node (dmabuf)".into(), path));
+    }
+    state.startup_info.push((
+        "Connector".into(),
+        format!("{:?}-{}", connector.interface(), connector.interface_id()),
+    ));
+
     // --- input -------------------------------------------------------------
     let mut libinput = Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(session.clone().into());
     libinput
