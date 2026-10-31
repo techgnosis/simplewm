@@ -43,6 +43,18 @@ pub enum PortalEvent {
     Close(u64),
 }
 
+/// Where the answer to a File Picker request goes.
+pub enum PickReply {
+    /// An app's request over the portal.
+    Portal(oneshot::Sender<PickResult>),
+    /// The Screenshot applet's Choose button: set the screenshot folder.
+    ScreenshotDir,
+    /// The Launcher applet's Add button: add the chosen executables.
+    LauncherAdd,
+    /// The Launcher applet's Change button: replace this entry.
+    LauncherChange(String),
+}
+
 /// A file dialog request.
 pub struct PickRequest {
     pub id: u64,
@@ -58,7 +70,7 @@ pub struct PickRequest {
     pub filters: Vec<Filter>,
     /// Index into `filters` selected initially.
     pub current_filter: Option<usize>,
-    pub reply: oneshot::Sender<PickResult>,
+    pub reply: PickReply,
 }
 
 #[derive(Debug, Clone)]
@@ -236,7 +248,7 @@ impl FileChooser {
             name,
             filters,
             current_filter,
-            reply,
+            reply: PickReply::Portal(reply),
         };
 
         // The frontend calls Close on this object to cancel the dialog.

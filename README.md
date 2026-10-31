@@ -66,17 +66,18 @@ that applet's settings. Panel windows stack, focus and move like any other windo
 
 Applets:
 
-* **Launcher** — a list of text fields, one absolute executable path each, with a
-  Remove button per entry and an Add button. `/usr/bin/alacritty` is the default
-  first entry and can be removed. Click a field to edit it; Enter/Escape stops
-  editing, Tab/arrow keys move between fields. Changes are saved immediately.
+* **Launcher** — the executables in the Launcher menu, one path per row, with Change… and
+  Remove buttons per entry and an Add… button. Add… and Change… open the File Picker
+  (Add… starts in `/usr/bin` and accepts several files with Ctrl-click). `/usr/bin/alacritty`
+  is the default first entry and can be removed. Changes are saved immediately.
 * **Environment** — a read-only, scrollable (mouse wheel) view of how simplewm was
   started: the Wayland socket clients connect to (`WAYLAND_DISPLAY`, socket and
   lock file paths), backend details (host compositor socket when nested; seat,
   GPU device and connector on a TTY; dmabuf render node), the output, the
   protocols advertised to clients, process info, and all environment variables.
-* **Screenshot** — one text field: the folder screenshots are saved in. There is
-  no default; `~` is expanded, and the folder is created if it doesn't exist.
+* **Screenshot** — the folder screenshots are saved in, with a Choose… button that opens
+  the File Picker to pick it. There is no default; the folder is created if it no longer
+  exists.
 * **Desktop Portal** — checks for when apps get no file dialog (or a different one): whether
   simplewm owns its portal bus name, whether `xdg-desktop-portal` is running and offers a
   FileChooser, the `XDG_CURRENT_DESKTOP` that systemd and the running portal see, the installed
@@ -102,6 +103,9 @@ window:
 * Esc, Cancel or the close button cancels; arrow keys move the selection, Backspace goes
   up a folder
 * Only one File Picker is shown at a time; further requests wait their turn
+
+The Launcher and Screenshot applets use the same File Picker to choose executables and
+the screenshot folder.
 
 One-time setup: `make install-portal`. It copies `simplewm.portal` to
 `/usr/share/xdg-desktop-portal/portals/` (with sudo; the portal only looks there) and

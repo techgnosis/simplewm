@@ -19,7 +19,7 @@ use super::{
     NOTE_H, PAD, PanelHit, PanelId, Rect, SCROLL_THUMB, SCROLL_TRACK, SCROLLBAR_W, bufs, edit_ring, field_view,
 };
 use crate::{
-    portal::{PickRequest, PickResult, PortalEvent},
+    portal::{PickReply, PickRequest, PickResult, PortalEvent},
     state::State,
     text::TextRenderer,
     ui::{self, CustomElement},
@@ -518,21 +518,82 @@ impl super::Panels {
 impl State {
     pub fn portal_event(&mut self, event: PortalEvent) {
         match event {
-            PortalEvent::Pick(req) => {
-                if self.panels.picker.request.is_some() {
-                    self.panels.picker.queue.push_back(req);
-                } else {
-                    self.open_picker(req);
-                }
-            }
+            PortalEvent::Pick(req) => self.request_pick(req),
             PortalEvent::Close(id) => {
                 if self.panels.picker.request.as_ref().is_some_and(|r| r.id == id) {
                     self.finish_pick(PickResult::Failed);
                 } else if let Some(i) = self.panels.picker.queue.iter().position(|r| r.id == id) {
-                    if let Some(req) = self.panels.picker.queue.remove(i) {
-                        let _ = req.reply.send(PickResult::Failed);
+                    if let Some(PickRequest { reply: PickReply::Portal(tx), .. }) =
+                        self.panels.picker.queue.remove(i)
+                    {
+                        let _ = tx.send(PickResult::Failed);
                     }
                 }
+            }
+        }
+    }
+
+    /// Show the File Picker for `req`, or queue it behind the one already open.
+    pub fn request_pick(&mut self, req: PickRequest) {
+        if self.panels.picker.request.is_some() {
+            self.panels.picker.queue.push_back(req);
+        } else {
+            self.open_picker(req);
+        }
+    }
+
+    /// Whether a request from one of simplewm's own applets matching `is` is open
+    /// or queued. If it is the open one, the File Picker is raised.
+    fn applet_pick_pending(&mut self, is: impl Fn(&PickReply) -> bool) -> bool {
+        let p = &self.panels.picker;
+        if p.request.as_ref().is_some_and(|r| is(&r.reply)) {
+            self.focus_panel(PanelId::FilePicker);
+            return true;
+        }
+        p.queue.iter().any(|r| is(&r.reply))
+    }
+
+    /// A File Picker request from one of simplewm's own applets (id 0: the portal
+    /// never closes it).
+    fn applet_pick(&mut self, title: &str, directory: bool, multiple: bool, folder: Option<PathBuf>, reply: PickReply) {
+        self.request_pick(PickRequest {
+            id: 0,
+            save: false,
+            multiple,
+            directory,
+            title: title.into(),
+            accept_label: None,
+            folder,
+            name: String::new(),
+            filters: Vec::new(),
+            current_filter: None,
+            reply,
+        });
+    }
+
+    /// The Screenshot applet's Choose button: pick the screenshot folder.
+    pub fn choose_screenshot_dir(&mut self) {
+        if self.applet_pick_pending(|r| matches!(r, PickReply::ScreenshotDir)) {
+            return;
+        }
+        let folder = self.panels.screenshot_dir();
+        self.applet_pick("Choose Screenshot Folder", true, false, folder, PickReply::ScreenshotDir);
+    }
+
+    /// The Launcher applet's Add (`None`) or Change (`Some(i)`) button: pick
+    /// executables. Only one of these is open or queued at a time.
+    pub fn choose_launcher_entry(&mut self, change: Option<usize>) {
+        if self.applet_pick_pending(|r| matches!(r, PickReply::LauncherAdd | PickReply::LauncherChange(_))) {
+            return;
+        }
+        match change.and_then(|i| self.panels.entries.get(i).cloned()) {
+            Some(old) => {
+                let folder = Path::new(&old).parent().map(Path::to_path_buf);
+                self.applet_pick("Change Launcher Entry", false, false, folder, PickReply::LauncherChange(old));
+            }
+            None => {
+                let folder = Some(PathBuf::from("/usr/bin"));
+                self.applet_pick("Add to Launcher", false, true, folder, PickReply::LauncherAdd);
             }
         }
     }
@@ -558,7 +619,23 @@ impl State {
     /// Answer the open request and close the File Picker.
     pub fn finish_pick(&mut self, result: PickResult) {
         if let Some(req) = self.panels.picker.request.take() {
-            let _ = req.reply.send(result);
+            match req.reply {
+                PickReply::Portal(tx) => {
+                    let _ = tx.send(result);
+                }
+                reply => {
+                    if let PickResult::Chosen(paths) = result
+                        && let Some(first) = paths.first()
+                    {
+                        match reply {
+                            PickReply::ScreenshotDir => self.panels.set_screenshot_dir(first),
+                            PickReply::LauncherAdd => self.panels.add_entries(&paths),
+                            PickReply::LauncherChange(old) => self.panels.change_entry(&old, first),
+                            PickReply::Portal(_) => {}
+                        }
+                    }
+                }
+            }
         }
         self.panels.close(PanelId::FilePicker);
         self.focus_top();

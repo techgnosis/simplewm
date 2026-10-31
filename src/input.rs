@@ -278,9 +278,14 @@ impl State {
                         self.loop_signal.stop();
                     }
                     PanelHit::Field(i, idx) => self.panels.begin_edit(i, idx),
+                    PanelHit::Change(i) => self.choose_launcher_entry(Some(i)),
                     PanelHit::Remove(i) => self.panels.remove_entry(i),
-                    PanelHit::Add => self.panels.add_entry(),
+                    PanelHit::Add => self.choose_launcher_entry(None),
                     PanelHit::Refresh => self.refresh_portal_check(),
+                    PanelHit::ChooseShotDir => {
+                        self.panels.stop_editing();
+                        self.choose_screenshot_dir();
+                    }
                     PanelHit::Pick(h) => self.picker_click(h),
                     PanelHit::Body => self.panels.stop_editing(),
                 }

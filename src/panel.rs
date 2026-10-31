@@ -3,15 +3,17 @@
 //! * The Control Panel window shows one icon per settings applet, plus a
 //!   Quit button. Clicking an icon opens that applet's own window.
 //! * The Launcher applet window edits the list of executable paths shown in
-//!   the Launcher menu.
+//!   the Launcher menu; paths are chosen with the File Picker.
 //! * The Environment applet window shows (read-only) how simplewm was started:
 //!   Wayland socket, backend devices, protocols, and environment variables.
-//! * The Screenshot applet window sets the folder screenshots are saved in.
+//! * The Screenshot applet window sets the folder screenshots are saved in,
+//!   chosen with the File Picker.
 //! * The Help applet window shows a few static notes about simplewm.
 //! * The Desktop Portal applet window shows checks for when apps get no file
 //!   dialog from the desktop portal (see `crate::portal_check`).
 //! * The File Picker window is not in the Control Panel: it opens when an app
-//!   asks for a file through the desktop portal (see `picker`).
+//!   asks for a file through the desktop portal (see `picker`), or from the
+//!   Launcher and Screenshot applets.
 //!
 //! Panels stack, focus and move like client windows. Settings are stored in
 //! SQLite at ~/.config/simplewm/simplewm.db.
@@ -74,9 +76,6 @@ pub const APPLETS: [(&str, PanelId); 5] = [
 /// An editable text field in one of the panels.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Field {
-    /// Launcher entry `.0`.
-    Launcher(usize),
-    ScreenshotDir,
     /// File name in the File Picker (Save).
     PickName,
 }
@@ -84,15 +83,8 @@ pub enum Field {
 impl Field {
     pub fn panel(self) -> PanelId {
         match self {
-            Field::Launcher(_) => PanelId::Launcher,
-            Field::ScreenshotDir => PanelId::Screenshot,
             Field::PickName => PanelId::FilePicker,
         }
-    }
-
-    /// Whether edits are saved to the settings database.
-    fn persistent(self) -> bool {
-        !matches!(self, Field::PickName)
     }
 }
 
@@ -114,6 +106,7 @@ const HEADER_H: i32 = 26;
 const ROW_H: i32 = 32;
 const FIELD_H: i32 = 26;
 const FIELD_TEXT_PAD: i32 = 6;
+const CHANGE_W: i32 = 90;
 const REMOVE_W: i32 = 76;
 const ADD_W: i32 = 90;
 
@@ -131,6 +124,7 @@ const REFRESH_W: i32 = 100;
 
 // Screenshot applet
 const SHOT_W: i32 = 520;
+const CHOOSE_W: i32 = 90;
 const NOTE_H: i32 = 24;
 
 // Help applet
@@ -175,8 +169,11 @@ pub enum PanelHit {
     Quit,
     // Text field `.0`, with the char index under the pointer.
     Field(Field, usize),
+    Change(usize),
     Remove(usize),
     Add,
+    // Screenshot
+    ChooseShotDir,
     // Desktop Portal
     Refresh,
     // File Picker
@@ -230,14 +227,23 @@ struct ControlLayout {
 
 struct ScreenshotLayout {
     header: Rect,
-    field: Rect,
+    /// The folder, shown read-only.
+    path: Rect,
+    choose: Rect,
     note: Rect,
 }
 
 struct LauncherLayout {
     header: Rect,
-    fields: Vec<(Rect, Rect)>,
+    rows: Vec<LauncherRow>,
     add: Rect,
+}
+
+/// One entry: its path (read-only), Change and Remove buttons.
+struct LauncherRow {
+    path: Rect,
+    change: Rect,
+    remove: Rect,
 }
 
 /// A row in the Environment or Desktop Portal window.
@@ -439,7 +445,7 @@ pub struct Panels {
 
     // Launcher settings
     pub entries: Vec<String>,
-    /// Screenshot folder as typed (may be empty or start with ~).
+    /// Screenshot folder (may be empty; older settings may start with ~).
     shot_dir: String,
     /// Field being edited and the caret position (in chars).
     pub editing: Option<Field>,
@@ -550,18 +556,20 @@ impl Panels {
         Some(PathBuf::from(dir))
     }
 
+    /// Set the screenshot folder (chosen in the File Picker) and save it.
+    pub fn set_screenshot_dir(&mut self, dir: &Path) {
+        self.shot_dir = dir.display().to_string();
+        self.save();
+    }
+
     fn field_text(&self, f: Field) -> &String {
         match f {
-            Field::Launcher(i) => &self.entries[i],
-            Field::ScreenshotDir => &self.shot_dir,
             Field::PickName => &self.picker.name,
         }
     }
 
     fn field_text_mut(&mut self, f: Field) -> &mut String {
         match f {
-            Field::Launcher(i) => &mut self.entries[i],
-            Field::ScreenshotDir => &mut self.shot_dir,
             Field::PickName => &mut self.picker.name,
         }
     }
@@ -621,16 +629,19 @@ impl Panels {
         let mut y = c.loc.y + PAD;
         let header = Rectangle::new((x, y).into(), (inner_w, HEADER_H).into());
         y += HEADER_H;
-        let field_w = inner_w - REMOVE_W - 8;
-        let mut fields = Vec::new();
+        let path_w = inner_w - CHANGE_W - REMOVE_W - 16;
+        let mut rows = Vec::new();
         for _ in &self.entries {
-            let field = Rectangle::new((x, y).into(), (field_w, FIELD_H).into());
-            let remove = Rectangle::new((x + field_w + 8, y).into(), (REMOVE_W, FIELD_H).into());
-            fields.push((field, remove));
+            let change_x = x + path_w + 8;
+            rows.push(LauncherRow {
+                path: Rectangle::new((x, y).into(), (path_w, FIELD_H).into()),
+                change: Rectangle::new((change_x, y).into(), (CHANGE_W, FIELD_H).into()),
+                remove: Rectangle::new((change_x + CHANGE_W + 8, y).into(), (REMOVE_W, FIELD_H).into()),
+            });
             y += ROW_H;
         }
         let add = Rectangle::new((x, y + 4).into(), (ADD_W, BTN_H).into());
-        LauncherLayout { header, fields, add }
+        LauncherLayout { header, rows, add }
     }
 
     fn screenshot_layout(&self) -> ScreenshotLayout {
@@ -638,9 +649,11 @@ impl Panels {
         let x = c.loc.x + PAD;
         let w = c.size.w - 2 * PAD;
         let y = c.loc.y + PAD;
+        let path_w = w - CHOOSE_W - 8;
         ScreenshotLayout {
             header: Rectangle::new((x, y).into(), (w, HEADER_H).into()),
-            field: Rectangle::new((x, y + HEADER_H).into(), (w, FIELD_H).into()),
+            path: Rectangle::new((x, y + HEADER_H).into(), (path_w, FIELD_H).into()),
+            choose: Rectangle::new((x + path_w + 8, y + HEADER_H).into(), (CHOOSE_W, FIELD_H).into()),
             note: Rectangle::new((x, y + HEADER_H + FIELD_H).into(), (w, NOTE_H).into()),
         }
     }
@@ -699,12 +712,11 @@ impl Panels {
             }
             PanelId::Launcher => {
                 let l = self.launcher_layout();
-                for (i, (field, remove)) in l.fields.iter().enumerate() {
-                    if field.to_f64().contains(p) {
-                        let f = Field::Launcher(i);
-                        return Some(PanelHit::Field(f, self.char_at(text, f, *field, p.x)));
+                for (i, row) in l.rows.iter().enumerate() {
+                    if row.change.to_f64().contains(p) {
+                        return Some(PanelHit::Change(i));
                     }
-                    if remove.to_f64().contains(p) {
+                    if row.remove.to_f64().contains(p) {
                         return Some(PanelHit::Remove(i));
                     }
                 }
@@ -713,10 +725,8 @@ impl Panels {
                 }
             }
             PanelId::Screenshot => {
-                let field = self.screenshot_layout().field;
-                if field.to_f64().contains(p) {
-                    let f = Field::ScreenshotDir;
-                    return Some(PanelHit::Field(f, self.char_at(text, f, field, p.x)));
+                if self.screenshot_layout().choose.to_f64().contains(p) {
+                    return Some(PanelHit::ChooseShotDir);
                 }
             }
             PanelId::FilePicker => {
@@ -737,25 +747,35 @@ impl Panels {
     // --- Text field editing ---------------------------------------------------
 
     pub fn begin_edit(&mut self, field: Field, cursor: usize) {
-        if let Some(old) = self.editing.filter(|&old| old != field) {
-            if old.persistent() {
-                self.save();
-            }
-        }
         self.editing = Some(field);
         self.cursor = cursor.min(self.field_text(field).chars().count());
     }
 
     pub fn stop_editing(&mut self) {
-        if self.editing.take().is_some_and(Field::persistent) {
-            self.save();
-        }
+        self.editing = None;
     }
 
-    pub fn add_entry(&mut self) {
-        self.entries.push(String::new());
-        let i = self.entries.len() - 1;
-        self.begin_edit(Field::Launcher(i), 0);
+    // --- Launcher entries -------------------------------------------------------
+
+    /// Add executables chosen in the File Picker (skipping ones already listed).
+    pub fn add_entries(&mut self, paths: &[PathBuf]) {
+        for p in paths {
+            let p = p.display().to_string();
+            if !self.entries.contains(&p) {
+                self.entries.push(p);
+            }
+        }
+        self.save();
+    }
+
+    /// Replace entry `old` with `new` (appended if `old` was removed meanwhile).
+    pub fn change_entry(&mut self, old: &str, new: &Path) {
+        let new = new.display().to_string();
+        match self.entries.iter().position(|e| e == old) {
+            Some(i) => self.entries[i] = new,
+            None => self.entries.push(new),
+        }
+        self.save();
     }
 
     pub fn remove_entry(&mut self, i: usize) {
@@ -763,11 +783,6 @@ impl Panels {
             return;
         }
         self.entries.remove(i);
-        self.editing = match self.editing {
-            Some(Field::Launcher(e)) if e == i => None,
-            Some(Field::Launcher(e)) if e > i => Some(Field::Launcher(e - 1)),
-            other => other,
-        };
         self.save();
     }
 
@@ -777,21 +792,18 @@ impl Panels {
             return;
         };
         let len = self.field_text(f).chars().count();
-        let mut changed = false;
         match sym {
             keysyms::KEY_BackSpace => {
                 if self.cursor > 0 {
                     let c = self.cursor - 1;
                     remove_char(self.field_text_mut(f), c);
                     self.cursor -= 1;
-                    changed = true;
                 }
             }
             keysyms::KEY_Delete | keysyms::KEY_KP_Delete => {
                 if self.cursor < len {
                     let c = self.cursor;
                     remove_char(self.field_text_mut(f), c);
-                    changed = true;
                 }
             }
             keysyms::KEY_Left | keysyms::KEY_KP_Left => self.cursor = self.cursor.saturating_sub(1),
@@ -799,51 +811,17 @@ impl Panels {
             keysyms::KEY_Home | keysyms::KEY_KP_Home => self.cursor = 0,
             keysyms::KEY_End | keysyms::KEY_KP_End => self.cursor = len,
             keysyms::KEY_Return | keysyms::KEY_KP_Enter | keysyms::KEY_Escape => self.stop_editing(),
-            keysyms::KEY_Tab | keysyms::KEY_Down | keysyms::KEY_KP_Down => {
-                if let Field::Launcher(i) = f {
-                    let next = (i + 1) % self.entries.len();
-                    let c = self.cursor;
-                    self.begin_edit(Field::Launcher(next), c);
-                }
-            }
-            keysyms::KEY_ISO_Left_Tab | keysyms::KEY_Up | keysyms::KEY_KP_Up => {
-                if let Field::Launcher(i) = f {
-                    let prev = (i + self.entries.len() - 1) % self.entries.len();
-                    let c = self.cursor;
-                    self.begin_edit(Field::Launcher(prev), c);
-                }
-            }
             _ => {
-                if let Some(c) = ch {
-                    if !ctrl && !c.is_control() {
-                        let cursor = self.cursor;
-                        insert_char(self.field_text_mut(f), cursor, c);
-                        self.cursor += 1;
-                        changed = true;
-                    }
+                if let Some(c) = ch
+                    && !ctrl
+                    && !c.is_control()
+                {
+                    let cursor = self.cursor;
+                    insert_char(self.field_text_mut(f), cursor, c);
+                    self.cursor += 1;
                 }
             }
         }
-        if changed && f.persistent() {
-            self.save();
-        }
-    }
-
-    fn char_at(&self, text: &TextRenderer, f: Field, field: Rect, x: f64) -> usize {
-        let s = self.field_text(f);
-        let cursor = (self.editing == Some(f)).then_some(self.cursor);
-        let view = field_view(text, s, cursor, field.size.w - 2 * FIELD_TEXT_PAD);
-        let mut pos = (field.loc.x + FIELD_TEXT_PAD) as f64;
-        let mut idx = view.start;
-        for c in s.chars().skip(view.start) {
-            let adv = text.measure(&c.to_string()) as f64;
-            if x < pos + adv / 2.0 {
-                break;
-            }
-            pos += adv;
-            idx += 1;
-        }
-        idx
     }
 
     fn save(&mut self) {
@@ -892,7 +870,7 @@ impl Panels {
             PanelId::ControlPanel => self.render_control(text, renderer, hovered, elems),
             PanelId::Launcher => self.render_launcher(text, renderer, hovered, elems),
             PanelId::Environment => self.render_environment(text, renderer, elems),
-            PanelId::Screenshot => self.render_screenshot(text, renderer, elems),
+            PanelId::Screenshot => self.render_screenshot(text, renderer, hovered, elems),
             PanelId::Help => self.render_help(text, renderer, elems),
             PanelId::Portal => self.render_portal(text, renderer, hovered, elems),
             PanelId::FilePicker => self.render_picker(text, renderer, hovered, elems),
@@ -1037,32 +1015,33 @@ impl Panels {
         }
     }
 
-    fn render_screenshot(&mut self, text: &mut TextRenderer, renderer: &mut GlesRenderer, elems: &mut Vec<CustomElement>) {
+    fn render_screenshot(
+        &mut self,
+        text: &mut TextRenderer,
+        renderer: &mut GlesRenderer,
+        hovered: Option<PanelHit>,
+        elems: &mut Vec<CustomElement>,
+    ) {
         let l = self.screenshot_layout();
-        let editing = self.editing == Some(Field::ScreenshotDir);
-        // Buffers: field, caret, ring.
-        let s = bufs(&mut self.screenshot.solids, 3);
+        // Buffers: path box, Choose button.
+        let s = bufs(&mut self.screenshot.solids, 2);
 
         elems.extend(ui::text_in(text, renderer, "Folder where screenshots are saved", l.header.loc.x, l.header));
-        let tx = l.field.loc.x + FIELD_TEXT_PAD;
-        if self.shot_dir.is_empty() && !editing {
-            elems.extend(ui::text_in_alpha(text, renderer, "/path/to/folder", tx, l.field, 0.35));
+        let tx = l.path.loc.x + FIELD_TEXT_PAD;
+        let max = l.path.size.w - 2 * FIELD_TEXT_PAD;
+        if self.shot_dir.trim().is_empty() {
+            elems.extend(ui::text_in_alpha(text, renderer, "No folder chosen", tx, l.path, 0.35));
         } else {
-            let cursor = editing.then_some(self.cursor);
-            let view = field_view(text, &self.shot_dir, cursor, l.field.size.w - 2 * FIELD_TEXT_PAD);
-            elems.extend(ui::text_in(text, renderer, &view.visible, tx, l.field));
-            if let Some(cx) = view.caret_x {
-                let caret = Rectangle::new((tx + cx, l.field.loc.y + 4).into(), (1, l.field.size.h - 8).into());
-                elems.push(ui::solid(&mut s[1], caret, CARET));
-            }
+            let shown = text.fit(&self.shot_dir, max);
+            elems.extend(ui::text_in(text, renderer, &shown, tx, l.path));
         }
+        elems.extend(ui::text_centered(text, renderer, "Choose…", l.choose));
         let note = "Files are named simplewm-screenshot-<date>-<time>.png";
         elems.extend(ui::text_in_alpha(text, renderer, note, l.note.loc.x, l.note, 0.6));
 
-        elems.push(ui::solid(&mut s[0], l.field, if editing { FIELD_BG_EDIT } else { FIELD_BG }));
-        if editing {
-            elems.push(ui::solid(&mut s[2], edit_ring(l.field), FIELD_EDIT_RING));
-        }
+        elems.push(ui::solid(&mut s[0], l.path, FIELD_BG));
+        let cc = if hovered == Some(PanelHit::ChooseShotDir) { BUTTON_HOT } else { BUTTON };
+        elems.push(ui::solid(&mut s[1], l.choose, cc));
     }
 
     fn render_launcher(
@@ -1074,51 +1053,26 @@ impl Panels {
     ) {
         let l = self.launcher_layout();
         let n = self.entries.len();
-        // Buffers: [field, remove] per entry, then caret, ring, add.
-        let s = bufs(&mut self.launcher.solids, 2 * n + 3);
-        let (caret_i, ring_i, add_i) = (2 * n, 2 * n + 1, 2 * n + 2);
+        // Buffers: [path, change, remove] per entry, then add.
+        let s = bufs(&mut self.launcher.solids, 3 * n + 1);
 
-        elems.extend(ui::text_in(
-            text,
-            renderer,
-            "Executables shown in the Launcher menu (absolute paths)",
-            l.header.loc.x,
-            l.header,
-        ));
-        for (i, (field, remove)) in l.fields.iter().enumerate() {
-            let entry = &self.entries[i];
-            let editing = self.editing == Some(Field::Launcher(i));
-            let tx = field.loc.x + FIELD_TEXT_PAD;
-            if entry.is_empty() && !editing {
-                elems.extend(ui::text_in_alpha(text, renderer, "/path/to/executable", tx, *field, 0.35));
-            } else {
-                let cursor = editing.then_some(self.cursor);
-                let view = field_view(text, entry, cursor, field.size.w - 2 * FIELD_TEXT_PAD);
-                elems.extend(ui::text_in(text, renderer, &view.visible, tx, *field));
-                if let Some(cx) = view.caret_x {
-                    let caret = Rectangle::new((tx + cx, field.loc.y + 4).into(), (1, field.size.h - 8).into());
-                    elems.push(ui::solid(&mut s[caret_i], caret, CARET));
-                }
-            }
-            elems.extend(ui::text_centered(text, renderer, "Remove", *remove));
+        elems.extend(ui::text_in(text, renderer, "Executables shown in the Launcher menu", l.header.loc.x, l.header));
+        for (i, row) in l.rows.iter().enumerate() {
+            let tx = row.path.loc.x + FIELD_TEXT_PAD;
+            let shown = text.fit(&self.entries[i], row.path.size.w - 2 * FIELD_TEXT_PAD);
+            elems.extend(ui::text_in(text, renderer, &shown, tx, row.path));
+            elems.extend(ui::text_centered(text, renderer, "Change…", row.change));
+            elems.extend(ui::text_centered(text, renderer, "Remove", row.remove));
         }
-        elems.extend(ui::text_centered(text, renderer, "Add", l.add));
+        elems.extend(ui::text_centered(text, renderer, "Add…", l.add));
 
-        for (i, (field, remove)) in l.fields.iter().enumerate() {
-            let color = if self.editing == Some(Field::Launcher(i)) { FIELD_BG_EDIT } else { FIELD_BG };
-            elems.push(ui::solid(&mut s[2 * i], *field, color));
-            let rc = if hovered == Some(PanelHit::Remove(i)) { BUTTON_HOT } else { BUTTON };
-            elems.push(ui::solid(&mut s[2 * i + 1], *remove, rc));
+        let button = |hit: PanelHit| if hovered == Some(hit) { BUTTON_HOT } else { BUTTON };
+        for (i, row) in l.rows.iter().enumerate() {
+            elems.push(ui::solid(&mut s[3 * i], row.path, FIELD_BG));
+            elems.push(ui::solid(&mut s[3 * i + 1], row.change, button(PanelHit::Change(i))));
+            elems.push(ui::solid(&mut s[3 * i + 2], row.remove, button(PanelHit::Remove(i))));
         }
-        let editing = match self.editing {
-            Some(Field::Launcher(i)) => l.fields.get(i),
-            _ => None,
-        };
-        if let Some((field, _)) = editing {
-            elems.push(ui::solid(&mut s[ring_i], edit_ring(*field), FIELD_EDIT_RING));
-        }
-        let ac = if hovered == Some(PanelHit::Add) { BUTTON_HOT } else { BUTTON };
-        elems.push(ui::solid(&mut s[add_i], l.add, ac));
+        elems.push(ui::solid(&mut s[3 * n], l.add, button(PanelHit::Add)));
     }
 }
 
