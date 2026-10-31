@@ -7,7 +7,9 @@ use smithay::{
     output::Output,
     reexports::{
         calloop::{
-            EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, generic::Generic,
+            EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction,
+            channel::{self, Sender},
+            generic::Generic,
         },
         wayland_server::{
             Display, DisplayHandle,
@@ -29,6 +31,7 @@ use smithay::{
 
 use crate::{
     panel::{EnvRow, PanelId, Panels},
+    screenshot::SaveResult,
     ui::{self, Ui},
 };
 
@@ -72,6 +75,8 @@ pub struct State {
     pub windows_opened: u32,
     /// Backend details recorded at startup, shown in the Environment applet.
     pub startup_info: Vec<(String, String)>,
+    /// Screenshot worker threads report back through this.
+    pub screenshot_tx: Sender<SaveResult>,
 }
 
 impl State {
@@ -95,6 +100,16 @@ impl State {
 
         let socket_name = Self::init_wayland_listener(display, event_loop);
         tracing::info!(?socket_name, "listening on wayland socket");
+
+        let (screenshot_tx, screenshot_rx) = channel::channel::<SaveResult>();
+        event_loop
+            .handle()
+            .insert_source(screenshot_rx, |event, _, state| {
+                if let channel::Event::Msg(result) = event {
+                    state.screenshot_saved(result);
+                }
+            })
+            .expect("failed to init screenshot channel");
 
         Self {
             start_time,
@@ -123,6 +138,7 @@ impl State {
             backend: None,
             windows_opened: 0,
             startup_info: Vec::new(),
+            screenshot_tx,
         }
     }
 
@@ -244,7 +260,7 @@ impl State {
     /// Give a panel focus: raise it and take keyboard focus away from client
     /// windows.
     pub fn focus_panel(&mut self, id: PanelId) {
-        if id != PanelId::Launcher {
+        if self.panels.editing.map(|f| f.panel()) != Some(id) {
             self.panels.stop_editing();
         }
         self.panels.active = Some(id);

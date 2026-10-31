@@ -1,7 +1,10 @@
 //! Compositor-drawn UI: top bar, menus, window decorations and the cursor.
 //! Contains layout, hit testing and render element generation.
 
-use std::cell::RefCell;
+use std::{
+    cell::RefCell,
+    time::{Duration, Instant},
+};
 
 use smithay::{
     backend::renderer::{
@@ -24,6 +27,7 @@ use smithay::{
 use crate::{
     grabs::Edges,
     panel::{PanelHit, PanelId},
+    screenshot::Selecting,
     state::{StackEntry, State},
     text::TextRenderer,
 };
@@ -68,6 +72,22 @@ const ICON_SCREEN: [f32; 4] = [0.30, 0.32, 0.37, 1.0];
 const ICON_FILL: [f32; 4] = [0.45, 0.62, 0.90, 1.0];
 const ICON_FILL_HOT: [f32; 4] = [0.95, 0.97, 1.0, 1.0];
 const SIZE_HOT: [f32; 4] = [1.0 * 0.2, 1.0 * 0.2, 1.0 * 0.2, 0.2];
+
+// Screenshot selection
+const SHOT_DIM: [f32; 4] = [0.0, 0.0, 0.0, 0.45];
+const SHOT_EDGE: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+const CROSS_DARK: [f32; 4] = [0.0, 0.0, 0.0, 0.8];
+const CROSS_ARM: i32 = 10;
+/// Solid buffers used by the selection overlay: crosshair (2 light + 2
+/// dark), 4 dim rects, 4 edges.
+const SHOT_BUFS: usize = 12;
+
+// Toast
+const TOAST_BG: [f32; 4] = [0.10, 0.11, 0.13, 0.92];
+const TOAST_EDGE: [f32; 4] = [0.25, 0.42, 0.70, 1.0];
+const TOAST_PAD: i32 = 14;
+const TOAST_H: i32 = 32;
+const TOAST_TIME: Duration = Duration::from_millis(2500);
 
 /// Outline drawn on top for windows hidden entirely behind others.
 const HIDDEN_OUTLINE: [f32; 4] = [0.90, 0.15, 0.15, 1.0];
@@ -191,6 +211,7 @@ impl Frame {
 pub enum BarButton {
     ControlPanel,
     Launcher,
+    Screenshot,
 }
 
 impl BarButton {
@@ -198,6 +219,7 @@ impl BarButton {
         match self {
             BarButton::ControlPanel => "Control Panel",
             BarButton::Launcher => "Launcher",
+            BarButton::Screenshot => "Screenshot",
         }
     }
 }
@@ -220,11 +242,14 @@ fn clock_slot_width(text: &TextRenderer) -> i32 {
         .unwrap()
 }
 
-/// The bar items (Control Panel, Launcher, clock) are laid out as one group
-/// centered in the bar. Returns the button rects (in global coordinates) and
-/// the clock's x position.
-pub fn bar_layout(text: &TextRenderer, out: Rectangle<i32, Logical>) -> ([(BarButton, Rectangle<i32, Logical>); 2], i32) {
-    let labels = [BarButton::ControlPanel, BarButton::Launcher];
+const BAR_BUTTONS: [BarButton; 3] = [BarButton::ControlPanel, BarButton::Launcher, BarButton::Screenshot];
+type BarRects = [(BarButton, Rectangle<i32, Logical>); BAR_BUTTONS.len()];
+
+/// The bar items (Control Panel, Launcher, Screenshot, clock) are laid out as
+/// one group centered in the bar. Returns the button rects (in global
+/// coordinates) and the clock's x position.
+pub fn bar_layout(text: &TextRenderer, out: Rectangle<i32, Logical>) -> (BarRects, i32) {
+    let labels = BAR_BUTTONS;
     let widths = labels.map(|b| text.measure(b.label()) + 2 * BAR_BUTTON_PAD);
     let clock_w = clock_slot_width(text);
     let total = widths.iter().sum::<i32>() + BAR_GAP + CLOCK_GAP + clock_w;
@@ -232,7 +257,7 @@ pub fn bar_layout(text: &TextRenderer, out: Rectangle<i32, Logical>) -> ([(BarBu
     let mut x = out.loc.x + (out.size.w - total) / 2;
     let y = out.loc.y + 4;
     let h = BAR_HEIGHT - 8;
-    let mut rects = [(BarButton::ControlPanel, Rectangle::default()); 2];
+    let mut rects = [(BarButton::ControlPanel, Rectangle::default()); BAR_BUTTONS.len()];
     for (i, b) in labels.into_iter().enumerate() {
         rects[i] = (b, Rectangle::new((x, y).into(), (widths[i], h).into()));
         x += widths[i] + BAR_GAP;
@@ -241,7 +266,7 @@ pub fn bar_layout(text: &TextRenderer, out: Rectangle<i32, Logical>) -> ([(BarBu
     (rects, clock_x)
 }
 
-pub fn bar_buttons(text: &TextRenderer, out: Rectangle<i32, Logical>) -> [(BarButton, Rectangle<i32, Logical>); 2] {
+pub fn bar_buttons(text: &TextRenderer, out: Rectangle<i32, Logical>) -> BarRects {
     bar_layout(text, out).0
 }
 
@@ -447,8 +472,14 @@ impl Default for DecoBuffers {
 pub struct Ui {
     pub text: TextRenderer,
     pub menu: Option<OpenMenu>,
+    /// Screenshot selection mode.
+    pub shot: Option<Selecting>,
+    /// Short message shown below the bar, and when it was posted.
+    toast: Option<(String, Instant)>,
     bar_bg: SolidColorBuffer,
-    bar_buttons: [SolidColorBuffer; 2],
+    bar_buttons: [SolidColorBuffer; BAR_BUTTONS.len()],
+    shot_bufs: Vec<SolidColorBuffer>,
+    toast_bufs: [SolidColorBuffer; 2],
     menu_bg: SolidColorBuffer,
     menu_hl: SolidColorBuffer,
     icon_screens: Vec<SolidColorBuffer>,
@@ -463,8 +494,12 @@ impl Ui {
         Self {
             text: TextRenderer::new(),
             menu: None,
+            shot: None,
+            toast: None,
             bar_bg: solid_buffer(),
-            bar_buttons: [solid_buffer(), solid_buffer()],
+            bar_buttons: BAR_BUTTONS.map(|_| solid_buffer()),
+            shot_bufs: (0..SHOT_BUFS).map(|_| solid_buffer()).collect(),
+            toast_bufs: [solid_buffer(), solid_buffer()],
             menu_bg: solid_buffer(),
             menu_hl: solid_buffer(),
             icon_screens: SIZE_OPTIONS.iter().map(|_| solid_buffer()).collect(),
@@ -503,6 +538,10 @@ impl Ui {
             + 2 * MENU_PAD;
         let h = items.len() as i32 * MENU_ITEM_H + 2 * MENU_PAD;
         (w, h)
+    }
+
+    pub fn show_toast(&mut self, message: &str) {
+        self.toast = Some((message.to_string(), Instant::now()));
     }
 
     pub fn forget_window(&mut self, window: &Window) {
@@ -610,15 +649,52 @@ impl State {
 
     /// Build all render elements, front-most first.
     pub fn render_elements(&mut self, renderer: &mut GlesRenderer) -> Vec<CustomElement> {
+        self.build_elements(renderer, false)
+    }
+
+    /// Render elements, front-most first. For a screenshot `capture` leaves
+    /// out the cursor, hover highlights, the selection overlay and the toast.
+    pub fn build_elements(&mut self, renderer: &mut GlesRenderer, capture: bool) -> Vec<CustomElement> {
         let mut elems: Vec<CustomElement> = Vec::new();
         let ptr = self.pointer_location;
         let ptr_i = ptr.to_i32_round::<i32>();
         let out = self.output_geometry();
-        let hovered = self.hit_test(ptr);
+        let selecting = self.ui.shot.is_some();
+        let hovered = if capture || selecting { Hit::Background } else { self.hit_test(ptr) };
         let focused = self.focused_window();
         let hidden = self.hidden_frames();
 
-        // --- cursor ---------------------------------------------------------
+        if !capture {
+            if let Some(sel) = &self.ui.shot {
+                let rect = sel.rect(ptr);
+                screenshot_overlay(&mut self.ui.shot_bufs, out, ptr_i, rect, &mut elems);
+            } else {
+                self.cursor_elements(renderer, ptr_i, &mut elems);
+            }
+            let ui = &mut self.ui;
+            if let Some((msg, since)) = ui.toast.as_ref() {
+                if since.elapsed() < TOAST_TIME {
+                    let w = ui.text.measure(msg) + 2 * TOAST_PAD;
+                    let r = Rectangle::new(
+                        (out.loc.x + (out.size.w - w) / 2, out.loc.y + BAR_HEIGHT + 12).into(),
+                        (w, TOAST_H).into(),
+                    );
+                    let msg = msg.clone();
+                    elems.extend(text_centered(&mut ui.text, renderer, &msg, r));
+                    elems.push(solid(&mut ui.toast_bufs[0], r, TOAST_BG));
+                    let edge = Rectangle::new(r.loc - Point::from((1, 1)), r.size + (2, 2).into());
+                    elems.push(solid(&mut ui.toast_bufs[1], edge, TOAST_EDGE));
+                } else {
+                    ui.toast = None;
+                }
+            }
+        }
+
+        self.scene_elements(renderer, out, hovered, focused, hidden, &mut elems);
+        elems
+    }
+
+    fn cursor_elements(&mut self, renderer: &mut GlesRenderer, ptr_i: Point<i32, Logical>, elems: &mut Vec<CustomElement>) {
         let cursor_status = self.cursor_status.clone();
         match cursor_status {
             CursorImageStatus::Hidden => {}
@@ -654,7 +730,18 @@ impl State {
                 }
             }
         }
+    }
 
+    /// Menus, bar, windows and panels, front-most first.
+    fn scene_elements(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        out: Rectangle<i32, Logical>,
+        hovered: Hit,
+        focused: Option<Window>,
+        hidden: Vec<Rectangle<i32, Logical>>,
+        elems: &mut Vec<CustomElement>,
+    ) {
         let ui = &mut self.ui;
 
         // --- open menu ------------------------------------------------------
@@ -723,7 +810,7 @@ impl State {
                         Hit::Panel(hid, h) if hid == id => Some(h),
                         _ => None,
                     };
-                    self.panels.render(id, &mut self.ui.text, renderer, hover, &mut elems);
+                    self.panels.render(id, &mut self.ui.text, renderer, hover, elems);
                     continue;
                 }
                 StackEntry::Window(w) => w,
@@ -761,7 +848,42 @@ impl State {
             elems.push(solid(&mut deco.right, frame.right, title_color));
             elems.push(solid(&mut deco.bottom, frame.bottom, title_color));
         }
-
-        elems
     }
+}
+
+/// Screenshot selection overlay, front-most first: a crosshair cursor, the
+/// selection's edges, and the dimmed rest of the screen.
+fn screenshot_overlay(
+    bufs: &mut [SolidColorBuffer],
+    out: Rectangle<i32, Logical>,
+    ptr: Point<i32, Logical>,
+    sel: Option<Rectangle<i32, Logical>>,
+    elems: &mut Vec<CustomElement>,
+) {
+    let rect = |x: i32, y: i32, w: i32, h: i32| Rectangle::new((x, y).into(), (w.max(0), h.max(0)).into());
+    let (cross, rest) = bufs.split_at_mut(4);
+    let (dim, edges) = rest.split_at_mut(4);
+
+    let (px, py, a) = (ptr.x, ptr.y, CROSS_ARM);
+    elems.push(solid(&mut cross[0], rect(px - a, py, 2 * a + 1, 1), SHOT_EDGE));
+    elems.push(solid(&mut cross[1], rect(px, py - a, 1, 2 * a + 1), SHOT_EDGE));
+    elems.push(solid(&mut cross[2], rect(px - a - 1, py - 1, 2 * a + 3, 3), CROSS_DARK));
+    elems.push(solid(&mut cross[3], rect(px - 1, py - a - 1, 3, 2 * a + 3), CROSS_DARK));
+
+    let Some(s) = sel else {
+        elems.push(solid(&mut dim[0], out, SHOT_DIM));
+        return;
+    };
+    let (sx, sy, sw, sh) = (s.loc.x, s.loc.y, s.size.w, s.size.h);
+    // 1px edges just outside the selection, so it shows exactly what's saved.
+    elems.push(solid(&mut edges[0], rect(sx - 1, sy - 1, sw + 2, 1), SHOT_EDGE));
+    elems.push(solid(&mut edges[1], rect(sx - 1, sy + sh, sw + 2, 1), SHOT_EDGE));
+    elems.push(solid(&mut edges[2], rect(sx - 1, sy, 1, sh), SHOT_EDGE));
+    elems.push(solid(&mut edges[3], rect(sx + sw, sy, 1, sh), SHOT_EDGE));
+
+    let (ox, oy, ow, oh) = (out.loc.x, out.loc.y, out.size.w, out.size.h);
+    elems.push(solid(&mut dim[0], rect(ox, oy, ow, sy - oy), SHOT_DIM));
+    elems.push(solid(&mut dim[1], rect(ox, sy + sh, ow, oy + oh - (sy + sh)), SHOT_DIM));
+    elems.push(solid(&mut dim[2], rect(ox, sy, sx - ox, sh), SHOT_DIM));
+    elems.push(solid(&mut dim[3], rect(sx + sw, sy, ox + ow - (sx + sw), sh), SHOT_DIM));
 }

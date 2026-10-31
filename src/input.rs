@@ -23,6 +23,7 @@ const BTN_LEFT: u32 = 0x110;
 enum KeyAction {
     Vt(i32),
     Panel(u32, Option<char>, bool),
+    CancelScreenshot,
     Swallow,
 }
 
@@ -55,7 +56,15 @@ impl State {
                                 (sym - keysyms::KEY_XF86Switch_VT_1 + 1) as i32,
                             ));
                         }
-                        if state.panels.active == Some(PanelId::Launcher) && state.panels.editing.is_some() {
+                        if state.ui.shot.is_some() && sym == keysyms::KEY_Escape {
+                            return FilterResult::Intercept(if pressed {
+                                KeyAction::CancelScreenshot
+                            } else {
+                                KeyAction::Swallow
+                            });
+                        }
+                        let editing_panel = state.panels.editing.map(|f| f.panel());
+                        if editing_panel.is_some() && editing_panel == state.panels.active {
                             if pressed {
                                 let ch = keysym.modified_sym().key_char();
                                 return FilterResult::Intercept(KeyAction::Panel(sym, ch, mods.ctrl));
@@ -72,6 +81,7 @@ impl State {
                         }
                     }
                     Some(KeyAction::Panel(sym, ch, ctrl)) => self.panels.key(sym, ch, ctrl),
+                    Some(KeyAction::CancelScreenshot) => self.cancel_screenshot(),
                     Some(KeyAction::Swallow) | None => {}
                 }
             }
@@ -91,6 +101,12 @@ impl State {
                 let button = event.button_code();
                 let state = event.state();
                 let pointer = self.seat.get_pointer().unwrap();
+
+                // Selecting a screenshot region takes over the pointer.
+                if self.ui.shot.is_some() {
+                    self.screenshot_button(button, state == ButtonState::Pressed);
+                    return;
+                }
 
                 if state == ButtonState::Pressed && !pointer.is_grabbed() {
                     if let Press::Consume = self.handle_press(button, serial) {
@@ -164,7 +180,7 @@ impl State {
 
         let pointer = self.seat.get_pointer().unwrap();
         let focus = match self.hit_test(pos) {
-            Hit::Content(_, surface, loc) => Some((surface, loc)),
+            Hit::Content(_, surface, loc) if self.ui.shot.is_none() => Some((surface, loc)),
             _ => None,
         };
         if focus.is_none() && !pointer.is_grabbed() {
@@ -331,6 +347,7 @@ impl State {
                 self.panels.show(PanelId::ControlPanel, out);
                 self.focus_panel(PanelId::ControlPanel);
             }
+            BarButton::Screenshot => self.start_screenshot(),
             BarButton::Launcher => {
                 let Some((_, rect)) = bar_buttons(&self.ui.text, out).into_iter().find(|(x, _)| *x == b) else {
                     return;

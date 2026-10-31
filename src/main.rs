@@ -2,6 +2,7 @@ mod grabs;
 mod handlers;
 mod input;
 mod panel;
+mod screenshot;
 mod state;
 mod text;
 mod ui;

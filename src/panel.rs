@@ -6,6 +6,7 @@
 //!   the Launcher menu.
 //! * The Environment applet window shows (read-only) how simplewm was started:
 //!   Wayland socket, backend devices, protocols, and environment variables.
+//! * The Screenshot applet window sets the folder screenshots are saved in.
 //! * The Help applet window shows a few static notes about simplewm.
 //!
 //! Panels stack, focus and move like client windows. Settings are stored in
@@ -32,6 +33,7 @@ pub enum PanelId {
     ControlPanel,
     Launcher,
     Environment,
+    Screenshot,
     Help,
 }
 
@@ -42,17 +44,36 @@ impl PanelId {
             PanelId::ControlPanel => "Control Panel",
             PanelId::Launcher => "Launcher",
             PanelId::Environment => "Environment",
+            PanelId::Screenshot => "Screenshot",
             PanelId::Help => "Help",
         }
     }
 }
 
 /// Applets shown as icons in the Control Panel: (name, window it opens).
-pub const APPLETS: [(&str, PanelId); 3] = [
+pub const APPLETS: [(&str, PanelId); 4] = [
     ("Launcher", PanelId::Launcher),
     ("Environment", PanelId::Environment),
+    ("Screenshot", PanelId::Screenshot),
     ("Help", PanelId::Help),
 ];
+
+/// An editable text field in one of the panels.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Field {
+    /// Launcher entry `.0`.
+    Launcher(usize),
+    ScreenshotDir,
+}
+
+impl Field {
+    pub fn panel(self) -> PanelId {
+        match self {
+            Field::Launcher(_) => PanelId::Launcher,
+            Field::ScreenshotDir => PanelId::Screenshot,
+        }
+    }
+}
 
 // --- Layout (logical pixels) -----------------------------------------------
 
@@ -82,6 +103,10 @@ const ENV_ROW_H: i32 = 20;
 const ENV_KEY_W: i32 = 230;
 const SCROLLBAR_W: i32 = 6;
 
+// Screenshot applet
+const SHOT_W: i32 = 520;
+const NOTE_H: i32 = 24;
+
 // Help applet
 const HELP_W: i32 = 460;
 const HELP_ROW_H: i32 = 24;
@@ -107,6 +132,7 @@ const CELL_HOT: [f32; 4] = [0.20, 0.24, 0.32, 1.0];
 const TILE_LAUNCHER: [f32; 4] = [0.25, 0.45, 0.80, 1.0];
 const TILE_ENVIRONMENT: [f32; 4] = [0.20, 0.58, 0.42, 1.0];
 const TILE_HELP: [f32; 4] = [0.80, 0.50, 0.15, 1.0];
+const TILE_SCREENSHOT: [f32; 4] = [0.55, 0.32, 0.75, 1.0];
 const ENV_HEADER_BG: [f32; 4] = [0.19, 0.21, 0.26, 1.0];
 const SCROLL_TRACK: [f32; 4] = [0.18, 0.19, 0.23, 1.0];
 const SCROLL_THUMB: [f32; 4] = [0.40, 0.43, 0.50, 1.0];
@@ -120,8 +146,8 @@ pub enum PanelHit {
     // Control Panel
     Applet(usize),
     Quit,
-    // Launcher applet: text field `.0`, with the char index under the pointer.
-    Field(usize, usize),
+    // Text field `.0`, with the char index under the pointer.
+    Field(Field, usize),
     Remove(usize),
     Add,
 }
@@ -169,6 +195,12 @@ struct ControlLayout {
     cells: Vec<Rect>,
     separator: Rect,
     quit: Rect,
+}
+
+struct ScreenshotLayout {
+    header: Rect,
+    field: Rect,
+    note: Rect,
 }
 
 struct LauncherLayout {
@@ -229,6 +261,22 @@ fn applet_glyph(id: PanelId, tile: Rect) -> ([f32; 4], Vec<Rect>) {
             ];
             (TILE_HELP, rects)
         }
+        // Four corner brackets of a selection.
+        PanelId::Screenshot => {
+            let (x, y) = (tile.loc.x, tile.loc.y);
+            let r = |dx, dy, w, h| Rectangle::new((x + dx, y + dy).into(), (w, h).into());
+            let rects = vec![
+                r(10, 10, 10, 3),
+                r(10, 10, 3, 10),
+                r(28, 10, 10, 3),
+                r(35, 10, 3, 10),
+                r(10, 35, 10, 3),
+                r(10, 28, 3, 10),
+                r(28, 35, 10, 3),
+                r(35, 28, 3, 10),
+            ];
+            (TILE_SCREENSHOT, rects)
+        }
         PanelId::ControlPanel => (TILE_LAUNCHER, Vec::new()),
     }
 }
@@ -237,6 +285,7 @@ pub struct Panels {
     control: PanelWindow,
     launcher: PanelWindow,
     environment: PanelWindow,
+    screenshot: PanelWindow,
     help: PanelWindow,
     /// Environment rows (refreshed when the window is opened) and scroll state.
     env_rows: Vec<EnvRow>,
@@ -247,8 +296,10 @@ pub struct Panels {
 
     // Launcher settings
     pub entries: Vec<String>,
+    /// Screenshot folder as typed (may be empty or start with ~).
+    shot_dir: String,
     /// Field being edited and the caret position (in chars).
-    pub editing: Option<usize>,
+    pub editing: Option<Field>,
     pub cursor: usize,
     db: Option<Connection>,
 }
@@ -260,16 +311,19 @@ impl Panels {
             Some(conn) => load_entries(conn),
             None => vec![DEFAULT_LAUNCHER_ENTRY.to_string()],
         };
+        let shot_dir = db.as_ref().and_then(|c| load_setting(c, "screenshot_dir")).unwrap_or_default();
         Self {
             control: PanelWindow::default(),
             launcher: PanelWindow::default(),
             environment: PanelWindow::default(),
+            screenshot: PanelWindow::default(),
             help: PanelWindow::default(),
             env_rows: Vec::new(),
             env_scroll: 0,
             env_scroll_acc: 0.0,
             active: None,
             entries,
+            shot_dir,
             editing: None,
             cursor: 0,
             db,
@@ -281,6 +335,7 @@ impl Panels {
             PanelId::ControlPanel => &self.control,
             PanelId::Launcher => &self.launcher,
             PanelId::Environment => &self.environment,
+            PanelId::Screenshot => &self.screenshot,
             PanelId::Help => &self.help,
         }
     }
@@ -290,6 +345,7 @@ impl Panels {
             PanelId::ControlPanel => &mut self.control,
             PanelId::Launcher => &mut self.launcher,
             PanelId::Environment => &mut self.environment,
+            PanelId::Screenshot => &mut self.screenshot,
             PanelId::Help => &mut self.help,
         }
     }
@@ -315,6 +371,36 @@ impl Panels {
             .collect()
     }
 
+    /// Folder to save screenshots in, if one is set (`~` is expanded).
+    pub fn screenshot_dir(&self) -> Option<PathBuf> {
+        let dir = self.shot_dir.trim();
+        if dir.is_empty() {
+            return None;
+        }
+        let home = || std::env::var_os("HOME").map(PathBuf::from);
+        if dir == "~" {
+            return home();
+        }
+        if let Some(rest) = dir.strip_prefix("~/") {
+            return home().map(|h| h.join(rest));
+        }
+        Some(PathBuf::from(dir))
+    }
+
+    fn field_text(&self, f: Field) -> &String {
+        match f {
+            Field::Launcher(i) => &self.entries[i],
+            Field::ScreenshotDir => &self.shot_dir,
+        }
+    }
+
+    fn field_text_mut(&mut self, f: Field) -> &mut String {
+        match f {
+            Field::Launcher(i) => &mut self.entries[i],
+            Field::ScreenshotDir => &mut self.shot_dir,
+        }
+    }
+
     // --- geometry -------------------------------------------------------------
 
     fn content_size(&self, id: PanelId) -> (i32, i32) {
@@ -329,6 +415,7 @@ impl Panels {
                 (LAUNCHER_W, PAD + HEADER_H + rows * ROW_H + 4 + BTN_H + PAD)
             }
             PanelId::Environment => (ENV_W, ENV_H),
+            PanelId::Screenshot => (SHOT_W, PAD + HEADER_H + FIELD_H + NOTE_H + PAD),
             PanelId::Help => (HELP_W, PAD + HELP_LINES.len() as i32 * HELP_ROW_H + PAD),
         }
     }
@@ -379,6 +466,18 @@ impl Panels {
         LauncherLayout { header, fields, add }
     }
 
+    fn screenshot_layout(&self) -> ScreenshotLayout {
+        let c = self.content_rect(PanelId::Screenshot);
+        let x = c.loc.x + PAD;
+        let w = c.size.w - 2 * PAD;
+        let y = c.loc.y + PAD;
+        ScreenshotLayout {
+            header: Rectangle::new((x, y).into(), (w, HEADER_H).into()),
+            field: Rectangle::new((x, y + HEADER_H).into(), (w, FIELD_H).into()),
+            note: Rectangle::new((x, y + HEADER_H + FIELD_H).into(), (w, NOTE_H).into()),
+        }
+    }
+
     /// Open a panel. The first time, the Control Panel is centered and applet
     /// windows open offset from it.
     pub fn show(&mut self, id: PanelId, out: Rect) {
@@ -398,7 +497,7 @@ impl Panels {
     }
 
     pub fn close(&mut self, id: PanelId) {
-        if id == PanelId::Launcher {
+        if self.editing.map(Field::panel) == Some(id) {
             self.stop_editing();
         }
         self.win_mut(id).open = false;
@@ -435,7 +534,8 @@ impl Panels {
                 let l = self.launcher_layout();
                 for (i, (field, remove)) in l.fields.iter().enumerate() {
                     if field.to_f64().contains(p) {
-                        return Some(PanelHit::Field(i, self.char_at(text, i, *field, p.x)));
+                        let f = Field::Launcher(i);
+                        return Some(PanelHit::Field(f, self.char_at(text, f, *field, p.x)));
                     }
                     if remove.to_f64().contains(p) {
                         return Some(PanelHit::Remove(i));
@@ -445,19 +545,26 @@ impl Panels {
                     return Some(PanelHit::Add);
                 }
             }
+            PanelId::Screenshot => {
+                let field = self.screenshot_layout().field;
+                if field.to_f64().contains(p) {
+                    let f = Field::ScreenshotDir;
+                    return Some(PanelHit::Field(f, self.char_at(text, f, field, p.x)));
+                }
+            }
             PanelId::Environment | PanelId::Help => {}
         }
         Some(PanelHit::Body)
     }
 
-    // --- Launcher editing -----------------------------------------------------
+    // --- Text field editing ---------------------------------------------------
 
-    pub fn begin_edit(&mut self, field: usize, cursor: usize) {
+    pub fn begin_edit(&mut self, field: Field, cursor: usize) {
         if self.editing.is_some() && self.editing != Some(field) {
             self.save();
         }
         self.editing = Some(field);
-        self.cursor = cursor.min(self.entries[field].chars().count());
+        self.cursor = cursor.min(self.field_text(field).chars().count());
     }
 
     pub fn stop_editing(&mut self) {
@@ -469,7 +576,7 @@ impl Panels {
     pub fn add_entry(&mut self) {
         self.entries.push(String::new());
         let i = self.entries.len() - 1;
-        self.begin_edit(i, 0);
+        self.begin_edit(Field::Launcher(i), 0);
     }
 
     pub fn remove_entry(&mut self, i: usize) {
@@ -478,31 +585,33 @@ impl Panels {
         }
         self.entries.remove(i);
         self.editing = match self.editing {
-            Some(e) if e == i => None,
-            Some(e) if e > i => Some(e - 1),
+            Some(Field::Launcher(e)) if e == i => None,
+            Some(Field::Launcher(e)) if e > i => Some(Field::Launcher(e - 1)),
             other => other,
         };
         self.save();
     }
 
-    /// Handle a key press while a Launcher field is being edited.
+    /// Handle a key press while a text field is being edited.
     pub fn key(&mut self, sym: u32, ch: Option<char>, ctrl: bool) {
-        let Some(i) = self.editing else {
+        let Some(f) = self.editing else {
             return;
         };
-        let len = self.entries[i].chars().count();
+        let len = self.field_text(f).chars().count();
         let mut changed = false;
         match sym {
             keysyms::KEY_BackSpace => {
                 if self.cursor > 0 {
-                    remove_char(&mut self.entries[i], self.cursor - 1);
+                    let c = self.cursor - 1;
+                    remove_char(self.field_text_mut(f), c);
                     self.cursor -= 1;
                     changed = true;
                 }
             }
             keysyms::KEY_Delete | keysyms::KEY_KP_Delete => {
                 if self.cursor < len {
-                    remove_char(&mut self.entries[i], self.cursor);
+                    let c = self.cursor;
+                    remove_char(self.field_text_mut(f), c);
                     changed = true;
                 }
             }
@@ -512,19 +621,24 @@ impl Panels {
             keysyms::KEY_End | keysyms::KEY_KP_End => self.cursor = len,
             keysyms::KEY_Return | keysyms::KEY_KP_Enter | keysyms::KEY_Escape => self.stop_editing(),
             keysyms::KEY_Tab | keysyms::KEY_Down | keysyms::KEY_KP_Down => {
-                let next = (i + 1) % self.entries.len();
-                let c = self.cursor;
-                self.begin_edit(next, c);
+                if let Field::Launcher(i) = f {
+                    let next = (i + 1) % self.entries.len();
+                    let c = self.cursor;
+                    self.begin_edit(Field::Launcher(next), c);
+                }
             }
             keysyms::KEY_ISO_Left_Tab | keysyms::KEY_Up | keysyms::KEY_KP_Up => {
-                let prev = (i + self.entries.len() - 1) % self.entries.len();
-                let c = self.cursor;
-                self.begin_edit(prev, c);
+                if let Field::Launcher(i) = f {
+                    let prev = (i + self.entries.len() - 1) % self.entries.len();
+                    let c = self.cursor;
+                    self.begin_edit(Field::Launcher(prev), c);
+                }
             }
             _ => {
                 if let Some(c) = ch {
                     if !ctrl && !c.is_control() {
-                        insert_char(&mut self.entries[i], self.cursor, c);
+                        let cursor = self.cursor;
+                        insert_char(self.field_text_mut(f), cursor, c);
                         self.cursor += 1;
                         changed = true;
                     }
@@ -536,9 +650,9 @@ impl Panels {
         }
     }
 
-    fn char_at(&self, text: &TextRenderer, i: usize, field: Rect, x: f64) -> usize {
-        let s = &self.entries[i];
-        let cursor = (self.editing == Some(i)).then_some(self.cursor);
+    fn char_at(&self, text: &TextRenderer, f: Field, field: Rect, x: f64) -> usize {
+        let s = self.field_text(f);
+        let cursor = (self.editing == Some(f)).then_some(self.cursor);
         let view = field_view(text, s, cursor, field.size.w - 2 * FIELD_TEXT_PAD);
         let mut pos = (field.loc.x + FIELD_TEXT_PAD) as f64;
         let mut idx = view.start;
@@ -563,16 +677,21 @@ impl Panels {
             .map(|e| e.trim().to_string())
             .filter(|e| !e.is_empty())
             .collect();
+        let shot_dir = self.shot_dir.trim();
         let result = (|| -> rusqlite::Result<()> {
             let tx = conn.transaction()?;
             tx.execute("DELETE FROM launcher", [])?;
             for (i, p) in paths.iter().enumerate() {
                 tx.execute("INSERT INTO launcher (position, path) VALUES (?1, ?2)", (i as i64, p))?;
             }
+            tx.execute(
+                "INSERT OR REPLACE INTO settings (key, value) VALUES ('screenshot_dir', ?1)",
+                [shot_dir],
+            )?;
             tx.commit()
         })();
         if let Err(err) = result {
-            tracing::error!(?err, "failed to save launcher entries");
+            tracing::error!(?err, "failed to save settings");
         }
     }
 
@@ -594,6 +713,7 @@ impl Panels {
             PanelId::ControlPanel => self.render_control(text, renderer, hovered, elems),
             PanelId::Launcher => self.render_launcher(text, renderer, hovered, elems),
             PanelId::Environment => self.render_environment(text, renderer, elems),
+            PanelId::Screenshot => self.render_screenshot(text, renderer, elems),
             PanelId::Help => self.render_help(text, renderer, elems),
         }
 
@@ -744,6 +864,34 @@ impl Panels {
         }
     }
 
+    fn render_screenshot(&mut self, text: &mut TextRenderer, renderer: &mut GlesRenderer, elems: &mut Vec<CustomElement>) {
+        let l = self.screenshot_layout();
+        let editing = self.editing == Some(Field::ScreenshotDir);
+        // Buffers: field, caret, ring.
+        let s = bufs(&mut self.screenshot.solids, 3);
+
+        elems.extend(ui::text_in(text, renderer, "Folder where screenshots are saved", l.header.loc.x, l.header));
+        let tx = l.field.loc.x + FIELD_TEXT_PAD;
+        if self.shot_dir.is_empty() && !editing {
+            elems.extend(ui::text_in_alpha(text, renderer, "/path/to/folder", tx, l.field, 0.35));
+        } else {
+            let cursor = editing.then_some(self.cursor);
+            let view = field_view(text, &self.shot_dir, cursor, l.field.size.w - 2 * FIELD_TEXT_PAD);
+            elems.extend(ui::text_in(text, renderer, &view.visible, tx, l.field));
+            if let Some(cx) = view.caret_x {
+                let caret = Rectangle::new((tx + cx, l.field.loc.y + 4).into(), (1, l.field.size.h - 8).into());
+                elems.push(ui::solid(&mut s[1], caret, CARET));
+            }
+        }
+        let note = "Files are named simplewm-screenshot-<date>-<time>.png";
+        elems.extend(ui::text_in_alpha(text, renderer, note, l.note.loc.x, l.note, 0.6));
+
+        elems.push(ui::solid(&mut s[0], l.field, if editing { FIELD_BG_EDIT } else { FIELD_BG }));
+        if editing {
+            elems.push(ui::solid(&mut s[2], edit_ring(l.field), FIELD_EDIT_RING));
+        }
+    }
+
     fn render_launcher(
         &mut self,
         text: &mut TextRenderer,
@@ -766,7 +914,7 @@ impl Panels {
         ));
         for (i, (field, remove)) in l.fields.iter().enumerate() {
             let entry = &self.entries[i];
-            let editing = self.editing == Some(i);
+            let editing = self.editing == Some(Field::Launcher(i));
             let tx = field.loc.x + FIELD_TEXT_PAD;
             if entry.is_empty() && !editing {
                 elems.extend(ui::text_in_alpha(text, renderer, "/path/to/executable", tx, *field, 0.35));
@@ -784,20 +932,26 @@ impl Panels {
         elems.extend(ui::text_centered(text, renderer, "Add", l.add));
 
         for (i, (field, remove)) in l.fields.iter().enumerate() {
-            let color = if self.editing == Some(i) { FIELD_BG_EDIT } else { FIELD_BG };
+            let color = if self.editing == Some(Field::Launcher(i)) { FIELD_BG_EDIT } else { FIELD_BG };
             elems.push(ui::solid(&mut s[2 * i], *field, color));
             let rc = if hovered == Some(PanelHit::Remove(i)) { BUTTON_HOT } else { BUTTON };
             elems.push(ui::solid(&mut s[2 * i + 1], *remove, rc));
         }
-        if let Some((field, _)) = self.editing.and_then(|i| l.fields.get(i)) {
-            let mut ring = *field;
-            ring.loc -= (1, 1).into();
-            ring.size += (2, 2).into();
-            elems.push(ui::solid(&mut s[ring_i], ring, FIELD_EDIT_RING));
+        let editing = match self.editing {
+            Some(Field::Launcher(i)) => l.fields.get(i),
+            _ => None,
+        };
+        if let Some((field, _)) = editing {
+            elems.push(ui::solid(&mut s[ring_i], edit_ring(*field), FIELD_EDIT_RING));
         }
         let ac = if hovered == Some(PanelHit::Add) { BUTTON_HOT } else { BUTTON };
         elems.push(ui::solid(&mut s[add_i], l.add, ac));
     }
+}
+
+/// Focus ring just outside a field being edited.
+fn edit_ring(field: Rect) -> Rect {
+    Rectangle::new(field.loc - Point::from((1, 1)), field.size + (2, 2).into())
 }
 
 /// What part of a field's text is visible.
@@ -907,6 +1061,16 @@ fn open_db() -> Option<Connection> {
             return None;
         }
     }
+    if version < 2 {
+        let migrate = "BEGIN;
+             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+             PRAGMA user_version = 2;
+             COMMIT;";
+        if let Err(err) = conn.execute_batch(migrate) {
+            tracing::error!(?err, "failed to migrate database");
+            return None;
+        }
+    }
     tracing::info!(?path, "opened database");
     Some(conn)
 }
@@ -921,4 +1085,14 @@ fn load_entries(conn: &Connection) -> Vec<String> {
         tracing::error!(?err, "failed to load launcher entries");
         Vec::new()
     })
+}
+
+fn load_setting(conn: &Connection, key: &str) -> Option<String> {
+    conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
+        .map_err(|err| {
+            if !matches!(err, rusqlite::Error::QueryReturnedNoRows) {
+                tracing::error!(?err, key, "failed to load setting");
+            }
+        })
+        .ok()
 }

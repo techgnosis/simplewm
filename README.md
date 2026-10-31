@@ -41,11 +41,16 @@ Mouse:
 
 ## Top menu
 
-There is a top bar. Its items (two buttons and a clock) are grouped in the middle:
+There is a top bar. Its items (three buttons and a clock) are grouped in the middle:
 
 * Control Panel — opens the Control Panel window (see below)
 * Launcher — opens a menu listing the executables configured in the Control Panel,
   by file name (e.g. `alacritty`). Clicking one runs it.
+* Screenshot — the screen dims and the cursor becomes a crosshair; drag out a
+  rectangle and the shot is taken on release. Esc or a right click cancels. The
+  PNG is saved as `simplewm-screenshot-<date>-<time>.png` in the folder set in the
+  Screenshot applet, and a short "Saved …" message appears below the bar. If no
+  folder is set yet, the button opens the Screenshot applet instead.
 
 After the buttons is a clock (local time, e.g. `Sat 31 Oct  14:05`).
 
@@ -68,6 +73,8 @@ Applets:
   lock file paths), backend details (host compositor socket when nested; seat,
   GPU device and connector on a TTY; dmabuf render node), the output, the
   protocols advertised to clients, process info, and all environment variables.
+* **Screenshot** — one text field: the folder screenshots are saved in. There is
+  no default; `~` is expanded, and the folder is created if it doesn't exist.
 * **Help** — a short read-only note: the resolution is the monitor's preferred mode, there is
   no plain text config file, and there are no keyboard shortcuts.
 
