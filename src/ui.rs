@@ -69,8 +69,6 @@ const ICON_FILL: [f32; 4] = [0.45, 0.62, 0.90, 1.0];
 const ICON_FILL_HOT: [f32; 4] = [0.95, 0.97, 1.0, 1.0];
 const SIZE_HOT: [f32; 4] = [1.0 * 0.2, 1.0 * 0.2, 1.0 * 0.2, 0.2];
 
-const WS_ACTIVE: [f32; 4] = [0.45, 0.62, 0.90, 1.0];
-const WS_INACTIVE: [f32; 4] = [0.32, 0.34, 0.40, 1.0];
 /// Outline drawn on top for windows hidden entirely behind others.
 const HIDDEN_OUTLINE: [f32; 4] = [0.90, 0.15, 0.15, 1.0];
 
@@ -222,40 +220,14 @@ fn clock_slot_width(text: &TextRenderer) -> i32 {
         .unwrap()
 }
 
-// Workspace indicator: two small panes side by side.
-const WS_PANE_W: i32 = 18;
-const WS_PANE_H: i32 = 12;
-const WS_PANE_GAP: i32 = 3;
-const WS_PAD: i32 = 6;
-const WS_W: i32 = 2 * WS_PANE_W + WS_PANE_GAP + 2 * WS_PAD;
-
-pub struct BarLayout {
-    pub buttons: [(BarButton, Rectangle<i32, Logical>); 2],
-    /// Workspace indicator (right-click to switch).
-    pub workspace: Rectangle<i32, Logical>,
-    pub clock_x: i32,
-}
-
-impl BarLayout {
-    /// The two workspace panes (left, right).
-    pub fn workspace_panes(&self) -> [Rectangle<i32, Logical>; 2] {
-        let r = self.workspace;
-        let y = r.loc.y + (r.size.h - WS_PANE_H) / 2;
-        let x0 = r.loc.x + WS_PAD;
-        [
-            Rectangle::new((x0, y).into(), (WS_PANE_W, WS_PANE_H).into()),
-            Rectangle::new((x0 + WS_PANE_W + WS_PANE_GAP, y).into(), (WS_PANE_W, WS_PANE_H).into()),
-        ]
-    }
-}
-
-/// The bar items (Control Panel, Launcher, workspace indicator, clock) are
-/// laid out as one group centered in the bar, in global coordinates.
-pub fn bar_layout(text: &TextRenderer, out: Rectangle<i32, Logical>) -> BarLayout {
+/// The bar items (Control Panel, Launcher, clock) are laid out as one group
+/// centered in the bar. Returns the button rects (in global coordinates) and
+/// the clock's x position.
+pub fn bar_layout(text: &TextRenderer, out: Rectangle<i32, Logical>) -> ([(BarButton, Rectangle<i32, Logical>); 2], i32) {
     let labels = [BarButton::ControlPanel, BarButton::Launcher];
     let widths = labels.map(|b| text.measure(b.label()) + 2 * BAR_BUTTON_PAD);
     let clock_w = clock_slot_width(text);
-    let total = widths.iter().sum::<i32>() + BAR_GAP + WS_W + CLOCK_GAP + clock_w;
+    let total = widths.iter().sum::<i32>() + BAR_GAP + CLOCK_GAP + clock_w;
 
     let mut x = out.loc.x + (out.size.w - total) / 2;
     let y = out.loc.y + 4;
@@ -265,18 +237,12 @@ pub fn bar_layout(text: &TextRenderer, out: Rectangle<i32, Logical>) -> BarLayou
         rects[i] = (b, Rectangle::new((x, y).into(), (widths[i], h).into()));
         x += widths[i] + BAR_GAP;
     }
-    let workspace = Rectangle::new((x, y).into(), (WS_W, h).into());
-    x += WS_W;
-    let clock_x = x + CLOCK_GAP;
-    BarLayout {
-        buttons: rects,
-        workspace,
-        clock_x,
-    }
+    let clock_x = x - BAR_GAP + CLOCK_GAP;
+    (rects, clock_x)
 }
 
 pub fn bar_buttons(text: &TextRenderer, out: Rectangle<i32, Logical>) -> [(BarButton, Rectangle<i32, Logical>); 2] {
-    bar_layout(text, out).buttons
+    bar_layout(text, out).0
 }
 
 /// Size menu options: label and the target region in halves of the usable
@@ -378,8 +344,6 @@ pub enum Hit {
     Menu(Option<usize>),
     Panel(PanelId, PanelHit),
     BarButton(BarButton),
-    /// The workspace indicator in the bar.
-    Workspace,
     Bar,
     Close(Window),
     SizeButton(Window),
@@ -401,14 +365,10 @@ impl State {
 
         let out = self.output_geometry();
         if pos.y < (out.loc.y + BAR_HEIGHT) as f64 {
-            let bar = bar_layout(&self.ui.text, out);
-            for (b, r) in bar.buttons {
+            for (b, r) in bar_buttons(&self.ui.text, out) {
                 if r.to_f64().contains(pos) {
                     return Hit::BarButton(b);
                 }
-            }
-            if bar.workspace.to_f64().contains(pos) {
-                return Hit::Workspace;
             }
             return Hit::Bar;
         }
@@ -489,8 +449,6 @@ pub struct Ui {
     pub menu: Option<OpenMenu>,
     bar_bg: SolidColorBuffer,
     bar_buttons: [SolidColorBuffer; 2],
-    /// Workspace indicator: background, left pane, right pane.
-    ws: [SolidColorBuffer; 3],
     menu_bg: SolidColorBuffer,
     menu_hl: SolidColorBuffer,
     icon_screens: Vec<SolidColorBuffer>,
@@ -507,7 +465,6 @@ impl Ui {
             menu: None,
             bar_bg: solid_buffer(),
             bar_buttons: [solid_buffer(), solid_buffer()],
-            ws: [solid_buffer(), solid_buffer(), solid_buffer()],
             menu_bg: solid_buffer(),
             menu_hl: solid_buffer(),
             icon_screens: SIZE_OPTIONS.iter().map(|_| solid_buffer()).collect(),
@@ -744,16 +701,8 @@ impl State {
             Some(MenuKind::Launcher(_)) => Some(BarButton::Launcher),
             _ => None,
         };
-        let layout = bar_layout(&ui.text, out);
-        let clock_x = layout.clock_x;
-        // Workspace indicator: the current workspace's pane is highlighted.
-        for (i, pane) in layout.workspace_panes().into_iter().enumerate() {
-            let color = if i == self.workspace { WS_ACTIVE } else { WS_INACTIVE };
-            elems.push(solid(&mut ui.ws[1 + i], pane, color));
-        }
-        let ws_color = if matches!(hovered, Hit::Workspace) { BAR_BUTTON_HOT } else { BAR_BUTTON };
-        elems.push(solid(&mut ui.ws[0], layout.workspace, ws_color));
-        for (i, (b, r)) in layout.buttons.into_iter().enumerate() {
+        let (buttons, clock_x) = bar_layout(&ui.text, out);
+        for (i, (b, r)) in buttons.into_iter().enumerate() {
             elems.extend(text_centered(&mut ui.text, renderer, b.label(), r));
             let hot = open_bar == Some(b) || matches!(hovered, Hit::BarButton(h) if h == b);
             let color = if hot { BAR_BUTTON_HOT } else { BAR_BUTTON };

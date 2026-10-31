@@ -6,7 +6,6 @@ A very simple Wayland compositor written in Rust with Smithay.
 * No hand-edited config file; settings changed in the Control Panel are saved to
   `~/.config/simplewm/simplewm.db` (SQLite)
 * Stacking, floating windows
-* Exactly two workspaces (left and right) — never more, never fewer
 * Wayland only (no Xwayland / X11)
 
 ## Building and running
@@ -42,21 +41,13 @@ Mouse:
 
 ## Top menu
 
-There is a top bar. Its items (two buttons, the workspace indicator and a clock)
-are grouped in the middle:
+There is a top bar. Its items (two buttons and a clock) are grouped in the middle:
 
 * Control Panel — opens the Control Panel window (see below)
 * Launcher — opens a menu listing the executables configured in the Control Panel,
   by file name (e.g. `alacritty`). Clicking one runs it.
 
-After the buttons is the workspace indicator: two small panes, with the pane for the
-current workspace (left or right) highlighted. **Right-click it to switch** between
-the two workspaces, or push the pointer into the **top-right corner of the screen**
-(a hot corner; move away from the corner to use it again). Each window (including Control Panel windows) belongs to the
-workspace it was opened on; switching hides one workspace's windows and shows the
-other's, exactly where they were.
-
-Then a clock (local time, e.g. `Sat 31 Oct  14:05`).
+After the buttons is a clock (local time, e.g. `Sat 31 Oct  14:05`).
 
 ## Control Panel
 

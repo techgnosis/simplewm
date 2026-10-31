@@ -19,12 +19,6 @@ use crate::{
 };
 
 const BTN_LEFT: u32 = 0x110;
-const BTN_RIGHT: u32 = 0x111;
-
-/// Size of the top-right hot corner, and how far the pointer must move away
-/// before it can trigger again.
-const HOT_CORNER_SIZE: f64 = 2.0;
-const HOT_CORNER_REARM: f64 = 24.0;
 
 enum KeyAction {
     Vt(i32),
@@ -169,20 +163,6 @@ impl State {
         self.pointer_location = pos;
 
         let pointer = self.seat.get_pointer().unwrap();
-
-        // Hot corner: pushing the pointer into the top-right corner switches
-        // workspace. It re-arms once the pointer has moved away.
-        let right = out.loc.x + out.size.w;
-        let in_corner = pos.x >= right - HOT_CORNER_SIZE && pos.y < out.loc.y + HOT_CORNER_SIZE;
-        if in_corner {
-            if self.hot_corner_armed && !pointer.is_grabbed() {
-                self.hot_corner_armed = false;
-                self.switch_workspace();
-            }
-        } else if pos.x < right - HOT_CORNER_REARM || pos.y > out.loc.y + HOT_CORNER_REARM {
-            self.hot_corner_armed = true;
-        }
-
         let focus = match self.hit_test(pos) {
             Hit::Content(_, surface, loc) => Some((surface, loc)),
             _ => None,
@@ -202,7 +182,6 @@ impl State {
         if let Some(menu) = self.ui.menu.take() {
             match hit {
                 Hit::Menu(Some(i)) if button == BTN_LEFT => self.menu_action(menu.kind, i),
-                Hit::Workspace if button == BTN_RIGHT => self.switch_workspace(),
                 Hit::BarButton(b) if button == BTN_LEFT => {
                     // Clicking the button of the open menu just closes it.
                     let same = b == BarButton::Launcher && matches!(menu.kind, MenuKind::Launcher(_));
@@ -217,10 +196,6 @@ impl State {
 
         if button != BTN_LEFT {
             return match hit {
-                Hit::Workspace if button == BTN_RIGHT => {
-                    self.switch_workspace();
-                    Press::Consume
-                }
                 Hit::Content(w, ..) => {
                     self.focus_window(Some(&w));
                     Press::Forward
@@ -253,7 +228,7 @@ impl State {
                                 self.panels.set_environment(rows);
                             }
                             let out = self.output_geometry();
-                            self.panels.show(*applet, out, self.workspace);
+                            self.panels.show(*applet, out);
                             self.focus_panel(*applet);
                         }
                     }
@@ -303,7 +278,7 @@ impl State {
                 self.focus_window(Some(&w));
                 Press::Consume
             }
-            Hit::Menu(_) | Hit::Workspace | Hit::Bar | Hit::Background => Press::Consume,
+            Hit::Menu(_) | Hit::Bar | Hit::Background => Press::Consume,
         }
     }
 
@@ -353,7 +328,7 @@ impl State {
         let out = self.output_geometry();
         match b {
             BarButton::ControlPanel => {
-                self.panels.show(PanelId::ControlPanel, out, self.workspace);
+                self.panels.show(PanelId::ControlPanel, out);
                 self.focus_panel(PanelId::ControlPanel);
             }
             BarButton::Launcher => {

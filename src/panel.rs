@@ -142,8 +142,6 @@ struct FrameBuffers {
 #[derive(Default)]
 pub struct PanelWindow {
     pub open: bool,
-    /// Workspace (0 or 1) the panel was opened on.
-    pub workspace: usize,
     /// Top-left of the content area (set when first shown).
     pub loc: Option<Point<i32, Logical>>,
     frame: FrameBuffers,
@@ -264,9 +262,8 @@ impl Panels {
         }
     }
 
-    /// Open and on the given workspace.
-    pub fn is_visible(&self, id: PanelId, workspace: usize) -> bool {
-        self.win(id).open && self.win(id).workspace == workspace
+    pub fn is_open(&self, id: PanelId) -> bool {
+        self.win(id).open
     }
 
     pub fn loc(&self, id: PanelId) -> Option<Point<i32, Logical>> {
@@ -349,11 +346,9 @@ impl Panels {
         LauncherLayout { header, fields, add }
     }
 
-    /// Open a panel on `workspace` (moving it there if it's open elsewhere).
-    /// The first time, the Control Panel is centered and applet windows open
-    /// offset from it.
-    pub fn show(&mut self, id: PanelId, out: Rect, workspace: usize) {
-        self.win_mut(id).workspace = workspace;
+    /// Open a panel. The first time, the Control Panel is centered and applet
+    /// windows open offset from it.
+    pub fn show(&mut self, id: PanelId, out: Rect) {
         if self.win(id).loc.is_none() {
             let (w, h) = self.content_size(id);
             let min_y = out.loc.y + ui::BAR_HEIGHT + ui::TITLE_HEIGHT;
