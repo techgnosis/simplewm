@@ -40,6 +40,12 @@ pub const BAR_BUTTON_PAD: i32 = 12;
 pub const MENU_ITEM_H: i32 = 26;
 pub const MENU_PAD: i32 = 4;
 pub const MENU_MIN_W: i32 = 140;
+// Size menu icons: a small "screen" with the target region filled in.
+pub const ICON_W: i32 = 48;
+pub const ICON_H: i32 = 30;
+pub const ICON_PAD: i32 = 5;
+pub const ICON_CELL_W: i32 = ICON_W + 2 * ICON_PAD;
+pub const ICON_CELL_H: i32 = ICON_H + 2 * ICON_PAD;
 
 // Colors (premultiplied RGBA)
 const BG_COLOR: [f32; 4] = [0.16, 0.18, 0.22, 1.0];
@@ -53,6 +59,9 @@ const TITLE_UNFOCUSED: [f32; 4] = [0.27, 0.28, 0.31, 1.0];
 const CLOSE_COLOR: [f32; 4] = [0.80, 0.18, 0.18, 1.0];
 const CLOSE_HOT: [f32; 4] = [0.95, 0.30, 0.30, 1.0];
 const SIZE_COLOR: [f32; 4] = [0.0, 0.0, 0.0, 0.25];
+const ICON_SCREEN: [f32; 4] = [0.30, 0.32, 0.37, 1.0];
+const ICON_FILL: [f32; 4] = [0.45, 0.62, 0.90, 1.0];
+const ICON_FILL_HOT: [f32; 4] = [0.95, 0.97, 1.0, 1.0];
 const SIZE_HOT: [f32; 4] = [1.0 * 0.2, 1.0 * 0.2, 1.0 * 0.2, 0.2];
 
 pub const CLEAR_COLOR: [f32; 4] = BG_COLOR;
@@ -181,6 +190,28 @@ pub fn bar_buttons(text: &TextRenderer) -> [(BarButton, Rectangle<i32, Logical>)
     [make(BarButton::Settings), make(BarButton::Launcher)]
 }
 
+/// Size menu options: label and the target region in halves of the usable
+/// area, as (x0, y0, x1, y1) where 0 = start, 1 = middle, 2 = end.
+pub const SIZE_OPTIONS: [(&str, [i32; 4]); 7] = [
+    ("Left half", [0, 0, 1, 2]),
+    ("Right half", [1, 0, 2, 2]),
+    ("Top left", [0, 0, 1, 1]),
+    ("Top right", [1, 0, 2, 1]),
+    ("Bottom left", [0, 1, 1, 2]),
+    ("Bottom right", [1, 1, 2, 2]),
+    ("Full screen", [0, 0, 2, 2]),
+];
+
+const SIZE_LABELS: [&str; 7] = {
+    let mut labels = [""; 7];
+    let mut i = 0;
+    while i < 7 {
+        labels[i] = SIZE_OPTIONS[i].0;
+        i += 1;
+    }
+    labels
+};
+
 #[derive(Clone, PartialEq)]
 pub enum MenuKind {
     Settings,
@@ -193,7 +224,7 @@ impl MenuKind {
         match self {
             MenuKind::Settings => &["Quit"],
             MenuKind::Launcher => &["Alacritty"],
-            MenuKind::Size(_) => &["Left half", "Right half", "Full screen"],
+            MenuKind::Size(_) => &SIZE_LABELS,
         }
     }
 }
@@ -205,6 +236,12 @@ pub struct OpenMenu {
 
 impl OpenMenu {
     pub fn item_rect(&self, i: usize) -> Rectangle<i32, Logical> {
+        if let MenuKind::Size(_) = self.kind {
+            return Rectangle::new(
+                (self.rect.loc.x + MENU_PAD + i as i32 * ICON_CELL_W, self.rect.loc.y + MENU_PAD).into(),
+                (ICON_CELL_W, ICON_CELL_H).into(),
+            );
+        }
         Rectangle::new(
             (self.rect.loc.x + MENU_PAD, self.rect.loc.y + MENU_PAD + i as i32 * MENU_ITEM_H).into(),
             (self.rect.size.w - 2 * MENU_PAD, MENU_ITEM_H).into(),
@@ -214,6 +251,34 @@ impl OpenMenu {
     pub fn item_at(&self, p: Point<f64, Logical>) -> Option<usize> {
         (0..self.kind.items().len()).find(|&i| self.item_rect(i).to_f64().contains(p))
     }
+
+    /// Row under the icons of the Size menu that names the hovered option.
+    pub fn label_rect(&self) -> Rectangle<i32, Logical> {
+        Rectangle::new(
+            (self.rect.loc.x + MENU_PAD, self.rect.loc.y + MENU_PAD + ICON_CELL_H).into(),
+            (self.rect.size.w - 2 * MENU_PAD, MENU_ITEM_H).into(),
+        )
+    }
+}
+
+/// The small screen drawn for a Size option, and the filled target region.
+fn size_icon(cell: Rectangle<i32, Logical>, region: [i32; 4]) -> (Rectangle<i32, Logical>, Rectangle<i32, Logical>) {
+    let screen = Rectangle::new(
+        (cell.loc.x + ICON_PAD, cell.loc.y + ICON_PAD).into(),
+        (ICON_W, ICON_H).into(),
+    );
+    // Inner area, inset so the screen shows as a frame; regions get a 1px gap.
+    let inset = 2;
+    let ix = [screen.loc.x + inset, screen.loc.x + ICON_W / 2, screen.loc.x + ICON_W - inset];
+    let iy = [screen.loc.y + inset, screen.loc.y + ICON_H / 2, screen.loc.y + ICON_H - inset];
+    let [x0, y0, x1, y1] = region.map(|v| v as usize);
+    let gap = |v: usize| if v == 1 { 1 } else { 0 };
+    let left = ix[x0] + gap(x0);
+    let top = iy[y0] + gap(y0);
+    let right = ix[x1] - gap(x1);
+    let bottom = iy[y1] - gap(y1);
+    let fill = Rectangle::new((left, top).into(), (right - left, bottom - top).into());
+    (screen, fill)
 }
 
 // ---------------------------------------------------------------------------
@@ -320,6 +385,8 @@ pub struct Ui {
     bar_buttons: [SolidColorBuffer; 2],
     menu_bg: SolidColorBuffer,
     menu_hl: SolidColorBuffer,
+    icon_screens: Vec<SolidColorBuffer>,
+    icon_fills: Vec<SolidColorBuffer>,
     cursor: MemoryRenderBuffer,
 }
 
@@ -332,12 +399,32 @@ impl Ui {
             bar_buttons: [solid_buffer(), solid_buffer()],
             menu_bg: solid_buffer(),
             menu_hl: solid_buffer(),
+            icon_screens: SIZE_OPTIONS.iter().map(|_| solid_buffer()).collect(),
+            icon_fills: SIZE_OPTIONS.iter().map(|_| solid_buffer()).collect(),
             cursor: crate::text::arrow_cursor(),
         }
     }
 
     pub fn open_menu(&mut self, kind: MenuKind, anchor: Point<i32, Logical>, out: Rectangle<i32, Logical>) {
         let items = kind.items();
+        let (w, h) = if let MenuKind::Size(_) = kind {
+            (
+                items.len() as i32 * ICON_CELL_W + 2 * MENU_PAD,
+                ICON_CELL_H + MENU_ITEM_H + 2 * MENU_PAD,
+            )
+        } else {
+            self.list_menu_size(items)
+        };
+        let mut loc = anchor;
+        loc.x = loc.x.min(out.loc.x + out.size.w - w).max(out.loc.x);
+        loc.y = loc.y.min(out.loc.y + out.size.h - h).max(out.loc.y);
+        self.menu = Some(OpenMenu {
+            kind,
+            rect: Rectangle::new(loc, (w, h).into()),
+        });
+    }
+
+    fn list_menu_size(&self, items: &[&str]) -> (i32, i32) {
         let w = items
             .iter()
             .map(|t| self.text.measure(t) + 2 * BAR_BUTTON_PAD)
@@ -346,13 +433,7 @@ impl Ui {
             .max(MENU_MIN_W)
             + 2 * MENU_PAD;
         let h = items.len() as i32 * MENU_ITEM_H + 2 * MENU_PAD;
-        let mut loc = anchor;
-        loc.x = loc.x.min(out.loc.x + out.size.w - w).max(out.loc.x);
-        loc.y = loc.y.min(out.loc.y + out.size.h - h).max(out.loc.y);
-        self.menu = Some(OpenMenu {
-            kind,
-            rect: Rectangle::new(loc, (w, h).into()),
-        });
+        (w, h)
     }
 
     pub fn forget_window(&mut self, window: &Window) {
@@ -479,9 +560,22 @@ impl State {
                 Hit::Menu(Some(i)) => Some(i),
                 _ => None,
             };
-            for (i, label) in menu.kind.items().iter().enumerate() {
-                let r = menu.item_rect(i);
-                elems.extend(text_in(&mut ui.text, renderer, label, r.loc.x + BAR_BUTTON_PAD, r));
+            if let MenuKind::Size(_) = menu.kind {
+                if let Some(i) = hl {
+                    let label = SIZE_OPTIONS[i].0;
+                    elems.extend(text_centered(&mut ui.text, renderer, label, menu.label_rect()));
+                }
+                for (i, (_, region)) in SIZE_OPTIONS.iter().enumerate() {
+                    let (screen, fill) = size_icon(menu.item_rect(i), *region);
+                    let fill_color = if hl == Some(i) { ICON_FILL_HOT } else { ICON_FILL };
+                    elems.push(solid(&mut ui.icon_fills[i], fill, fill_color));
+                    elems.push(solid(&mut ui.icon_screens[i], screen, ICON_SCREEN));
+                }
+            } else {
+                for (i, label) in menu.kind.items().iter().enumerate() {
+                    let r = menu.item_rect(i);
+                    elems.extend(text_in(&mut ui.text, renderer, label, r.loc.x + BAR_BUTTON_PAD, r));
+                }
             }
             if let Some(i) = hl {
                 elems.push(solid(&mut ui.menu_hl, menu.item_rect(i), MENU_HL));

@@ -22,9 +22,11 @@ The compositor always draws its own title bar (server-side decorations are force
 The title bar shows the window title, and has two buttons on the right:
 
 * A red close button
-* A button that says Size. It opens a menu with:
+* A button that says Size. It opens a row of small screen icons, each showing the
+  region the window will fill (the hovered one is named underneath):
   * Left half
   * Right half
+  * Top left, Top right, Bottom left, Bottom right (quarters)
   * Full screen (fills the area below the top bar; the title bar stays)
 
 No windows are magnetic/snapped; they are always floating. Size moves and resizes the

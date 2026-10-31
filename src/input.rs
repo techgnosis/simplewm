@@ -269,26 +269,34 @@ impl State {
         }
     }
 
-    /// 0 = left half, 1 = right half, 2 = full screen (below the top bar).
+    /// Move/resize a window to one of the regions in `ui::SIZE_OPTIONS`.
     fn apply_size(&mut self, window: &Window, index: usize) {
         let Some(toplevel) = window.toplevel() else {
             return;
         };
-        let out = self.output_geometry();
-        let b = ui::BORDER;
-        let top = out.loc.y + ui::BAR_HEIGHT + ui::TITLE_HEIGHT;
-        let h = out.loc.y + out.size.h - b - top;
-        let half = out.size.w / 2;
-        let (x, w) = match index {
-            0 => (out.loc.x + b, half - 2 * b),
-            1 => (out.loc.x + half + b, out.size.w - half - 2 * b),
-            _ => (out.loc.x + b, out.size.w - 2 * b),
+        let Some((_, [x0, y0, x1, y1])) = ui::SIZE_OPTIONS.get(index).copied() else {
+            return;
         };
+
+        // Usable area below the top bar, split at the middle in each direction.
+        let out = self.output_geometry();
+        let area_x = [out.loc.x, out.loc.x + out.size.w / 2, out.loc.x + out.size.w];
+        let area_top = out.loc.y + ui::BAR_HEIGHT;
+        let area_h = out.size.h - ui::BAR_HEIGHT;
+        let area_y = [area_top, area_top + area_h / 2, area_top + area_h];
+
+        // Region covers the whole frame; shrink it to the client content.
+        let b = ui::BORDER;
+        let x = area_x[x0 as usize] + b;
+        let y = area_y[y0 as usize] + ui::TITLE_HEIGHT;
+        let w = area_x[x1 as usize] - b - x;
+        let h = area_y[y1 as usize] - b - y;
+
         toplevel.with_pending_state(|state| {
             state.size = Some((w.max(1), h.max(1)).into());
         });
         toplevel.send_pending_configure();
-        self.space.map_element(window.clone(), (x, top), false);
+        self.space.map_element(window.clone(), (x, y), false);
         self.focus_window(Some(window));
     }
 }
