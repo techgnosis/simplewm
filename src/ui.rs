@@ -71,6 +71,8 @@ const SIZE_HOT: [f32; 4] = [1.0 * 0.2, 1.0 * 0.2, 1.0 * 0.2, 0.2];
 
 const WS_ACTIVE: [f32; 4] = [0.45, 0.62, 0.90, 1.0];
 const WS_INACTIVE: [f32; 4] = [0.32, 0.34, 0.40, 1.0];
+/// Outline drawn on top for windows hidden entirely behind others.
+const HIDDEN_OUTLINE: [f32; 4] = [0.90, 0.15, 0.15, 1.0];
 
 pub const CLEAR_COLOR: [f32; 4] = BG_COLOR;
 
@@ -100,6 +102,25 @@ pub struct Frame {
     pub title_text_max: i32,
 }
 
+/// Visible frame (title bar + borders + content) around a content rect.
+pub fn frame_rect(content: Rectangle<i32, Logical>) -> Rectangle<i32, Logical> {
+    Rectangle::new(
+        content.loc - Point::from((BORDER, TITLE_HEIGHT)),
+        content.size + (2 * BORDER, TITLE_HEIGHT + BORDER).into(),
+    )
+}
+
+/// The four BORDER-thick edges just inside `r`.
+fn outline(r: Rectangle<i32, Logical>) -> [Rectangle<i32, Logical>; 4] {
+    let (x, y, w, h) = (r.loc.x, r.loc.y, r.size.w, r.size.h);
+    [
+        Rectangle::new((x, y).into(), (w, BORDER).into()),
+        Rectangle::new((x, y + h - BORDER).into(), (w, BORDER).into()),
+        Rectangle::new((x, y).into(), (BORDER, h).into()),
+        Rectangle::new((x + w - BORDER, y).into(), (BORDER, h).into()),
+    ]
+}
+
 pub fn size_button_width(text: &TextRenderer) -> i32 {
     text.measure("Size") + 16
 }
@@ -107,10 +128,7 @@ pub fn size_button_width(text: &TextRenderer) -> i32 {
 impl Frame {
     pub fn new(content: Rectangle<i32, Logical>, text: &TextRenderer) -> Self {
         let (x, y, w, h) = (content.loc.x, content.loc.y, content.size.w, content.size.h);
-        let frame = Rectangle::new(
-            (x - BORDER, y - TITLE_HEIGHT).into(),
-            (w + 2 * BORDER, h + TITLE_HEIGHT + BORDER).into(),
-        );
+        let frame = frame_rect(content);
         let title = Rectangle::new(frame.loc, (frame.size.w, TITLE_HEIGHT).into());
         let left = Rectangle::new((x - BORDER, y).into(), (BORDER, h).into());
         let right = Rectangle::new((x + w, y).into(), (BORDER, h).into());
@@ -477,6 +495,8 @@ pub struct Ui {
     menu_hl: SolidColorBuffer,
     icon_screens: Vec<SolidColorBuffer>,
     icon_fills: Vec<SolidColorBuffer>,
+    /// Edge buffers for hidden-window outlines, four per hidden window.
+    hidden_outlines: Vec<SolidColorBuffer>,
     cursor: MemoryRenderBuffer,
 }
 
@@ -492,6 +512,7 @@ impl Ui {
             menu_hl: solid_buffer(),
             icon_screens: SIZE_OPTIONS.iter().map(|_| solid_buffer()).collect(),
             icon_fills: SIZE_OPTIONS.iter().map(|_| solid_buffer()).collect(),
+            hidden_outlines: Vec::new(),
             cursor: crate::text::arrow_cursor(),
         }
     }
@@ -610,6 +631,26 @@ pub fn window_title(window: &Window) -> String {
 }
 
 impl State {
+    /// Frames of windows and panels that are completely hidden behind the
+    /// ones stacked above them (by any combination of them).
+    fn hidden_frames(&self) -> Vec<Rectangle<i32, Logical>> {
+        let mut above: Vec<Rectangle<i32, Logical>> = Vec::new();
+        let mut hidden = Vec::new();
+        for item in self.stack_top_down() {
+            let content = match &item {
+                StackEntry::Window(w) => self.space.element_geometry(w),
+                StackEntry::Panel(id) => Some(self.panels.content_rect(*id)),
+            };
+            let Some(content) = content else { continue };
+            let frame = frame_rect(content);
+            if !above.is_empty() && frame.subtract_rects(above.iter().copied()).is_empty() {
+                hidden.push(frame);
+            }
+            above.push(frame);
+        }
+        hidden
+    }
+
     /// Build all render elements, front-most first.
     pub fn render_elements(&mut self, renderer: &mut GlesRenderer) -> Vec<CustomElement> {
         let mut elems: Vec<CustomElement> = Vec::new();
@@ -618,6 +659,7 @@ impl State {
         let out = self.output_geometry();
         let hovered = self.hit_test(ptr);
         let focused = self.focused_window();
+        let hidden = self.hidden_frames();
 
         // --- cursor ---------------------------------------------------------
         let cursor_status = self.cursor_status.clone();
@@ -688,6 +730,13 @@ impl State {
                 elems.push(solid(&mut ui.menu_hl, menu.item_rect(i), MENU_HL));
             }
             elems.push(solid(&mut ui.menu_bg, menu.rect, MENU_BG));
+        }
+
+        // --- outlines of fully hidden windows, above all windows ------------
+        ui.hidden_outlines.resize_with(hidden.len() * 4, solid_buffer);
+        let edges = hidden.into_iter().flat_map(outline);
+        for (buf, edge) in ui.hidden_outlines.iter_mut().zip(edges) {
+            elems.push(solid(buf, edge, HIDDEN_OUTLINE));
         }
 
         // --- top bar --------------------------------------------------------
