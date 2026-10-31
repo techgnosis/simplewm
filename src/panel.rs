@@ -8,6 +8,8 @@
 //!   Wayland socket, backend devices, protocols, and environment variables.
 //! * The Screenshot applet window sets the folder screenshots are saved in.
 //! * The Help applet window shows a few static notes about simplewm.
+//! * The Desktop Portal applet window shows checks for when apps get no file
+//!   dialog from the desktop portal (see `crate::portal_check`).
 //! * The File Picker window is not in the Control Panel: it opens when an app
 //!   asks for a file through the desktop portal (see `picker`).
 //!
@@ -41,6 +43,7 @@ pub enum PanelId {
     Environment,
     Screenshot,
     Help,
+    Portal,
     FilePicker,
 }
 
@@ -53,16 +56,18 @@ impl PanelId {
             PanelId::Environment => "Environment",
             PanelId::Screenshot => "Screenshot",
             PanelId::Help => "Help",
+            PanelId::Portal => "Desktop Portal",
             PanelId::FilePicker => "File Picker",
         }
     }
 }
 
 /// Applets shown as icons in the Control Panel: (name, window it opens).
-pub const APPLETS: [(&str, PanelId); 4] = [
+pub const APPLETS: [(&str, PanelId); 5] = [
     ("Launcher", PanelId::Launcher),
     ("Environment", PanelId::Environment),
     ("Screenshot", PanelId::Screenshot),
+    ("Desktop Portal", PanelId::Portal),
     ("Help", PanelId::Help),
 ];
 
@@ -97,8 +102,8 @@ const PAD: i32 = 14;
 const BTN_H: i32 = 26;
 
 // Control Panel
-const CP_W: i32 = 440;
-const CELL_W: i32 = 100;
+const CP_W: i32 = 540;
+const CELL_W: i32 = 102;
 const CELL_H: i32 = 92;
 const TILE: i32 = 48;
 const QUIT_W: i32 = 130;
@@ -118,6 +123,11 @@ const ENV_H: i32 = 520;
 const ENV_ROW_H: i32 = 20;
 const ENV_KEY_W: i32 = 230;
 const SCROLLBAR_W: i32 = 6;
+
+// Desktop Portal applet
+const PORTAL_W: i32 = 760;
+const PORTAL_H: i32 = 560;
+const REFRESH_W: i32 = 100;
 
 // Screenshot applet
 const SHOT_W: i32 = 520;
@@ -149,6 +159,7 @@ const TILE_LAUNCHER: [f32; 4] = [0.25, 0.45, 0.80, 1.0];
 const TILE_ENVIRONMENT: [f32; 4] = [0.20, 0.58, 0.42, 1.0];
 const TILE_HELP: [f32; 4] = [0.80, 0.50, 0.15, 1.0];
 const TILE_SCREENSHOT: [f32; 4] = [0.55, 0.32, 0.75, 1.0];
+const TILE_PORTAL: [f32; 4] = [0.15, 0.55, 0.65, 1.0];
 const ENV_HEADER_BG: [f32; 4] = [0.19, 0.21, 0.26, 1.0];
 const SCROLL_TRACK: [f32; 4] = [0.18, 0.19, 0.23, 1.0];
 const SCROLL_THUMB: [f32; 4] = [0.40, 0.43, 0.50, 1.0];
@@ -166,6 +177,8 @@ pub enum PanelHit {
     Field(Field, usize),
     Remove(usize),
     Add,
+    // Desktop Portal
+    Refresh,
     // File Picker
     Pick(PickHit),
 }
@@ -227,11 +240,105 @@ struct LauncherLayout {
     add: Rect,
 }
 
-/// A row in the Environment window.
+/// A row in the Environment or Desktop Portal window.
 #[derive(Debug, Clone)]
 pub enum EnvRow {
     Header(String),
     Item(String, String),
+    /// Text across the whole row.
+    Line(String),
+}
+
+/// A scrollable list of rows (Environment, Desktop Portal).
+#[derive(Default)]
+struct RowList {
+    rows: Vec<EnvRow>,
+    scroll: usize,
+    scroll_acc: f64,
+}
+
+impl RowList {
+    fn visible(vp: Rect) -> usize {
+        (vp.size.h / ENV_ROW_H).max(1) as usize
+    }
+
+    fn max_scroll(&self, vp: Rect) -> usize {
+        self.rows.len().saturating_sub(Self::visible(vp))
+    }
+
+    fn set(&mut self, rows: Vec<EnvRow>, vp: Rect) {
+        self.rows = rows;
+        self.scroll = self.scroll.min(self.max_scroll(vp));
+    }
+
+    /// Scroll by `amount` (pointer axis units; positive scrolls down).
+    fn scroll_by(&mut self, amount: f64, vp: Rect) {
+        self.scroll_acc += amount;
+        let rows = (self.scroll_acc / ENV_ROW_H as f64).trunc();
+        if rows != 0.0 {
+            self.scroll_acc -= rows * ENV_ROW_H as f64;
+            let next = (self.scroll as i64 + rows as i64).clamp(0, self.max_scroll(vp) as i64);
+            self.scroll = next as usize;
+        }
+    }
+
+    fn render(
+        &self,
+        vp: Rect,
+        solids: &mut Vec<SolidColorBuffer>,
+        text: &mut TextRenderer,
+        renderer: &mut GlesRenderer,
+        elems: &mut Vec<CustomElement>,
+    ) {
+        let visible = Self::visible(vp);
+        let total = self.rows.len();
+        let scrollable = total > visible;
+        let text_w = vp.size.w - if scrollable { SCROLLBAR_W + 8 } else { 0 };
+        let value_x = vp.loc.x + ENV_KEY_W + 12;
+        let value_w = vp.loc.x + text_w - value_x;
+        let max_scroll = self.max_scroll(vp).max(1) as f64;
+
+        // Buffers: one header background per visible row, then track + thumb.
+        let s = bufs(solids, visible + 2);
+        let mut backs = Vec::new();
+        for (slot, row) in self.rows.iter().skip(self.scroll).take(visible).enumerate() {
+            let r = Rectangle::new(
+                (vp.loc.x, vp.loc.y + slot as i32 * ENV_ROW_H).into(),
+                (text_w, ENV_ROW_H).into(),
+            );
+            match row {
+                EnvRow::Header(title) => {
+                    elems.extend(ui::text_in(text, renderer, title, r.loc.x + 6, r));
+                    backs.push((slot, r));
+                }
+                EnvRow::Item(key, value) => {
+                    let key = text.fit(key, ENV_KEY_W);
+                    elems.extend(ui::text_in_alpha(text, renderer, &key, r.loc.x + 6, r, 0.7));
+                    let value = text.fit(value, value_w);
+                    elems.extend(ui::text_in(text, renderer, &value, value_x, r));
+                }
+                EnvRow::Line(line) => {
+                    let line = text.fit(line, text_w - 12);
+                    elems.extend(ui::text_in(text, renderer, &line, r.loc.x + 6, r));
+                }
+            }
+        }
+        for (slot, r) in backs {
+            elems.push(ui::solid(&mut s[slot], r, ENV_HEADER_BG));
+        }
+
+        if scrollable {
+            let track = Rectangle::new(
+                (vp.loc.x + vp.size.w - SCROLLBAR_W, vp.loc.y).into(),
+                (SCROLLBAR_W, vp.size.h).into(),
+            );
+            let thumb_h = ((visible as f64 / total as f64) * track.size.h as f64).max(20.0) as i32;
+            let thumb_y = track.loc.y + ((self.scroll as f64 / max_scroll) * (track.size.h - thumb_h) as f64) as i32;
+            let thumb = Rectangle::new((track.loc.x, thumb_y).into(), (SCROLLBAR_W, thumb_h).into());
+            elems.push(ui::solid(&mut s[visible + 1], thumb, SCROLL_THUMB));
+            elems.push(ui::solid(&mut s[visible], track, SCROLL_TRACK));
+        }
+    }
 }
 
 /// Max rects used to draw one applet glyph.
@@ -295,6 +402,20 @@ fn applet_glyph(id: PanelId, tile: Rect) -> ([f32; 4], Vec<Rect>) {
             ];
             (TILE_SCREENSHOT, rects)
         }
+        // A doorway: frame, threshold and an open door leaf.
+        PanelId::Portal => {
+            let (x, y) = (tile.loc.x, tile.loc.y);
+            let r = |dx, dy, w, h| Rectangle::new((x + dx, y + dy).into(), (w, h).into());
+            let rects = vec![
+                r(14, 8, 20, 3),  // lintel
+                r(14, 8, 3, 30),  // left jamb
+                r(31, 8, 3, 30),  // right jamb
+                r(10, 37, 28, 3), // threshold
+                r(17, 13, 8, 24), // door leaf, swung open
+                r(22, 24, 2, 3),  // handle gap
+            ];
+            (TILE_PORTAL, rects)
+        }
         PanelId::ControlPanel | PanelId::FilePicker => (TILE_LAUNCHER, Vec::new()),
     }
 }
@@ -305,12 +426,14 @@ pub struct Panels {
     environment: PanelWindow,
     screenshot: PanelWindow,
     help: PanelWindow,
+    portal: PanelWindow,
     file_picker: PanelWindow,
     pub picker: FilePicker,
-    /// Environment rows (refreshed when the window is opened) and scroll state.
-    env_rows: Vec<EnvRow>,
-    env_scroll: usize,
-    env_scroll_acc: f64,
+    /// Environment rows (refreshed when the window is opened).
+    env: RowList,
+    /// Desktop Portal check results (refreshed on open and by Refresh).
+    portal_rows: RowList,
+    portal_refresh_buf: Option<SolidColorBuffer>,
     /// Panel with keyboard focus (instead of a client window).
     pub active: Option<PanelId>,
 
@@ -338,11 +461,12 @@ impl Panels {
             environment: PanelWindow::default(),
             screenshot: PanelWindow::default(),
             help: PanelWindow::default(),
+            portal: PanelWindow::default(),
             file_picker: PanelWindow::default(),
             picker: FilePicker::default(),
-            env_rows: Vec::new(),
-            env_scroll: 0,
-            env_scroll_acc: 0.0,
+            env: RowList::default(),
+            portal_rows: RowList::default(),
+            portal_refresh_buf: None,
             active: None,
             entries,
             shot_dir,
@@ -359,6 +483,7 @@ impl Panels {
             PanelId::Environment => &self.environment,
             PanelId::Screenshot => &self.screenshot,
             PanelId::Help => &self.help,
+            PanelId::Portal => &self.portal,
             PanelId::FilePicker => &self.file_picker,
         }
     }
@@ -370,6 +495,7 @@ impl Panels {
             PanelId::Environment => &mut self.environment,
             PanelId::Screenshot => &mut self.screenshot,
             PanelId::Help => &mut self.help,
+            PanelId::Portal => &mut self.portal,
             PanelId::FilePicker => &mut self.file_picker,
         }
     }
@@ -456,6 +582,7 @@ impl Panels {
             PanelId::Environment => (ENV_W, ENV_H),
             PanelId::Screenshot => (SHOT_W, PAD + HEADER_H + FIELD_H + NOTE_H + PAD),
             PanelId::Help => (HELP_W, PAD + HELP_LINES.len() as i32 * HELP_ROW_H + PAD),
+            PanelId::Portal => (PORTAL_W, PORTAL_H),
             PanelId::FilePicker => self.picker_size(),
         }
     }
@@ -595,6 +722,11 @@ impl Panels {
             PanelId::FilePicker => {
                 if let Some(h) = self.picker_hit(text, p) {
                     return Some(h);
+                }
+            }
+            PanelId::Portal => {
+                if self.portal_refresh().to_f64().contains(p) {
+                    return Some(PanelHit::Refresh);
                 }
             }
             PanelId::Environment | PanelId::Help => {}
@@ -762,6 +894,7 @@ impl Panels {
             PanelId::Environment => self.render_environment(text, renderer, elems),
             PanelId::Screenshot => self.render_screenshot(text, renderer, elems),
             PanelId::Help => self.render_help(text, renderer, elems),
+            PanelId::Portal => self.render_portal(text, renderer, hovered, elems),
             PanelId::FilePicker => self.render_picker(text, renderer, hovered, elems),
         }
 
@@ -822,8 +955,14 @@ impl Panels {
 
     /// Replace the Environment rows (done each time the window is opened).
     pub fn set_environment(&mut self, rows: Vec<EnvRow>) {
-        self.env_rows = rows;
-        self.env_scroll = self.env_scroll.min(self.env_max_scroll());
+        let vp = self.env_viewport();
+        self.env.set(rows, vp);
+    }
+
+    /// Replace the Desktop Portal rows (check results).
+    pub fn set_portal_rows(&mut self, rows: Vec<EnvRow>) {
+        let vp = self.portal_viewport();
+        self.portal_rows.set(rows, vp);
     }
 
     fn env_viewport(&self) -> Rect {
@@ -834,72 +973,57 @@ impl Panels {
         )
     }
 
-    fn env_visible_rows(&self) -> usize {
-        (self.env_viewport().size.h / ENV_ROW_H).max(1) as usize
+    /// Rows area of the Desktop Portal window (the Refresh button is below it).
+    fn portal_viewport(&self) -> Rect {
+        let c = self.content_rect(PanelId::Portal);
+        Rectangle::new(
+            (c.loc.x + PAD, c.loc.y + PAD).into(),
+            (c.size.w - 2 * PAD, c.size.h - 3 * PAD - BTN_H).into(),
+        )
     }
 
-    fn env_max_scroll(&self) -> usize {
-        self.env_rows.len().saturating_sub(self.env_visible_rows())
+    fn portal_refresh(&self) -> Rect {
+        let c = self.content_rect(PanelId::Portal);
+        Rectangle::new(
+            (c.loc.x + PAD, c.loc.y + c.size.h - PAD - BTN_H).into(),
+            (REFRESH_W, BTN_H).into(),
+        )
     }
 
-    /// Scroll the Environment list by `amount` (pointer axis units; positive
-    /// scrolls down).
-    pub fn scroll_environment(&mut self, amount: f64) {
-        self.env_scroll_acc += amount;
-        let rows = (self.env_scroll_acc / ENV_ROW_H as f64).trunc();
-        if rows != 0.0 {
-            self.env_scroll_acc -= rows * ENV_ROW_H as f64;
-            let next = (self.env_scroll as i64 + rows as i64).clamp(0, self.env_max_scroll() as i64);
-            self.env_scroll = next as usize;
+    /// Scroll a row list window (Environment, Desktop Portal) by `amount`
+    /// (pointer axis units; positive scrolls down).
+    pub fn scroll_rows(&mut self, id: PanelId, amount: f64) {
+        match id {
+            PanelId::Environment => {
+                let vp = self.env_viewport();
+                self.env.scroll_by(amount, vp);
+            }
+            PanelId::Portal => {
+                let vp = self.portal_viewport();
+                self.portal_rows.scroll_by(amount, vp);
+            }
+            _ => {}
         }
     }
 
     fn render_environment(&mut self, text: &mut TextRenderer, renderer: &mut GlesRenderer, elems: &mut Vec<CustomElement>) {
         let vp = self.env_viewport();
-        let visible = self.env_visible_rows();
-        let total = self.env_rows.len();
-        let scrollable = total > visible;
-        let text_w = vp.size.w - if scrollable { SCROLLBAR_W + 8 } else { 0 };
-        let value_x = vp.loc.x + ENV_KEY_W + 12;
-        let value_w = vp.loc.x + text_w - value_x;
-        let max_scroll = self.env_max_scroll().max(1) as f64;
+        self.env.render(vp, &mut self.environment.solids, text, renderer, elems);
+    }
 
-        // Buffers: one header background per visible row, then track + thumb.
-        let s = bufs(&mut self.environment.solids, visible + 2);
-        let mut backs = Vec::new();
-        for (slot, row) in self.env_rows.iter().skip(self.env_scroll).take(visible).enumerate() {
-            let r = Rectangle::new(
-                (vp.loc.x, vp.loc.y + slot as i32 * ENV_ROW_H).into(),
-                (text_w, ENV_ROW_H).into(),
-            );
-            match row {
-                EnvRow::Header(title) => {
-                    elems.extend(ui::text_in(text, renderer, title, r.loc.x + 6, r));
-                    backs.push((slot, r));
-                }
-                EnvRow::Item(key, value) => {
-                    let key = text.fit(key, ENV_KEY_W);
-                    elems.extend(ui::text_in_alpha(text, renderer, &key, r.loc.x + 6, r, 0.7));
-                    let value = text.fit(value, value_w);
-                    elems.extend(ui::text_in(text, renderer, &value, value_x, r));
-                }
-            }
-        }
-        for (slot, r) in backs {
-            elems.push(ui::solid(&mut s[slot], r, ENV_HEADER_BG));
-        }
-
-        if scrollable {
-            let track = Rectangle::new(
-                (vp.loc.x + vp.size.w - SCROLLBAR_W, vp.loc.y).into(),
-                (SCROLLBAR_W, vp.size.h).into(),
-            );
-            let thumb_h = ((visible as f64 / total as f64) * track.size.h as f64).max(20.0) as i32;
-            let thumb_y = track.loc.y + ((self.env_scroll as f64 / max_scroll) * (track.size.h - thumb_h) as f64) as i32;
-            let thumb = Rectangle::new((track.loc.x, thumb_y).into(), (SCROLLBAR_W, thumb_h).into());
-            elems.push(ui::solid(&mut s[visible + 1], thumb, SCROLL_THUMB));
-            elems.push(ui::solid(&mut s[visible], track, SCROLL_TRACK));
-        }
+    fn render_portal(
+        &mut self,
+        text: &mut TextRenderer,
+        renderer: &mut GlesRenderer,
+        hovered: Option<PanelHit>,
+        elems: &mut Vec<CustomElement>,
+    ) {
+        let vp = self.portal_viewport();
+        let refresh = self.portal_refresh();
+        self.portal_rows.render(vp, &mut self.portal.solids, text, renderer, elems);
+        elems.extend(ui::text_centered(text, renderer, "Refresh", refresh));
+        let rc = if hovered == Some(PanelHit::Refresh) { BUTTON_HOT } else { BUTTON };
+        elems.push(ui::solid(buf(&mut self.portal_refresh_buf), refresh, rc));
     }
 
     fn render_help(&self, text: &mut TextRenderer, renderer: &mut GlesRenderer, elems: &mut Vec<CustomElement>) {

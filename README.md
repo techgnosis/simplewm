@@ -77,6 +77,12 @@ Applets:
   protocols advertised to clients, process info, and all environment variables.
 * **Screenshot** — one text field: the folder screenshots are saved in. There is
   no default; `~` is expanded, and the folder is created if it doesn't exist.
+* **Desktop Portal** — checks for when apps get no file dialog (or a different one): whether
+  simplewm owns its portal bus name, whether `xdg-desktop-portal` is running and offers a
+  FileChooser, the `XDG_CURRENT_DESKTOP` that systemd and the running portal see, the installed
+  `simplewm.portal` and portal config, the portal's log since simplewm started, and commands
+  and per-toolkit settings to try. A summary at the top lists problems found; Refresh reruns
+  the checks.
 * **Help** — a short read-only note: the resolution is the monitor's preferred mode, there is
   no plain text config file, and there are no keyboard shortcuts.
 

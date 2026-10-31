@@ -3,6 +3,7 @@ mod handlers;
 mod input;
 mod panel;
 mod portal;
+mod portal_check;
 mod screenshot;
 mod session_env;
 mod state;

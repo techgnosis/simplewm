@@ -7,7 +7,7 @@
 use std::ffi::OsStr;
 use std::process::Command;
 
-const DESKTOP: &str = "simplewm";
+pub const DESKTOP: &str = "simplewm";
 
 /// Export `WAYLAND_DISPLAY` and `XDG_CURRENT_DESKTOP` to D-Bus activation and systemd.
 pub fn export(socket_name: &OsStr) {

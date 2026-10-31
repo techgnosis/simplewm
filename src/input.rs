@@ -135,17 +135,18 @@ impl State {
                 pointer.frame(self);
             }
             InputEvent::PointerAxis { event } => {
-                // Scrolling over the Environment or File Picker window scrolls its list.
-                if let Hit::Panel(id @ (PanelId::Environment | PanelId::FilePicker), _) =
+                // Scrolling over the Environment, Desktop Portal or File Picker window
+                // scrolls its list.
+                if let Hit::Panel(id @ (PanelId::Environment | PanelId::Portal | PanelId::FilePicker), _) =
                     self.hit_test(self.pointer_location)
                 {
                     let amount = event
                         .amount(Axis::Vertical)
                         .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0);
-                    if id == PanelId::Environment {
-                        self.panels.scroll_environment(amount);
-                    } else {
+                    if id == PanelId::FilePicker {
                         self.panels.picker.scroll_by(amount);
+                    } else {
+                        self.panels.scroll_rows(id, amount);
                     }
                     return;
                 }
@@ -263,6 +264,9 @@ impl State {
                                 let rows = self.environment_rows();
                                 self.panels.set_environment(rows);
                             }
+                            if *applet == PanelId::Portal {
+                                self.refresh_portal_check();
+                            }
                             let out = self.output_geometry();
                             self.panels.show(*applet, out);
                             self.focus_panel(*applet);
@@ -276,6 +280,7 @@ impl State {
                     PanelHit::Field(i, idx) => self.panels.begin_edit(i, idx),
                     PanelHit::Remove(i) => self.panels.remove_entry(i),
                     PanelHit::Add => self.panels.add_entry(),
+                    PanelHit::Refresh => self.refresh_portal_check(),
                     PanelHit::Pick(h) => self.picker_click(h),
                     PanelHit::Body => self.panels.stop_editing(),
                 }

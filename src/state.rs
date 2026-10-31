@@ -77,6 +77,8 @@ pub struct State {
     pub startup_info: Vec<(String, String)>,
     /// Screenshot worker threads report back through this.
     pub screenshot_tx: Sender<SaveResult>,
+    /// Desktop Portal check threads report back through this.
+    pub portal_check_tx: Sender<Vec<EnvRow>>,
 }
 
 impl State {
@@ -123,6 +125,16 @@ impl State {
             .expect("failed to init portal channel");
         crate::portal::start(portal_tx);
 
+        let (portal_check_tx, portal_check_rx) = channel::channel::<Vec<EnvRow>>();
+        event_loop
+            .handle()
+            .insert_source(portal_check_rx, |event, _, state| {
+                if let channel::Event::Msg(rows) = event {
+                    state.panels.set_portal_rows(rows);
+                }
+            })
+            .expect("failed to init portal check channel");
+
         Self {
             start_time,
             display_handle: dh,
@@ -151,6 +163,7 @@ impl State {
             windows_opened: 0,
             startup_info: Vec::new(),
             screenshot_tx,
+            portal_check_tx,
         }
     }
 
@@ -356,6 +369,16 @@ pub enum StackEntry {
 }
 
 impl State {
+    /// (Re)run the Desktop Portal checks; the rows arrive on `portal_check_tx`.
+    pub fn refresh_portal_check(&mut self) {
+        self.panels.set_portal_rows(crate::portal_check::pending_rows());
+        let ctx = crate::portal_check::Context {
+            wayland_display: self.socket_name.to_string_lossy().into_owned(),
+            started: std::time::SystemTime::now() - self.start_time.elapsed(),
+        };
+        crate::portal_check::spawn(ctx, self.portal_check_tx.clone());
+    }
+
     /// Everything shown in the Environment applet: how simplewm was started.
     pub fn environment_rows(&self) -> Vec<EnvRow> {
         let item = |k: &str, v: String| EnvRow::Item(k.to_string(), v);

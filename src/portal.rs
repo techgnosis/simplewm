@@ -14,7 +14,7 @@ use std::{
     os::unix::ffi::{OsStrExt, OsStringExt},
     path::{Path, PathBuf},
     sync::{
-        OnceLock,
+        Mutex, OnceLock,
         atomic::{AtomicU64, Ordering},
     },
 };
@@ -81,6 +81,39 @@ pub enum PickResult {
     Failed,
 }
 
+/// How the backend is doing, shown in the Desktop Portal applet.
+#[derive(Clone, Default)]
+pub struct BackendStatus {
+    /// We own `BUS_NAME` and serve requests.
+    pub serving: bool,
+    /// Why we are not serving, if we gave up.
+    pub problem: Option<String>,
+    /// File dialog requests received since startup.
+    pub requests: u64,
+    /// The most recent request and how it ended.
+    pub last_request: Option<String>,
+}
+
+static STATUS: Mutex<BackendStatus> =
+    Mutex::new(BackendStatus { serving: false, problem: None, requests: 0, last_request: None });
+
+pub fn status() -> BackendStatus {
+    STATUS.lock().map(|s| s.clone()).unwrap_or_default()
+}
+
+fn update_status(f: impl FnOnce(&mut BackendStatus)) {
+    if let Ok(mut s) = STATUS.lock() {
+        f(&mut s);
+    }
+}
+
+fn set_problem(problem: String) {
+    update_status(|s| {
+        s.serving = false;
+        s.problem = Some(problem);
+    });
+}
+
 /// Start serving the portal backend on the session bus (in the background).
 pub fn start(tx: Sender<PortalEvent>) {
     let spawned = std::thread::Builder::new().name("portal".into()).spawn(move || {
@@ -92,6 +125,7 @@ pub fn start(tx: Sender<PortalEvent>) {
             Ok(conn) => conn,
             Err(err) => {
                 tracing::warn!(?err, "portal: cannot connect to the session bus");
+                set_problem(format!("cannot connect to the session bus: {err}"));
                 return;
             }
         };
@@ -99,13 +133,16 @@ pub fn start(tx: Sender<PortalEvent>) {
         match conn.request_name_with_flags(BUS_NAME, RequestNameFlags::DoNotQueue.into()) {
             Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
                 tracing::info!(name = BUS_NAME, "portal: file chooser backend ready");
+                update_status(|s| s.serving = true);
             }
             Ok(reply) => {
                 tracing::warn!(?reply, name = BUS_NAME, "portal: name already owned elsewhere");
+                set_problem("the bus name is owned by another process (another simplewm?)".into());
                 return;
             }
             Err(err) => {
                 tracing::warn!(?err, name = BUS_NAME, "portal: cannot own bus name");
+                set_problem(format!("cannot own the bus name: {err}"));
                 return;
             }
         }
@@ -116,6 +153,7 @@ pub fn start(tx: Sender<PortalEvent>) {
     });
     if let Err(err) = spawned {
         tracing::warn!(?err, "portal: cannot start thread");
+        set_problem(format!("cannot start the D-Bus thread: {err}"));
     }
 }
 
@@ -138,6 +176,7 @@ impl FileChooser {
         options: Options,
     ) -> (u32, Options) {
         tracing::info!(app_id, title, "portal: open file");
+        note_request("Open", &app_id, &title);
         let multiple = opt_bool(&options, "multiple");
         let directory = opt_bool(&options, "directory");
         let folder = opt_path(&options, "current_folder");
@@ -155,6 +194,7 @@ impl FileChooser {
         options: Options,
     ) -> (u32, Options) {
         tracing::info!(app_id, title, "portal: save file");
+        note_request("Save", &app_id, &title);
         let mut folder = opt_path(&options, "current_folder");
         let mut name = opt_str(&options, "current_name").unwrap_or_default();
         // An existing file being saved again: start next to it, with its name.
@@ -211,6 +251,11 @@ impl FileChooser {
         };
         let _ = server.remove::<Request, _>(&handle).await;
 
+        note_outcome(match &result {
+            PickResult::Chosen(paths) => format!("chose {} item(s)", paths.len()),
+            PickResult::Cancelled => "cancelled".into(),
+            PickResult::Failed => "failed".into(),
+        });
         match result {
             PickResult::Chosen(paths) => {
                 let uris: Vec<String> = paths.iter().map(|p| file_uri(p)).collect();
@@ -224,6 +269,26 @@ impl FileChooser {
             PickResult::Failed => (RESPONSE_OTHER, Options::new()),
         }
     }
+}
+
+/// Record a request in the status (finished by `note_outcome`).
+fn note_request(kind: &str, app_id: &str, title: &str) {
+    let time = chrono::Local::now().format("%H:%M:%S");
+    let app = if app_id.is_empty() { "an unsandboxed app" } else { app_id };
+    update_status(|s| {
+        s.requests += 1;
+        s.last_request = Some(format!("{time} {kind} \"{title}\" from {app}: waiting"));
+    });
+}
+
+fn note_outcome(outcome: String) {
+    update_status(|s| {
+        if let Some(last) = &mut s.last_request
+            && let Some(stem) = last.strip_suffix("waiting")
+        {
+            *last = format!("{stem}{outcome}");
+        }
+    });
 }
 
 struct Request {
