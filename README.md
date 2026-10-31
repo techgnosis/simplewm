@@ -40,10 +40,12 @@ Mouse:
 
 ## Top menu
 
-There is a top bar with two buttons:
+There is a top bar. Its items (two buttons and a clock) are grouped in the middle:
 
 * Settings — opens a menu with a single item: Quit
 * Launcher — opens a menu with a single item: Alacritty
+
+After the buttons is a clock (local time, e.g. `Sat 31 Oct  14:05`).
 
 ## Defaults (not configurable)
 

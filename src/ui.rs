@@ -178,16 +178,47 @@ impl BarButton {
     }
 }
 
-pub fn bar_buttons(text: &TextRenderer) -> [(BarButton, Rectangle<i32, Logical>); 2] {
-    let mut x = 6;
+pub const CLOCK_FORMAT: &str = "%a %e %b  %H:%M";
+const BAR_GAP: i32 = 6;
+const CLOCK_GAP: i32 = 16;
+
+pub fn clock_text() -> String {
+    chrono::Local::now().format(CLOCK_FORMAT).to_string()
+}
+
+/// Width reserved for the clock, so the centered group doesn't shift as the
+/// day/month names change width.
+fn clock_slot_width(text: &TextRenderer) -> i32 {
+    ["Wed 30 Sep  00:00", "Mon 31 May  00:00"]
+        .iter()
+        .map(|s| text.measure(s))
+        .max()
+        .unwrap()
+}
+
+/// The bar items (Settings, Launcher, clock) are laid out as one group
+/// centered in the bar. Returns the button rects (in global coordinates) and
+/// the clock's x position.
+pub fn bar_layout(text: &TextRenderer, out: Rectangle<i32, Logical>) -> ([(BarButton, Rectangle<i32, Logical>); 2], i32) {
+    let labels = [BarButton::Settings, BarButton::Launcher];
+    let widths = labels.map(|b| text.measure(b.label()) + 2 * BAR_BUTTON_PAD);
+    let clock_w = clock_slot_width(text);
+    let total = widths.iter().sum::<i32>() + BAR_GAP + CLOCK_GAP + clock_w;
+
+    let mut x = out.loc.x + (out.size.w - total) / 2;
+    let y = out.loc.y + 4;
     let h = BAR_HEIGHT - 8;
-    let mut make = |b: BarButton| {
-        let w = text.measure(b.label()) + 2 * BAR_BUTTON_PAD;
-        let r = Rectangle::new((x, 4).into(), (w, h).into());
-        x += w + 6;
-        (b, r)
-    };
-    [make(BarButton::Settings), make(BarButton::Launcher)]
+    let mut rects = [(BarButton::Settings, Rectangle::default()); 2];
+    for (i, b) in labels.into_iter().enumerate() {
+        rects[i] = (b, Rectangle::new((x, y).into(), (widths[i], h).into()));
+        x += widths[i] + BAR_GAP;
+    }
+    let clock_x = x - BAR_GAP + CLOCK_GAP;
+    (rects, clock_x)
+}
+
+pub fn bar_buttons(text: &TextRenderer, out: Rectangle<i32, Logical>) -> [(BarButton, Rectangle<i32, Logical>); 2] {
+    bar_layout(text, out).0
 }
 
 /// Size menu options: label and the target region in halves of the usable
@@ -309,7 +340,7 @@ impl State {
 
         let out = self.output_geometry();
         if pos.y < (out.loc.y + BAR_HEIGHT) as f64 {
-            for (b, r) in bar_buttons(&self.ui.text) {
+            for (b, r) in bar_buttons(&self.ui.text, out) {
                 if r.to_f64().contains(pos) {
                     return Hit::BarButton(b);
                 }
@@ -589,7 +620,7 @@ impl State {
             Some(MenuKind::Launcher) => Some(BarButton::Launcher),
             _ => None,
         };
-        let buttons = bar_buttons(&ui.text);
+        let (buttons, clock_x) = bar_layout(&ui.text, out);
         for (i, (b, r)) in buttons.into_iter().enumerate() {
             elems.extend(text_centered(&mut ui.text, renderer, b.label(), r));
             let hot = open_bar == Some(b) || matches!(hovered, Hit::BarButton(h) if h == b);
@@ -597,6 +628,10 @@ impl State {
             elems.push(solid(&mut ui.bar_buttons[i], r, color));
         }
         let bar = Rectangle::new(out.loc, (out.size.w, BAR_HEIGHT).into());
+        // The text cache keeps the clock cheap; it only re-rasterizes when
+        // the minute changes.
+        let clock = clock_text();
+        elems.extend(text_in(&mut ui.text, renderer, &clock, clock_x, bar));
         elems.push(solid(&mut ui.bar_bg, bar, BAR_COLOR));
 
         // --- windows (top to bottom) ---------------------------------------

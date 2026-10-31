@@ -246,11 +246,11 @@ impl State {
     }
 
     fn open_bar_menu(&mut self, b: BarButton) {
-        let Some((_, rect)) = bar_buttons(&self.ui.text).into_iter().find(|(x, _)| *x == b) else {
+        let out = self.output_geometry();
+        let Some((_, rect)) = bar_buttons(&self.ui.text, out).into_iter().find(|(x, _)| *x == b) else {
             return;
         };
-        let out = self.output_geometry();
-        let anchor = (out.loc.x + rect.loc.x, out.loc.y + ui::BAR_HEIGHT).into();
+        let anchor = (rect.loc.x, out.loc.y + ui::BAR_HEIGHT).into();
         self.ui.open_menu(menu_for(b), anchor, out);
     }
 
