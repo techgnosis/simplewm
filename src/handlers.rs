@@ -209,11 +209,7 @@ impl XdgShellHandler for State {
     }
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
-        let window = self
-            .space
-            .elements()
-            .find(|w| w.toplevel() == Some(&surface))
-            .cloned();
+        let window = self.window_for_surface(surface.wl_surface());
         if let Some(window) = window {
             self.ui.forget_window(&window);
             self.note_unmap(&window);

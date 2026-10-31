@@ -277,6 +277,10 @@ pub fn handle_resize_commit(state: &mut State, surface: &WlSurface) {
     let Some(window) = state.window_for_surface(surface) else {
         return;
     };
+    if !state.is_visible(&window) {
+        // On the hidden workspace; never map it back from here.
+        return;
+    }
     let current = *resize_state(&window).borrow();
     let (edges, initial, done) = match current {
         ResizeState::Idle => return,

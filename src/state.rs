@@ -66,8 +66,16 @@ pub struct State {
     pub output: Option<Output>,
     pub ui: Ui,
     pub panels: Panels,
-    /// Stacking order of client windows and panels, bottom to top.
+    /// Stacking order of client windows and panels, bottom to top. Includes
+    /// windows on the hidden workspace (they are filtered out when drawing).
     pub stack: Vec<StackEntry>,
+    /// Current workspace: 0 (left) or 1 (right). There are always exactly two.
+    pub workspace: usize,
+    /// Windows on the other (hidden) workspace, with their locations. They are
+    /// unmapped from the space while hidden.
+    pub hidden: Vec<(Window, Point<i32, Logical>)>,
+    /// The top-right hot corner can trigger (re-armed after leaving it).
+    pub hot_corner_armed: bool,
     pub backend: Option<Backend>,
     pub windows_opened: u32,
     /// Backend details recorded at startup, shown in the Environment applet.
@@ -120,6 +128,9 @@ impl State {
             ui: Ui::new(),
             panels: Panels::new(),
             stack: Vec::new(),
+            workspace: 0,
+            hidden: Vec::new(),
+            hot_corner_armed: true,
             backend: None,
             windows_opened: 0,
             startup_info: Vec::new(),
@@ -170,11 +181,43 @@ impl State {
     }
 
     /// Returns the window owning the given toplevel wl_surface.
+    /// Searches both workspaces.
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<Window> {
         self.space
             .elements()
+            .chain(self.hidden.iter().map(|(w, _)| w))
             .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
             .cloned()
+    }
+
+    /// Whether the window is on the visible workspace (mapped in the space).
+    pub fn is_visible(&self, window: &Window) -> bool {
+        self.space.elements().any(|w| w == window)
+    }
+
+    /// Switch between the two workspaces.
+    pub fn switch_workspace(&mut self) {
+        self.ui.menu = None;
+        self.panels.stop_editing();
+
+        // Hide the current workspace's windows, remembering where they were.
+        let visible: Vec<(Window, Point<i32, Logical>)> = self
+            .space
+            .elements()
+            .filter_map(|w| Some((w.clone(), self.space.element_location(w)?)))
+            .collect();
+        for (w, _) in &visible {
+            self.space.unmap_elem(w);
+        }
+        // Show the other workspace's windows.
+        for (w, loc) in std::mem::replace(&mut self.hidden, visible) {
+            if w.alive() {
+                self.space.map_element(w, loc, false);
+            }
+        }
+        self.workspace = 1 - self.workspace;
+        tracing::info!(workspace = self.workspace, "switched workspace");
+        self.focus_top();
     }
 
     /// Surface under the given point inside a window, with its global origin.
@@ -204,13 +247,14 @@ impl State {
     /// Forget a client window that is about to be unmapped.
     pub fn note_unmap(&mut self, window: &Window) {
         self.stack.retain(|e| *e != StackEntry::Window(window.clone()));
+        self.hidden.retain(|(w, _)| w != window);
     }
 
     /// Drop stack entries for windows that no longer exist.
     pub fn prune_stack(&mut self) {
-        let space = &self.space;
+        self.hidden.retain(|(w, _)| w.alive());
         self.stack.retain(|e| match e {
-            StackEntry::Window(w) => w.alive() && space.elements().any(|x| x == w),
+            StackEntry::Window(w) => w.alive(),
             StackEntry::Panel(_) => true,
         });
     }
@@ -226,7 +270,7 @@ impl State {
             .collect();
         v.extend(self.stack.iter().filter(|e| match e {
             StackEntry::Window(w) => w.alive() && self.space.elements().any(|x| x == w),
-            StackEntry::Panel(id) => self.panels.is_open(*id),
+            StackEntry::Panel(id) => self.panels.is_visible(*id, self.workspace),
         }).cloned());
         v.reverse();
         v
