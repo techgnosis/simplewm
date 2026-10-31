@@ -3,6 +3,7 @@ mod handlers;
 mod input;
 mod panel;
 mod screenshot;
+mod session_env;
 mod state;
 mod text;
 mod ui;
@@ -51,6 +52,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tracing::info!(socket = ?state.socket_name, "simplewm running");
 
+    // On a TTY we are the session, so let D-Bus-activated services (the desktop portal's
+    // file chooser) find our display. Nested, that would hijack the host session's.
+    if tty {
+        session_env::export(&state.socket_name);
+    }
+
     event_loop.run(None, &mut state, |state| {
         state.space.refresh();
         state.prune_stack();
@@ -58,6 +65,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         let _ = state.display_handle.flush_clients();
     })?;
 
+    if tty {
+        session_env::unexport();
+    }
     udev::shutdown(&mut state);
 
     Ok(())

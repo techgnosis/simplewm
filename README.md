@@ -78,6 +78,18 @@ Applets:
 * **Help** — a short read-only note: the resolution is the monitor's preferred mode, there is
   no plain text config file, and there are no keyboard shortcuts.
 
+## File dialogs (desktop portal)
+
+Apps like Firefox open file dialogs through `xdg-desktop-portal`, which starts
+`xdg-desktop-portal-gtk` on demand as a systemd user service. That service only sees
+systemd's environment, so in TTY mode simplewm exports `WAYLAND_DISPLAY` and
+`XDG_CURRENT_DESKTOP=simplewm` there at startup (via
+`dbus-update-activation-environment --systemd`) and removes them on exit. Nested mode
+leaves the host session's environment alone.
+
+Optionally copy `simplewm-portals.conf` to `~/.config/xdg-desktop-portal/` so the
+portal picks the GTK backend explicitly rather than as a fallback.
+
 ## Defaults (not configurable)
 
 * A font is bundled into the binary for the bar, menus and titles

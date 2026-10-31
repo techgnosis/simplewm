@@ -307,6 +307,7 @@ impl State {
         tracing::info!(command, "spawning");
         if let Err(err) = std::process::Command::new(command)
             .env("WAYLAND_DISPLAY", &self.socket_name)
+            .env("XDG_CURRENT_DESKTOP", "simplewm")
             .env_remove("DISPLAY")
             .spawn()
         {
