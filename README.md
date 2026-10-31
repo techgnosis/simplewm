@@ -68,6 +68,8 @@ Applets:
   lock file paths), backend details (host compositor socket when nested; seat,
   GPU device and connector on a TTY; dmabuf render node), the output, the
   protocols advertised to clients, process info, and all environment variables.
+* **Help** — a short read-only note: the resolution is the monitor's preferred mode, there is
+  no plain text config file, and there are no keyboard shortcuts.
 
 ## Defaults (not configurable)
 

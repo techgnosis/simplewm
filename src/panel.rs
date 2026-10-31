@@ -6,6 +6,7 @@
 //!   the Launcher menu.
 //! * The Environment applet window shows (read-only) how simplewm was started:
 //!   Wayland socket, backend devices, protocols, and environment variables.
+//! * The Help applet window shows a few static notes about simplewm.
 //!
 //! Panels stack, focus and move like client windows. Settings are stored in
 //! SQLite at ~/.config/simplewm/simplewm.db.
@@ -31,6 +32,7 @@ pub enum PanelId {
     ControlPanel,
     Launcher,
     Environment,
+    Help,
 }
 
 impl PanelId {
@@ -40,14 +42,16 @@ impl PanelId {
             PanelId::ControlPanel => "Control Panel",
             PanelId::Launcher => "Launcher",
             PanelId::Environment => "Environment",
+            PanelId::Help => "Help",
         }
     }
 }
 
 /// Applets shown as icons in the Control Panel: (name, window it opens).
-pub const APPLETS: [(&str, PanelId); 2] = [
+pub const APPLETS: [(&str, PanelId); 3] = [
     ("Launcher", PanelId::Launcher),
     ("Environment", PanelId::Environment),
+    ("Help", PanelId::Help),
 ];
 
 // --- Layout (logical pixels) -----------------------------------------------
@@ -78,6 +82,15 @@ const ENV_ROW_H: i32 = 20;
 const ENV_KEY_W: i32 = 230;
 const SCROLLBAR_W: i32 = 6;
 
+// Help applet
+const HELP_W: i32 = 460;
+const HELP_ROW_H: i32 = 24;
+const HELP_LINES: [&str; 3] = [
+    "The resolution is the monitor's preferred mode.",
+    "There is no plain text config file.",
+    "There are no keyboard shortcuts.",
+];
+
 // --- Colors (premultiplied RGBA) -------------------------------------------
 
 const BG: [f32; 4] = [0.13, 0.14, 0.17, 1.0];
@@ -93,6 +106,7 @@ const CARET: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
 const CELL_HOT: [f32; 4] = [0.20, 0.24, 0.32, 1.0];
 const TILE_LAUNCHER: [f32; 4] = [0.25, 0.45, 0.80, 1.0];
 const TILE_ENVIRONMENT: [f32; 4] = [0.20, 0.58, 0.42, 1.0];
+const TILE_HELP: [f32; 4] = [0.80, 0.50, 0.15, 1.0];
 const ENV_HEADER_BG: [f32; 4] = [0.19, 0.21, 0.26, 1.0];
 const SCROLL_TRACK: [f32; 4] = [0.18, 0.19, 0.23, 1.0];
 const SCROLL_THUMB: [f32; 4] = [0.40, 0.43, 0.50, 1.0];
@@ -201,6 +215,20 @@ fn applet_glyph(id: PanelId, tile: Rect) -> ([f32; 4], Vec<Rect>) {
             }
             (TILE_ENVIRONMENT, rects)
         }
+        // A question mark: hook, stem and dot.
+        PanelId::Help => {
+            let (x, y) = (tile.loc.x, tile.loc.y);
+            let r = |dx, dy, w, h| Rectangle::new((x + dx, y + dy).into(), (w, h).into());
+            let rects = vec![
+                r(16, 9, 4, 6),   // left tip of the hook
+                r(16, 9, 16, 4),  // top
+                r(28, 9, 4, 14),  // right side
+                r(22, 19, 10, 4), // back toward the middle
+                r(22, 19, 4, 10), // stem
+                r(22, 33, 4, 4),  // dot
+            ];
+            (TILE_HELP, rects)
+        }
         PanelId::ControlPanel => (TILE_LAUNCHER, Vec::new()),
     }
 }
@@ -209,6 +237,7 @@ pub struct Panels {
     control: PanelWindow,
     launcher: PanelWindow,
     environment: PanelWindow,
+    help: PanelWindow,
     /// Environment rows (refreshed when the window is opened) and scroll state.
     env_rows: Vec<EnvRow>,
     env_scroll: usize,
@@ -235,6 +264,7 @@ impl Panels {
             control: PanelWindow::default(),
             launcher: PanelWindow::default(),
             environment: PanelWindow::default(),
+            help: PanelWindow::default(),
             env_rows: Vec::new(),
             env_scroll: 0,
             env_scroll_acc: 0.0,
@@ -251,6 +281,7 @@ impl Panels {
             PanelId::ControlPanel => &self.control,
             PanelId::Launcher => &self.launcher,
             PanelId::Environment => &self.environment,
+            PanelId::Help => &self.help,
         }
     }
 
@@ -259,6 +290,7 @@ impl Panels {
             PanelId::ControlPanel => &mut self.control,
             PanelId::Launcher => &mut self.launcher,
             PanelId::Environment => &mut self.environment,
+            PanelId::Help => &mut self.help,
         }
     }
 
@@ -297,6 +329,7 @@ impl Panels {
                 (LAUNCHER_W, PAD + HEADER_H + rows * ROW_H + 4 + BTN_H + PAD)
             }
             PanelId::Environment => (ENV_W, ENV_H),
+            PanelId::Help => (HELP_W, PAD + HELP_LINES.len() as i32 * HELP_ROW_H + PAD),
         }
     }
 
@@ -412,7 +445,7 @@ impl Panels {
                     return Some(PanelHit::Add);
                 }
             }
-            PanelId::Environment => {}
+            PanelId::Environment | PanelId::Help => {}
         }
         Some(PanelHit::Body)
     }
@@ -561,6 +594,7 @@ impl Panels {
             PanelId::ControlPanel => self.render_control(text, renderer, hovered, elems),
             PanelId::Launcher => self.render_launcher(text, renderer, hovered, elems),
             PanelId::Environment => self.render_environment(text, renderer, elems),
+            PanelId::Help => self.render_help(text, renderer, elems),
         }
 
         // Frame: content background, title bar with close button, borders.
@@ -696,6 +730,17 @@ impl Panels {
             let thumb = Rectangle::new((track.loc.x, thumb_y).into(), (SCROLLBAR_W, thumb_h).into());
             elems.push(ui::solid(&mut s[visible + 1], thumb, SCROLL_THUMB));
             elems.push(ui::solid(&mut s[visible], track, SCROLL_TRACK));
+        }
+    }
+
+    fn render_help(&self, text: &mut TextRenderer, renderer: &mut GlesRenderer, elems: &mut Vec<CustomElement>) {
+        let c = self.content_rect(PanelId::Help);
+        for (i, line) in HELP_LINES.iter().enumerate() {
+            let r = Rectangle::new(
+                (c.loc.x + PAD, c.loc.y + PAD + i as i32 * HELP_ROW_H).into(),
+                (c.size.w - 2 * PAD, HELP_ROW_H).into(),
+            );
+            elems.extend(ui::text_in(text, renderer, line, r.loc.x, r));
         }
     }
 
