@@ -24,7 +24,7 @@ use smithay::{
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
         calloop::{
-            EventLoop,
+            EventLoop, RegistrationToken,
             timer::{TimeoutAction, Timer},
         },
         drm::control::{Device as ControlDevice, ModeTypeFlags, connector},
@@ -50,6 +50,9 @@ pub struct UdevData {
     compositor: GbmDrmCompositor,
     libinput: Libinput,
     output: Output,
+    /// Event source for DRM vblanks. It holds a reference to the DRM device, so it
+    /// must be removed before the device can be dropped (see [`shutdown`]).
+    drm_token: RegistrationToken,
     /// A frame has been queued and we're waiting for its vblank.
     frame_pending: bool,
     /// A retry timer is scheduled.
@@ -139,7 +142,10 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
         [Fourcc::Argb8888, Fourcc::Xrgb8888],
         render_formats,
         drm.cursor_size(),
-        Some(gbm.clone()),
+        // No cursor-plane GBM device: amdgpu rejects smithay's cursor-plane buffers
+        // (falling back to legacy AddFB, then failing the plane test), so the cursor
+        // always ends up composited on the primary plane anyway. Skip the attempt.
+        None,
     )
     .map_err(|e| format!("failed to create DRM compositor: {e:?}"))?;
 
@@ -212,7 +218,7 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
         }
     })?;
 
-    handle.insert_source(drm_notifier, |event, _, state| match event {
+    let drm_token = handle.insert_source(drm_notifier, |event, _, state| match event {
         DrmEvent::VBlank(_) => {
             if let Some(Backend::Udev(udev)) = state.backend.as_mut() {
                 if let Err(err) = udev.compositor.frame_submitted() {
@@ -234,12 +240,34 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
         compositor,
         libinput,
         output,
+        drm_token,
         frame_pending: false,
         timer_scheduled: false,
     }));
 
     state.udev_render();
     Ok(())
+}
+
+/// Tear down the DRM device while the libseat session is still open.
+///
+/// The compositor goes first: dropping its surface disables our CRTC/planes while we
+/// still hold DRM master. The device is then paused before it drops, which skips
+/// smithay's "restore previous state" commit. That commit replays every property it
+/// snapshotted at startup, read-only ones (EDID, plane type, ...) included, and the
+/// kernel rejects any atomic commit that sets an immutable property with EINVAL, so it
+/// can never succeed. It isn't needed anyway: when the seat closes and we lose DRM
+/// master, the kernel's fbdev helper restores the console by itself.
+pub fn shutdown(state: &mut State) {
+    if let Some(Backend::Udev(udev)) = state.backend.take() {
+        state.loop_handle.remove(udev.drm_token);
+        let UdevData { session, renderer, mut drm, compositor, libinput, output, .. } = udev;
+        drop(compositor);
+        drm.pause();
+        drop(drm);
+        drop((renderer, libinput, output));
+        drop(session);
+    }
 }
 
 impl State {
