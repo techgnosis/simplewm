@@ -82,7 +82,10 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
         OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
     )?;
     let fd = DrmDeviceFd::new(DeviceFd::from(fd));
-    let (mut drm, drm_notifier) = DrmDevice::new(fd.clone(), true)?;
+    // Keep the console's display state instead of switching every connector off first:
+    // the console usually already runs the mode we pick, and blanking the signal makes the
+    // monitor re-sync (a second or two of black screen) before our first frame shows.
+    let (mut drm, drm_notifier) = DrmDevice::new(fd.clone(), false)?;
     let gbm = GbmDevice::new(fd.clone())?;
     let egl_display = unsafe { EGLDisplay::new(gbm.clone())? };
     let egl_context = EGLContext::new(&egl_display)?;

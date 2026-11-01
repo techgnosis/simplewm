@@ -20,18 +20,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Ok(filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
         tracing_subscriber::fmt().with_env_filter(filter).init();
     } else {
-        // smithay warnings, minus two that are false alarms under a libseat session:
-        // - drm::device::fd "Unable to become drm master": logind/seatd already made the
-        //   fd master; the kernel just refuses a repeat SET_MASTER from a process that
-        //   didn't open the fd.
-        // - drm::surface::atomic "Failed to destroy old mode property blob": on the first
-        //   modeset there is no blob of ours to destroy.
+        // smithay warnings, minus drm::device::fd "Unable to become drm master": a false
+        // alarm under a libseat session, where logind/seatd already made the fd master and
+        // the kernel just refuses a repeat SET_MASTER from a process that didn't open it.
         tracing_subscriber::fmt()
-            .with_env_filter(
-                "simplewm=info,smithay=warn,\
-                 smithay::backend::drm::device::fd=error,\
-                 smithay::backend::drm::surface::atomic=error",
-            )
+            .with_env_filter("simplewm=info,smithay=warn,smithay::backend::drm::device::fd=error")
             .init();
     }
 
