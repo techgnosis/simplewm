@@ -12,7 +12,7 @@ run: simplewm
 tty: simplewm
 	./simplewm --tty
 
-# Register simplewm as the file chooser backend of xdg-desktop-portal. The .portal
+# Register simplewm as the only backend of xdg-desktop-portal. The .portal
 # file must live in /usr/share (the portal does not look anywhere else), so this
 # asks for sudo for that one file.
 install-portal:

@@ -73,8 +73,8 @@ Applets:
 * **Environment** — a read-only, scrollable (mouse wheel) view of how simplewm was
   started: the Wayland socket clients connect to (`WAYLAND_DISPLAY`, socket and
   lock file paths), backend details (host compositor socket when nested; seat,
-  GPU device and connector on a TTY; dmabuf render node), the output, the
-  protocols advertised to clients, process info, and all environment variables.
+  GPU device and connector on a TTY; dmabuf render node), the output, and all
+  environment variables.
 * **Screenshot** — the folder screenshots are saved in, with a Choose… button that opens
   the File Picker to pick it. There is no default; the folder is created if it no longer
   exists.
@@ -109,9 +109,9 @@ the screenshot folder.
 
 One-time setup: `make install-portal`. It copies `simplewm.portal` to
 `/usr/share/xdg-desktop-portal/portals/` (with sudo; the portal only looks there) and
-`simplewm-portals.conf` to `~/.config/xdg-desktop-portal/`. That config uses simplewm for
-file dialogs and turns every other portal off, so no other portal backend runs. Change
-`default=none` to `default=gtk` in it to keep the other portals.
+`simplewm-portals.conf` to `~/.config/xdg-desktop-portal/`. That config makes simplewm the
+only portal backend: no other backend is ever started, and portals simplewm does not
+implement yet are simply unavailable.
 
 The `xdg-desktop-portal` frontend itself is still needed, but D-Bus starts it on demand.
 It runs as a systemd user service and only sees systemd's environment, so in TTY mode

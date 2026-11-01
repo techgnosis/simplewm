@@ -16,7 +16,6 @@ use zbus::{blocking::Connection, blocking::fdo::DBusProxy, names::BusName, zvari
 use crate::{panel::EnvRow, portal, session_env::DESKTOP};
 
 const FRONTEND: &str = "org.freedesktop.portal.Desktop";
-const GTK_BACKEND: &str = "org.freedesktop.impl.portal.desktop.gtk";
 const PORTAL_PATH: &str = "/org/freedesktop/portal/desktop";
 const FILE_CHOOSER: &str = "org.freedesktop.portal.FileChooser";
 const PORTAL_FILE: &str = "/usr/share/xdg-desktop-portal/portals/simplewm.portal";
@@ -49,15 +48,19 @@ fn item(k: &str, v: impl Into<String>) -> EnvRow {
     EnvRow::Item(k.to_string(), v.into())
 }
 
-/// Problems found, shown in the summary at the top.
+/// Problems found, shown in the summary at the top: a short description of each
+/// and what to do about it. Keep both short; rows are cut off at the window edge.
 #[derive(Default)]
-struct Problems(Vec<String>);
+struct Problems(Vec<(String, String)>);
 
 impl Problems {
-    fn add(&mut self, p: impl Into<String>) {
-        self.0.push(p.into());
+    fn add(&mut self, what: impl Into<String>, fix: impl Into<String>) {
+        self.0.push((what.into(), fix.into()));
     }
 }
+
+const RESTART_PORTAL: &str = "Run: systemctl --user restart xdg-desktop-portal";
+const INSTALL_PORTAL: &str = "Run: make install-portal";
 
 fn run(ctx: &Context) -> Vec<EnvRow> {
     let mut problems = Problems::default();
@@ -68,13 +71,19 @@ fn run(ctx: &Context) -> Vec<EnvRow> {
     file_rows(&mut rows, &mut problems);
     journal_rows(ctx, &mut rows);
 
+    let checked = chrono::Local::now().format("%H:%M:%S");
     let mut out = vec![EnvRow::Header("Summary".into())];
-    if problems.0.is_empty() {
-        out.push(EnvRow::Line("No problems found.".into()));
-    } else {
-        out.extend(problems.0.into_iter().map(|p| EnvRow::Line(format!("• {p}"))));
+    match problems.0.len() {
+        0 => out.push(EnvRow::Line(format!("No problems found (checked {checked})."))),
+        n => {
+            let s = if n == 1 { "" } else { "s" };
+            out.push(EnvRow::Line(format!("{n} problem{s} found (checked {checked}):")));
+            for (what, fix) in problems.0 {
+                out.push(EnvRow::Line(format!("• {what}")));
+                out.push(EnvRow::Line(format!("    {fix}")));
+            }
+        }
     }
-    out.push(EnvRow::Line(format!("Checked at {}", chrono::Local::now().format("%H:%M:%S"))));
     out.extend(rows);
     out
 }
@@ -87,7 +96,7 @@ fn backend_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
     rows.push(item("Bus name", portal::BUS_NAME));
     let state = match (&status.problem, status.serving) {
         (Some(p), _) => {
-            problems.add(format!("simplewm's backend is not running: {p}"));
+            problems.add("simplewm's file dialog service is not running", "See State below for why");
             format!("not serving: {p}")
         }
         (None, true) => "serving".into(),
@@ -113,7 +122,7 @@ fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
     let conn = match conn {
         Ok(c) => c,
         Err(err) => {
-            problems.add(format!("cannot connect to the session bus: {err}"));
+            problems.add("Cannot connect to the session D-Bus", "Check DBUS_SESSION_BUS_ADDRESS below");
             rows.push(item("Connection", format!("failed: {err}")));
             return None;
         }
@@ -130,7 +139,10 @@ fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
     let ours_text = match ours {
         Some(pid) if pid == std::process::id() => "owned by this simplewm".to_string(),
         Some(pid) => {
-            problems.add(format!("{} is owned by another process (PID {pid})", portal::BUS_NAME));
+            problems.add(
+                format!("Another program (PID {pid}) holds simplewm's D-Bus name"),
+                "Quit it, then restart simplewm",
+            );
             format!("owned by another process: {}", describe_pid(pid))
         }
         None => "no owner".into(),
@@ -150,21 +162,14 @@ fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
             Ok(version) => format!("available (version {version})"),
             Err(err) => {
                 problems.add(
-                    "the running xdg-desktop-portal has no FileChooser: it found no backend for it \
-                     (check the files below, then restart it)",
+                    "xdg-desktop-portal is running without file dialogs",
+                    format!("Fix any other problems here, then {}", RESTART_PORTAL.to_lowercase()),
                 );
                 format!("missing: {err}")
             }
         };
         rows.push(item("Frontend FileChooser", chooser));
     }
-    rows.push(item(
-        "GTK backend",
-        match owner_pid(&dbus, GTK_BACKEND) {
-            Some(pid) => format!("running: {}", describe_pid(pid)),
-            None => "not running".into(),
-        },
-    ));
     frontend
 }
 
@@ -221,10 +226,10 @@ fn environment_rows(ctx: &Context, frontend_pid: Option<u32>, rows: &mut Vec<Env
             let desktop = get("XDG_CURRENT_DESKTOP");
             let wayland = get("WAYLAND_DISPLAY");
             if !desktop_matches(desktop.as_deref()) {
-                problems.add(format!(
-                    "systemd's XDG_CURRENT_DESKTOP is {}, not {DESKTOP}: newly started portals won't pick simplewm",
-                    desktop.as_deref().unwrap_or("unset")
-                ));
+                problems.add(
+                    format!("systemd has XDG_CURRENT_DESKTOP={}", desktop.as_deref().unwrap_or("(unset)")),
+                    format!("Restart simplewm so it sets {DESKTOP} again"),
+                );
             }
             rows.push(item("systemd: XDG_CURRENT_DESKTOP", desktop.unwrap_or_else(|| "(not set)".into())));
             rows.push(item("systemd: WAYLAND_DISPLAY", wayland.unwrap_or_else(|| "(not set)".into())));
@@ -237,10 +242,13 @@ fn environment_rows(ctx: &Context, frontend_pid: Option<u32>, rows: &mut Vec<Env
         match process_env(pid, "XDG_CURRENT_DESKTOP") {
             Ok(desktop) => {
                 if !desktop_matches(desktop.as_deref()) {
-                    problems.add(format!(
-                        "the running xdg-desktop-portal was started with XDG_CURRENT_DESKTOP={}: restart it",
-                        desktop.as_deref().unwrap_or("(unset)")
-                    ));
+                    problems.add(
+                        format!(
+                            "xdg-desktop-portal was started for desktop {}",
+                            desktop.as_deref().unwrap_or("(unset)")
+                        ),
+                        RESTART_PORTAL,
+                    );
                 }
                 rows.push(item(
                     "Running portal: XDG_CURRENT_DESKTOP",
@@ -276,12 +284,12 @@ fn file_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
                 && text.contains("org.freedesktop.impl.portal.FileChooser")
                 && text.lines().any(|l| l.starts_with("UseIn=") && l.contains(DESKTOP));
             if !ok {
-                problems.add(format!("{PORTAL_FILE} does not match simplewm.portal: run make install-portal"));
+                problems.add("The installed simplewm.portal is out of date", INSTALL_PORTAL);
             }
             rows.push(item("System", PORTAL_FILE));
         }
         Err(_) => {
-            problems.add("simplewm.portal is not installed: run make install-portal");
+            problems.add("simplewm.portal is not installed", INSTALL_PORTAL);
             rows.push(item("System", "not installed"));
         }
     }
@@ -292,18 +300,33 @@ fn file_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
         .filter_map(|p| std::fs::read_to_string(&p).ok().map(|t| (p, t)))
         .collect();
     if found.is_empty() {
-        problems.add("no portal config found (simplewm-portals.conf): run make install-portal");
+        problems.add("No portal config found", INSTALL_PORTAL);
         rows.push(item("Portal config", "none found"));
     }
     let home = std::env::var_os("HOME").map(PathBuf::from);
+    let short_path = |path: &std::path::Path| match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    };
     for (i, (path, text)) in found.iter().enumerate() {
-        let chooser = config_value(text, "org.freedesktop.impl.portal.FileChooser");
-        let default = config_value(text, "default");
-        if i == 0 && chooser.as_deref() != Some(DESKTOP) {
-            problems.add(format!(
-                "{} is used first and does not set org.freedesktop.impl.portal.FileChooser=simplewm",
-                path.display()
-            ));
+        let settings = config_values(text);
+        let default = settings.iter().find(|(k, _)| k == "default").map(|(_, v)| v.as_str());
+        let others: Vec<String> = settings
+            .iter()
+            .filter(|(k, v)| k != "default" && v != DESKTOP)
+            .map(|(k, v)| format!("{}={v}", k.trim_start_matches("org.freedesktop.impl.portal.")))
+            .collect();
+        if i == 0 && default != Some(DESKTOP) {
+            problems.add(
+                format!("{} doesn't set default={DESKTOP}", short_path(path)),
+                format!("{INSTALL_PORTAL}, or edit the file"),
+            );
+        }
+        if i == 0 && !others.is_empty() {
+            problems.add(
+                format!("{} sends {} elsewhere", short_path(path), others.join(", ")),
+                format!("{INSTALL_PORTAL}, or remove those lines"),
+            );
         }
         let (label, shown) = match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
             Some(rest) => ("User", format!("~/{}", rest.display())),
@@ -313,11 +336,11 @@ fn file_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
         rows.push(item(&label, shown));
         rows.push(item(
             "    settings",
-            format!(
-                "FileChooser={}, default={}",
-                chooser.as_deref().unwrap_or("(unset)"),
-                default.as_deref().unwrap_or("(unset)")
-            ),
+            if settings.is_empty() {
+                "(none)".to_string()
+            } else {
+                settings.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(", ")
+            },
         ));
     }
 }
@@ -357,15 +380,16 @@ fn config_candidates() -> Vec<PathBuf> {
     out
 }
 
-/// A `key=value` line in a portals.conf `[preferred]` section.
-fn config_value(text: &str, key: &str) -> Option<String> {
+/// The `key=value` lines of a portals.conf `[preferred]` section.
+fn config_values(text: &str) -> Vec<(String, String)> {
     text.lines()
         .map(str::trim)
         .filter(|l| !l.starts_with('#'))
-        .find_map(|l| {
+        .filter_map(|l| {
             let (k, v) = l.split_once('=')?;
-            (k.trim() == key).then(|| v.trim().to_string())
+            Some((k.trim().to_string(), v.trim().to_string()))
         })
+        .collect()
 }
 
 // --- journal ----------------------------------------------------------------------

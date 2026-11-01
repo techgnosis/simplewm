@@ -5,7 +5,7 @@
 //! * The Launcher applet window edits the list of executable paths shown in
 //!   the Launcher menu; paths are chosen with the File Picker.
 //! * The Environment applet window shows (read-only) how simplewm was started:
-//!   Wayland socket, backend devices, protocols, and environment variables.
+//!   Wayland socket, backend devices, and environment variables.
 //! * The Screenshot applet window sets the folder screenshots are saved in,
 //!   chosen with the File Picker.
 //! * The Help applet window shows a few static notes about simplewm.

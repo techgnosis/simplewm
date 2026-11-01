@@ -31,14 +31,9 @@ pub fn unexport() {
     stop_portals();
 }
 
-/// Stop the portal frontend and the GTK backend; D-Bus restarts them on demand.
+/// Stop the portal frontend; D-Bus restarts it on demand.
 fn stop_portals() {
-    run(Command::new("systemctl").args([
-        "--user",
-        "stop",
-        "xdg-desktop-portal.service",
-        "xdg-desktop-portal-gtk.service",
-    ]));
+    run(Command::new("systemctl").args(["--user", "stop", "xdg-desktop-portal.service"]));
 }
 
 fn run(command: &mut Command) {

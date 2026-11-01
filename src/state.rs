@@ -410,33 +410,6 @@ impl State {
             crate::panel::db_path().map(|p| p.display().to_string()).unwrap_or_else(|| "(unavailable)".into()),
         ));
 
-        rows.push(EnvRow::Header("Protocols (globals advertised to clients)".into()));
-        let dmabuf = if self.dmabuf_global.is_some() { "GPU buffers" } else { "not available" };
-        for (name, what) in [
-            ("wl_compositor", "surfaces"),
-            ("wl_subcompositor", "sub-surfaces"),
-            ("xdg_wm_base", "application windows and popups"),
-            ("zxdg_decoration_manager_v1", "decorations (server-side forced)"),
-            ("wl_shm", "shared-memory buffers"),
-            ("zwp_linux_dmabuf_v1", dmabuf),
-            ("wl_seat", "input"),
-            ("wl_data_device_manager", "clipboard, drag and drop"),
-            ("wl_output", "outputs"),
-            ("zxdg_output_manager_v1", "output details"),
-        ] {
-            rows.push(item(name, what.to_string()));
-        }
-
-        rows.push(EnvRow::Header("Process".into()));
-        rows.push(item("PID", std::process::id().to_string()));
-        if let Ok(exe) = std::env::current_exe() {
-            rows.push(item("Executable", exe.display().to_string()));
-        }
-        rows.push(item("Arguments", std::env::args().collect::<Vec<_>>().join(" ")));
-        if let Ok(cwd) = std::env::current_dir() {
-            rows.push(item("Working directory", cwd.display().to_string()));
-        }
-
         let mut vars: Vec<(String, String)> = std::env::vars_os()
             .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned()))
             .collect();
