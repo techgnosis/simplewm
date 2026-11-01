@@ -67,7 +67,6 @@ fn run(ctx: &Context) -> Vec<EnvRow> {
     environment_rows(ctx, frontend_pid, &mut rows, &mut problems);
     file_rows(&mut rows, &mut problems);
     journal_rows(ctx, &mut rows);
-    tips_rows(&mut rows);
 
     let mut out = vec![EnvRow::Header("Summary".into())];
     if problems.0.is_empty() {
@@ -279,11 +278,11 @@ fn file_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
             if !ok {
                 problems.add(format!("{PORTAL_FILE} does not match simplewm.portal: run make install-portal"));
             }
-            rows.push(item(PORTAL_FILE, if ok { "installed" } else { "installed, but outdated" }));
+            rows.push(item("System", PORTAL_FILE));
         }
-        Err(err) => {
+        Err(_) => {
             problems.add("simplewm.portal is not installed: run make install-portal");
-            rows.push(item(PORTAL_FILE, format!("missing ({err})")));
+            rows.push(item("System", "not installed"));
         }
     }
 
@@ -296,6 +295,7 @@ fn file_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
         problems.add("no portal config found (simplewm-portals.conf): run make install-portal");
         rows.push(item("Portal config", "none found"));
     }
+    let home = std::env::var_os("HOME").map(PathBuf::from);
     for (i, (path, text)) in found.iter().enumerate() {
         let chooser = config_value(text, "org.freedesktop.impl.portal.FileChooser");
         let default = config_value(text, "default");
@@ -305,8 +305,12 @@ fn file_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
                 path.display()
             ));
         }
-        let label = if i == 0 { "Portal config (used)" } else { "Portal config (ignored)" };
-        rows.push(item(label, path.display().to_string()));
+        let (label, shown) = match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
+            Some(rest) => ("User", format!("~/{}", rest.display())),
+            None => ("System", path.display().to_string()),
+        };
+        let label = if i == 0 { label.to_string() } else { format!("{label} (ignored)") };
+        rows.push(item(&label, shown));
         rows.push(item(
             "    settings",
             format!(
@@ -398,25 +402,6 @@ fn shorten_journal_line(line: &str) -> String {
             format!("{time} {msg}")
         }
         _ => line.to_string(),
-    }
-}
-
-// --- tips ---------------------------------------------------------------------------
-
-fn tips_rows(rows: &mut Vec<EnvRow>) {
-    rows.push(EnvRow::Header("Things to try".into()));
-    for (k, v) in [
-        ("make install-portal", "install simplewm.portal and simplewm-portals.conf"),
-        ("systemctl --user restart xdg-desktop-portal", "reread the config and environment, then Refresh"),
-        ("/usr/lib/xdg-desktop-portal -r -v", "run the frontend in a terminal with debug output"),
-        ("busctl --user list | grep portal", "see which portal services are on the bus"),
-        ("journalctl --user -u xdg-desktop-portal", "the frontend's full log"),
-        ("Firefox", "about:config widget.use-xdg-desktop-portal.file-picker = 1"),
-        ("GTK 3 apps", "start with GTK_USE_PORTAL=1"),
-        ("GTK 4 apps", "start with GDK_DEBUG=portals"),
-        ("Qt apps", "start with QT_QPA_PLATFORMTHEME=xdgdesktopportal"),
-    ] {
-        rows.push(item(k, v));
     }
 }
 
