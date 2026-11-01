@@ -94,14 +94,19 @@ dialog; simplewm registers as that portal's file chooser backend (D-Bus name
 `org.freedesktop.impl.portal.desktop.simplewm`) and answers by opening the **File Picker**
 window:
 
-* Up / Home buttons and the current folder; double-click a folder to enter it
+* A Home button and the current folder; double-click a folder (or select it and press
+  Enter) to enter it, Backspace goes up a folder (in Save dialogs: Backspace in an empty
+  Name). A hint under the list says so
 * Double-click a file (or select it and press Open / Enter) to choose it; Ctrl-click
   selects several when the app allows it
 * Save dialogs have a Name field (pre-filled by the app); saving over an existing file
   asks you to press Save a second time
 * Hidden files toggle, and a Type button that cycles through the app's file filters
-* Esc, Cancel or the close button cancels; arrow keys move the selection, Backspace goes
-  up a folder
+* Type to search: the list narrows to names containing what you typed (names starting
+  with it first, the first match selected); Backspace edits the search, Esc clears it
+* Esc, Cancel or the close button cancels; arrow keys, Page Up / Page Down and Home / End
+  move the selection (held keys repeat); the mouse wheel scrolls three rows a notch, and
+  clicking the scrollbar jumps there
 * Only one File Picker is shown at a time; further requests wait their turn
 
 The Launcher and Screenshot applets use the same File Picker to choose executables and

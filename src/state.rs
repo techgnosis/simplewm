@@ -7,7 +7,7 @@ use smithay::{
     output::Output,
     reexports::{
         calloop::{
-            EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction,
+            EventLoop, Interest, LoopHandle, LoopSignal, Mode, PostAction, RegistrationToken,
             channel::{self, Sender},
             generic::Generic,
         },
@@ -79,6 +79,8 @@ pub struct State {
     pub screenshot_tx: Sender<SaveResult>,
     /// Desktop Portal check threads report back through this.
     pub portal_check_tx: Sender<Vec<EnvRow>>,
+    /// The key held down in one of simplewm's own windows, and its repeat timer.
+    pub key_repeat: Option<(u32, RegistrationToken)>,
 }
 
 impl State {
@@ -164,6 +166,7 @@ impl State {
             startup_info: Vec::new(),
             screenshot_tx,
             portal_check_tx,
+            key_repeat: None,
         }
     }
 

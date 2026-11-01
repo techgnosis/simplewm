@@ -8,8 +8,10 @@ use smithay::{
         keyboard::{FilterResult, keysyms},
         pointer::{AxisFrame, ButtonEvent, CursorImageStatus, Focus, GrabStartData, MotionEvent},
     },
+    reexports::calloop::timer::{TimeoutAction, Timer},
     utils::{Logical, Point, SERIAL_COUNTER, Serial},
 };
+use std::time::Duration;
 
 use crate::{
     grabs::{Edges, MoveGrab, PanelMoveGrab, ResizeGrab},
@@ -19,7 +21,16 @@ use crate::{
 };
 
 const BTN_LEFT: u32 = 0x110;
+/// Key repeat for simplewm's own windows, matching the rate given to clients.
+const REPEAT_DELAY_MS: u64 = 200;
+const REPEAT_RATE: u64 = 25;
 
+/// Whether holding `sym` repeats it. Keys that act once (accept, cancel) don't.
+fn repeats(sym: u32) -> bool {
+    !matches!(sym, keysyms::KEY_Return | keysyms::KEY_KP_Enter | keysyms::KEY_Escape | keysyms::KEY_Tab)
+}
+
+#[derive(Clone, Copy)]
 enum KeyAction {
     Vt(i32),
     Panel(u32, Option<char>, bool),
@@ -34,6 +45,45 @@ enum Press {
 }
 
 impl State {
+    fn run_key_action(&mut self, action: Option<KeyAction>) {
+        match action {
+            Some(KeyAction::Vt(vt)) => {
+                if let Some(Backend::Udev(udev)) = self.backend.as_mut() {
+                    udev.change_vt(vt);
+                }
+            }
+            Some(KeyAction::Panel(sym, ch, ctrl)) => self.panels.key(sym, ch, ctrl),
+            Some(KeyAction::Picker(sym, ch, ctrl)) => self.picker_key(sym, ch, ctrl),
+            Some(KeyAction::CancelScreenshot) => self.cancel_screenshot(),
+            Some(KeyAction::Swallow) | None => {}
+        }
+    }
+
+    fn start_key_repeat(&mut self, code: u32, action: KeyAction) {
+        let timer = Timer::from_duration(Duration::from_millis(REPEAT_DELAY_MS));
+        let token = self.loop_handle.insert_source(timer, move |_, _, state| {
+            // Stop once the window the key went to no longer takes keys.
+            let alive = match action {
+                KeyAction::Picker(..) => state.panels.active == Some(PanelId::FilePicker),
+                KeyAction::Panel(..) => state.panels.editing.is_some(),
+                _ => false,
+            };
+            if !alive {
+                state.key_repeat = None;
+                return TimeoutAction::Drop;
+            }
+            state.run_key_action(Some(action));
+            TimeoutAction::ToDuration(Duration::from_millis(1000 / REPEAT_RATE))
+        });
+        self.key_repeat = token.ok().map(|t| (code, t));
+    }
+
+    fn stop_key_repeat(&mut self) {
+        if let Some((_, token)) = self.key_repeat.take() {
+            self.loop_handle.remove(token);
+        }
+    }
+
     pub fn process_input_event<I: InputBackend>(&mut self, event: InputEvent<I>) {
         match event {
             InputEvent::Keyboard { event } => {
@@ -83,17 +133,18 @@ impl State {
                         FilterResult::Forward
                     },
                 );
-                match action {
-                    Some(KeyAction::Vt(vt)) => {
-                        if let Some(Backend::Udev(udev)) = self.backend.as_mut() {
-                            udev.change_vt(vt);
-                        }
-                    }
-                    Some(KeyAction::Panel(sym, ch, ctrl)) => self.panels.key(sym, ch, ctrl),
-                    Some(KeyAction::Picker(sym, ch, ctrl)) => self.picker_key(sym, ch, ctrl),
-                    Some(KeyAction::CancelScreenshot) => self.cancel_screenshot(),
-                    Some(KeyAction::Swallow) | None => {}
+                // simplewm's own windows get key repeat here; clients do their own.
+                let code = event.key_code().raw();
+                if key_state == KeyState::Pressed || self.key_repeat.is_some_and(|(c, _)| c == code) {
+                    self.stop_key_repeat();
                 }
+                if key_state == KeyState::Pressed
+                    && let Some(a @ (KeyAction::Panel(sym, ..) | KeyAction::Picker(sym, ..))) = action
+                    && repeats(sym)
+                {
+                    self.start_key_repeat(code, a);
+                }
+                self.run_key_action(action);
             }
             InputEvent::PointerMotion { event } => {
                 let serial = SERIAL_COUNTER.next_serial();
@@ -144,7 +195,9 @@ impl State {
                         .amount(Axis::Vertical)
                         .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0);
                     if id == PanelId::FilePicker {
-                        self.panels.picker.scroll_by(amount);
+                        // A wheel notch (15) moves three rows; touchpads scroll by pixels.
+                        let scale = if event.source() == AxisSource::Wheel { 3.0 * 22.0 / 15.0 } else { 1.0 };
+                        self.panels.picker.scroll_by(amount * scale);
                     } else {
                         self.panels.scroll_rows(id, amount);
                     }
