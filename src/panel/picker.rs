@@ -15,8 +15,8 @@ use smithay::{
 };
 
 use super::{
-    BUTTON, BUTTON_HOT, CARET, FIELD_BG, FIELD_BG_EDIT, FIELD_EDIT_RING, FIELD_H, FIELD_TEXT_PAD, Field,
-    NOTE_H, PAD, PanelHit, PanelId, Rect, SCROLL_THUMB, SCROLL_TRACK, SCROLLBAR_W, bufs, edit_ring, field_view,
+    BUTTON, BUTTON_HOT, FIELD_BG, FIELD_H, FIELD_TEXT_PAD, Field, NOTE_H, PAD, PanelHit, PanelId, Rect,
+    SCROLL_THUMB, SCROLL_TRACK, SCROLLBAR_W, bufs, field_char_at, render_field,
 };
 use crate::{
     portal::{PickReply, PickRequest, PickResult, PortalEvent},
@@ -370,19 +370,8 @@ impl FilePicker {
             return Some(PanelHit::Body);
         }
         if let Some(name) = l.name.filter(|r| inside(*r)) {
-            let f = Field::PickName;
-            let view = field_view(text, &self.name, cursor, name.size.w - 2 * FIELD_TEXT_PAD);
-            let mut pos = (name.loc.x + FIELD_TEXT_PAD) as f64;
-            let mut idx = view.start;
-            for ch in self.name.chars().skip(view.start) {
-                let adv = text.measure(&ch.to_string()) as f64;
-                if p.x < pos + adv / 2.0 {
-                    break;
-                }
-                pos += adv;
-                idx += 1;
-            }
-            return Some(PanelHit::Field(f, idx));
+            let idx = field_char_at(text, &self.name, cursor, name, p.x);
+            return Some(PanelHit::Field(Field::PickName, idx));
         }
         if inside(l.hidden) {
             return pick(PickHit::Hidden);
@@ -418,7 +407,7 @@ impl FilePicker {
         // Buffers: one highlight per visible row, then the fixed ones below.
         let s = bufs(solids, visible + 12);
         let (track_i, thumb_i, list_i) = (visible, visible + 1, visible + 2);
-        let (name_i, caret_i, ring_i) = (visible + 3, visible + 4, visible + 5);
+        let name_i = visible + 3; // 3 buffers for the name field
         let btn_i = visible + 6; // up, home, hidden, filter, cancel, accept
         let hot = |h: PickHit| hovered == Some(PanelHit::Pick(h));
 
@@ -472,17 +461,8 @@ impl FilePicker {
         // File name (Save).
         if let Some(name) = l.name {
             elems.extend(ui::text_in(text, renderer, "Name", l.name_label.loc.x, l.name_label));
-            let tx = name.loc.x + FIELD_TEXT_PAD;
-            let view = field_view(text, &self.name, editing.then_some(cursor), name.size.w - 2 * FIELD_TEXT_PAD);
-            elems.extend(ui::text_in(text, renderer, &view.visible, tx, name));
-            if let Some(cx) = view.caret_x {
-                let caret = Rectangle::new((tx + cx, name.loc.y + 4).into(), (1, name.size.h - 8).into());
-                elems.push(ui::solid(&mut s[caret_i], caret, CARET));
-            }
-            elems.push(ui::solid(&mut s[name_i], name, if editing { FIELD_BG_EDIT } else { FIELD_BG }));
-            if editing {
-                elems.push(ui::solid(&mut s[ring_i], edit_ring(name), FIELD_EDIT_RING));
-            }
+            let field = &mut s[name_i..name_i + 3];
+            render_field(text, renderer, field, name, &self.name, "", editing.then_some(cursor), elems);
         }
 
         if let Some(note) = &self.note {

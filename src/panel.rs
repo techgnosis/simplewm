@@ -11,6 +11,8 @@
 //! * The Help applet window shows a few static notes about simplewm.
 //! * The Desktop Portal applet window shows checks for when apps get no file
 //!   dialog from the desktop portal (see `crate::portal_check`).
+//! * The Network applet window sets a static IPv4 address and gateway on the
+//!   wired network card (see `network` and `crate::network`).
 //! * The File Picker window is not in the Control Panel: it opens when an app
 //!   asks for a file through the desktop portal (see `picker`), or from the
 //!   Launcher and Screenshot applets.
@@ -32,8 +34,10 @@ use crate::{
     ui::{self, CustomElement, Frame},
 };
 
+mod network;
 mod picker;
 
+pub use network::NetworkApplet;
 pub use picker::{FilePicker, PickHit};
 
 pub const DEFAULT_LAUNCHER_ENTRY: &str = "/usr/bin/alacritty";
@@ -46,6 +50,7 @@ pub enum PanelId {
     Screenshot,
     Help,
     Portal,
+    Network,
     FilePicker,
 }
 
@@ -59,17 +64,19 @@ impl PanelId {
             PanelId::Screenshot => "Screenshot",
             PanelId::Help => "Help",
             PanelId::Portal => "Desktop Portal",
+            PanelId::Network => "Network",
             PanelId::FilePicker => "File Picker",
         }
     }
 }
 
 /// Applets shown as icons in the Control Panel: (name, window it opens).
-pub const APPLETS: [(&str, PanelId); 5] = [
+pub const APPLETS: [(&str, PanelId); 6] = [
     ("Launcher", PanelId::Launcher),
     ("Environment", PanelId::Environment),
     ("Screenshot", PanelId::Screenshot),
     ("Desktop Portal", PanelId::Portal),
+    ("Network", PanelId::Network),
     ("Help", PanelId::Help),
 ];
 
@@ -78,12 +85,26 @@ pub const APPLETS: [(&str, PanelId); 5] = [
 pub enum Field {
     /// File name in the File Picker (Save).
     PickName,
+    /// Address with prefix length in the Network applet.
+    NetAddress,
+    /// Default gateway in the Network applet.
+    NetGateway,
 }
 
 impl Field {
     pub fn panel(self) -> PanelId {
         match self {
             Field::PickName => PanelId::FilePicker,
+            Field::NetAddress | Field::NetGateway => PanelId::Network,
+        }
+    }
+
+    /// The field Tab moves to.
+    fn next(self) -> Option<Field> {
+        match self {
+            Field::NetAddress => Some(Field::NetGateway),
+            Field::NetGateway => Some(Field::NetAddress),
+            Field::PickName => None,
         }
     }
 }
@@ -94,7 +115,7 @@ const PAD: i32 = 14;
 const BTN_H: i32 = 26;
 
 // Control Panel
-const CP_W: i32 = 540;
+const CP_W: i32 = 640;
 const CELL_W: i32 = 102;
 const CELL_H: i32 = 92;
 const TILE: i32 = 48;
@@ -154,6 +175,7 @@ const TILE_ENVIRONMENT: [f32; 4] = [0.20, 0.58, 0.42, 1.0];
 const TILE_HELP: [f32; 4] = [0.80, 0.50, 0.15, 1.0];
 const TILE_SCREENSHOT: [f32; 4] = [0.55, 0.32, 0.75, 1.0];
 const TILE_PORTAL: [f32; 4] = [0.15, 0.55, 0.65, 1.0];
+const TILE_NETWORK: [f32; 4] = [0.70, 0.30, 0.35, 1.0];
 const ENV_HEADER_BG: [f32; 4] = [0.19, 0.21, 0.26, 1.0];
 const SCROLL_TRACK: [f32; 4] = [0.18, 0.19, 0.23, 1.0];
 const SCROLL_THUMB: [f32; 4] = [0.40, 0.43, 0.50, 1.0];
@@ -176,6 +198,9 @@ pub enum PanelHit {
     ChooseShotDir,
     // Desktop Portal
     Refresh,
+    // Network
+    NetApply,
+    NetRefresh,
     // File Picker
     Pick(PickHit),
 }
@@ -422,6 +447,21 @@ fn applet_glyph(id: PanelId, tile: Rect) -> ([f32; 4], Vec<Rect>) {
             ];
             (TILE_PORTAL, rects)
         }
+        // Three linked machines: one on top wired down to two below.
+        PanelId::Network => {
+            let (x, y) = (tile.loc.x, tile.loc.y);
+            let r = |dx, dy, w, h| Rectangle::new((x + dx, y + dy).into(), (w, h).into());
+            let rects = vec![
+                r(18, 8, 12, 9),  // top box
+                r(23, 17, 2, 6),  // its cable
+                r(11, 23, 26, 2), // bar
+                r(11, 23, 2, 6),  // drop to the left box
+                r(35, 23, 2, 6),  // drop to the right box
+                r(6, 29, 12, 9),  // left box
+                r(30, 29, 12, 9), // right box
+            ];
+            (TILE_NETWORK, rects)
+        }
         PanelId::ControlPanel | PanelId::FilePicker => (TILE_LAUNCHER, Vec::new()),
     }
 }
@@ -433,8 +473,10 @@ pub struct Panels {
     screenshot: PanelWindow,
     help: PanelWindow,
     portal: PanelWindow,
+    network: PanelWindow,
     file_picker: PanelWindow,
     pub picker: FilePicker,
+    pub net: NetworkApplet,
     /// Environment rows (refreshed when the window is opened).
     env: RowList,
     /// Desktop Portal check results (refreshed on open and by Refresh).
@@ -461,15 +503,17 @@ impl Panels {
             None => vec![DEFAULT_LAUNCHER_ENTRY.to_string()],
         };
         let shot_dir = db.as_ref().and_then(|c| load_setting(c, "screenshot_dir")).unwrap_or_default();
-        Self {
+        let mut panels = Self {
             control: PanelWindow::default(),
             launcher: PanelWindow::default(),
             environment: PanelWindow::default(),
             screenshot: PanelWindow::default(),
             help: PanelWindow::default(),
             portal: PanelWindow::default(),
+            network: PanelWindow::default(),
             file_picker: PanelWindow::default(),
             picker: FilePicker::default(),
+            net: NetworkApplet::default(),
             env: RowList::default(),
             portal_rows: RowList::default(),
             portal_refresh_buf: None,
@@ -479,7 +523,9 @@ impl Panels {
             editing: None,
             cursor: 0,
             db,
-        }
+        };
+        panels.load_network();
+        panels
     }
 
     fn win(&self, id: PanelId) -> &PanelWindow {
@@ -490,6 +536,7 @@ impl Panels {
             PanelId::Screenshot => &self.screenshot,
             PanelId::Help => &self.help,
             PanelId::Portal => &self.portal,
+            PanelId::Network => &self.network,
             PanelId::FilePicker => &self.file_picker,
         }
     }
@@ -502,6 +549,7 @@ impl Panels {
             PanelId::Screenshot => &mut self.screenshot,
             PanelId::Help => &mut self.help,
             PanelId::Portal => &mut self.portal,
+            PanelId::Network => &mut self.network,
             PanelId::FilePicker => &mut self.file_picker,
         }
     }
@@ -565,12 +613,16 @@ impl Panels {
     fn field_text(&self, f: Field) -> &String {
         match f {
             Field::PickName => &self.picker.name,
+            Field::NetAddress => &self.net.address,
+            Field::NetGateway => &self.net.gateway,
         }
     }
 
     fn field_text_mut(&mut self, f: Field) -> &mut String {
         match f {
             Field::PickName => &mut self.picker.name,
+            Field::NetAddress => &mut self.net.address,
+            Field::NetGateway => &mut self.net.gateway,
         }
     }
 
@@ -591,6 +643,7 @@ impl Panels {
             PanelId::Screenshot => (SHOT_W, PAD + HEADER_H + FIELD_H + NOTE_H + PAD),
             PanelId::Help => (HELP_W, PAD + HELP_LINES.len() as i32 * HELP_ROW_H + PAD),
             PanelId::Portal => (PORTAL_W, PORTAL_H),
+            PanelId::Network => self.network_size(),
             PanelId::FilePicker => self.picker_size(),
         }
     }
@@ -739,6 +792,11 @@ impl Panels {
                     return Some(PanelHit::Refresh);
                 }
             }
+            PanelId::Network => {
+                if let Some(h) = self.network_hit(text, p) {
+                    return Some(h);
+                }
+            }
             PanelId::Environment | PanelId::Help => {}
         }
         Some(PanelHit::Body)
@@ -810,6 +868,13 @@ impl Panels {
             keysyms::KEY_Right | keysyms::KEY_KP_Right => self.cursor = (self.cursor + 1).min(len),
             keysyms::KEY_Home | keysyms::KEY_KP_Home => self.cursor = 0,
             keysyms::KEY_End | keysyms::KEY_KP_End => self.cursor = len,
+            keysyms::KEY_Tab | keysyms::KEY_ISO_Left_Tab => {
+                if let Some(next) = f.next() {
+                    let end = self.field_text(next).chars().count();
+                    self.begin_edit(next, end);
+                }
+            }
+            keysyms::KEY_Return | keysyms::KEY_KP_Enter if f.panel() == PanelId::Network => self.network_apply(),
             keysyms::KEY_Return | keysyms::KEY_KP_Enter | keysyms::KEY_Escape => self.stop_editing(),
             _ => {
                 if let Some(c) = ch
@@ -852,6 +917,23 @@ impl Panels {
         }
     }
 
+    /// Store `(key, value)` pairs in the settings table.
+    fn save_settings(&mut self, pairs: &[(&str, &str)]) {
+        let Some(conn) = self.db.as_mut() else {
+            return;
+        };
+        let result = (|| -> rusqlite::Result<()> {
+            let tx = conn.transaction()?;
+            for (key, value) in pairs {
+                tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)", [key, value])?;
+            }
+            tx.commit()
+        })();
+        if let Err(err) = result {
+            tracing::error!(?err, "failed to save settings");
+        }
+    }
+
     // --- rendering ------------------------------------------------------------
 
     /// Push a panel's render elements (front-most first).
@@ -873,6 +955,7 @@ impl Panels {
             PanelId::Screenshot => self.render_screenshot(text, renderer, hovered, elems),
             PanelId::Help => self.render_help(text, renderer, elems),
             PanelId::Portal => self.render_portal(text, renderer, hovered, elems),
+            PanelId::Network => self.render_network(text, renderer, hovered, elems),
             PanelId::FilePicker => self.render_picker(text, renderer, hovered, elems),
         }
 
@@ -980,6 +1063,7 @@ impl Panels {
                 let vp = self.portal_viewport();
                 self.portal_rows.scroll_by(amount, vp);
             }
+            PanelId::Network => self.scroll_network(amount),
             _ => {}
         }
     }
@@ -1123,6 +1207,53 @@ fn field_view(text: &TextRenderer, s: &str, cursor: Option<usize>, width: i32) -
             visible: text.fit(s, width),
             caret_x: None,
         },
+    }
+}
+
+/// Char index in field `rect` (showing `value`) nearest to pointer x `x`.
+fn field_char_at(text: &TextRenderer, value: &str, cursor: Option<usize>, rect: Rect, x: f64) -> usize {
+    let view = field_view(text, value, cursor, rect.size.w - 2 * FIELD_TEXT_PAD);
+    let mut pos = (rect.loc.x + FIELD_TEXT_PAD) as f64;
+    let mut idx = view.start;
+    for ch in value.chars().skip(view.start) {
+        let adv = text.measure(&ch.to_string()) as f64;
+        if x < pos + adv / 2.0 {
+            break;
+        }
+        pos += adv;
+        idx += 1;
+    }
+    idx
+}
+
+/// Draw an editable text field: its text (or a dimmed `placeholder` when
+/// empty), the caret and focus ring when `cursor` is set. Uses 3 buffers.
+#[allow(clippy::too_many_arguments)]
+fn render_field(
+    text: &mut TextRenderer,
+    renderer: &mut GlesRenderer,
+    s: &mut [SolidColorBuffer],
+    rect: Rect,
+    value: &str,
+    placeholder: &str,
+    cursor: Option<usize>,
+    elems: &mut Vec<CustomElement>,
+) {
+    let tx = rect.loc.x + FIELD_TEXT_PAD;
+    let view = field_view(text, value, cursor, rect.size.w - 2 * FIELD_TEXT_PAD);
+    if value.is_empty() && !placeholder.is_empty() {
+        elems.extend(ui::text_in_alpha(text, renderer, placeholder, tx, rect, 0.35));
+    } else {
+        elems.extend(ui::text_in(text, renderer, &view.visible, tx, rect));
+    }
+    if let Some(cx) = view.caret_x {
+        let caret = Rectangle::new((tx + cx, rect.loc.y + 4).into(), (1, rect.size.h - 8).into());
+        elems.push(ui::solid(&mut s[0], caret, CARET));
+    }
+    let editing = cursor.is_some();
+    elems.push(ui::solid(&mut s[1], rect, if editing { FIELD_BG_EDIT } else { FIELD_BG }));
+    if editing {
+        elems.push(ui::solid(&mut s[2], edit_ring(rect), FIELD_EDIT_RING));
     }
 }
 

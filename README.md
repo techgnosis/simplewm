@@ -10,7 +10,10 @@ A very simple Wayland compositor written in Rust with Smithay.
 
 ## Building and running
 
-* `make` builds a release binary at `./simplewm`
+* `make` builds a release binary at `./simplewm` and gives it `CAP_NET_ADMIN` with
+  `sudo setcap` (asked only when the binary changed), so the Network applet can set the
+  network card's address and routes without simplewm running as root. Programs simplewm
+  launches don't get the capability.
 * Nested (inside an existing Wayland session, for development): `make run` or `./simplewm`
 * On real hardware from a TTY: `./simplewm` (the TTY backend is chosen automatically when
   no `WAYLAND_DISPLAY`, `WAYLAND_SOCKET` or `DISPLAY` is set). `--tty` (or `make tty`)
@@ -84,6 +87,13 @@ Applets:
   `simplewm.portal` and portal config, the portal's log since simplewm started, and commands
   and per-toolkit settings to try. A summary at the top lists problems found; Refresh reruns
   the checks.
+* **Network** — a static IPv4 address for the first wired network card. It shows the card's
+  state (interface on/off, cable, speed, current addresses and default gateway), and has an
+  Address field (`192.168.1.50/24`) and a Gateway field (`192.168.1.1`, or empty for no
+  default route). Apply (or Enter) switches the interface on, replaces its IPv4 addresses and
+  default route with these, and saves them; simplewm sets them again each time it starts.
+  Clearing both fields and applying stops that. There is no DHCP or DNS. If NetworkManager is
+  running it may undo the settings, so mask it (`sudo systemctl mask --now NetworkManager`).
 * **Help** — a short read-only note: the resolution is the monitor's preferred mode, there is
   no plain text config file, and there are no keyboard shortcuts.
 

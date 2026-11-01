@@ -24,3 +24,4 @@ rusqlite = { version = "0.41.1", features = ["bundled"] }
 png = "0.17"
 futures-channel = "0.3.34"
 zbus = "5"
+libc = "0.2"

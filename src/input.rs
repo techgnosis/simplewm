@@ -27,7 +27,7 @@ const REPEAT_RATE: u64 = 25;
 
 /// Whether holding `sym` repeats it. Keys that act once (accept, cancel) don't.
 fn repeats(sym: u32) -> bool {
-    !matches!(sym, keysyms::KEY_Return | keysyms::KEY_KP_Enter | keysyms::KEY_Escape | keysyms::KEY_Tab)
+    !matches!(sym, keysyms::KEY_Return | keysyms::KEY_KP_Enter | keysyms::KEY_Escape | keysyms::KEY_Tab | keysyms::KEY_ISO_Left_Tab)
 }
 
 #[derive(Clone, Copy)]
@@ -186,9 +186,9 @@ impl State {
                 pointer.frame(self);
             }
             InputEvent::PointerAxis { event } => {
-                // Scrolling over the Environment, Desktop Portal or File Picker window
+                // Scrolling over the Environment, Desktop Portal, Network or File Picker window
                 // scrolls its list.
-                if let Hit::Panel(id @ (PanelId::Environment | PanelId::Portal | PanelId::FilePicker), _) =
+                if let Hit::Panel(id @ (PanelId::Environment | PanelId::Portal | PanelId::Network | PanelId::FilePicker), _) =
                     self.hit_test(self.pointer_location)
                 {
                     let amount = event
@@ -320,6 +320,9 @@ impl State {
                             if *applet == PanelId::Portal {
                                 self.refresh_portal_check();
                             }
+                            if *applet == PanelId::Network {
+                                self.panels.refresh_network();
+                            }
                             let out = self.output_geometry();
                             self.panels.show(*applet, out);
                             self.focus_panel(*applet);
@@ -335,6 +338,8 @@ impl State {
                     PanelHit::Remove(i) => self.panels.remove_entry(i),
                     PanelHit::Add => self.choose_launcher_entry(None),
                     PanelHit::Refresh => self.refresh_portal_check(),
+                    PanelHit::NetApply => self.panels.network_apply(),
+                    PanelHit::NetRefresh => self.panels.refresh_network(),
                     PanelHit::ChooseShotDir => {
                         self.panels.stop_editing();
                         self.choose_screenshot_dir();
