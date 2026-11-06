@@ -3,11 +3,12 @@ use std::cell::RefCell;
 use smithay::{
     backend::{allocator::dmabuf::Dmabuf, renderer::ImportDma},
     delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_output, delegate_seat,
-    delegate_shm, delegate_xdg_decoration, delegate_xdg_shell,
+    delegate_pointer_constraints, delegate_presentation, delegate_relative_pointer, delegate_shm,
+    delegate_single_pixel_buffer, delegate_viewporter, delegate_xdg_decoration, delegate_xdg_shell,
     desktop::{PopupKind, Window, find_popup_root_surface, get_popup_toplevel_coords},
     input::{
         Seat, SeatHandler, SeatState,
-        pointer::{CursorImageStatus, Focus, GrabStartData},
+        pointer::{CursorImageStatus, Focus, GrabStartData, PointerHandle},
     },
     reexports::{
         wayland_protocols::xdg::{
@@ -19,7 +20,7 @@ use smithay::{
             protocol::{wl_buffer, wl_seat, wl_surface::WlSurface},
         },
     },
-    utils::Serial,
+    utils::{Logical, Point, Serial},
     wayland::{
         buffer::BufferHandler,
         compositor::{
@@ -28,6 +29,7 @@ use smithay::{
         },
         dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier},
         output::OutputHandler,
+        pointer_constraints::{PointerConstraintsHandler, with_pointer_constraint},
         selection::{
             SelectionHandler,
             data_device::{
@@ -346,3 +348,36 @@ impl XdgDecorationHandler for State {
     }
 }
 delegate_xdg_decoration!(State);
+
+// ---------------------------------------------------------------------------
+// Protocols for nested compositors (gamescope): viewporter, presentation-time,
+// relative pointer, pointer constraints, single-pixel buffers.
+// ---------------------------------------------------------------------------
+
+delegate_viewporter!(State);
+delegate_presentation!(State);
+delegate_relative_pointer!(State);
+delegate_single_pixel_buffer!(State);
+
+impl PointerConstraintsHandler for State {
+    fn new_constraint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>) {
+        // Activate straight away if the pointer is already over the surface;
+        // otherwise it activates when the pointer moves onto it (see input.rs).
+        if pointer.current_focus().as_ref() == Some(surface) {
+            self.maybe_activate_constraint(surface, pointer);
+        }
+    }
+
+    fn cursor_position_hint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>, location: Point<f64, Logical>) {
+        let active = with_pointer_constraint(surface, pointer, |c| c.is_some_and(|c| c.is_active()));
+        if !active {
+            return;
+        }
+        if let Some(origin) = self.surface_origin_under_pointer(surface) {
+            let pos = origin + location;
+            self.pointer_location = pos;
+            pointer.set_location(pos);
+        }
+    }
+}
+delegate_pointer_constraints!(State);

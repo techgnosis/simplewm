@@ -10,7 +10,7 @@ use smithay::{
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         },
         drm::{
-            DrmDevice, DrmDeviceFd, DrmEvent,
+            DrmDevice, DrmDeviceFd, DrmEvent, DrmEventMetadata, DrmEventTime,
             compositor::{DrmCompositor, FrameFlags},
             exporter::gbm::GbmFramebufferExporter,
         },
@@ -21,8 +21,10 @@ use smithay::{
         session::{Event as SessionEvent, Session, libseat::LibSeatSession},
         udev::{all_gpus, primary_gpu},
     },
+    desktop::utils::OutputPresentationFeedback,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
+        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         calloop::{
             EventLoop, RegistrationToken,
             timer::{TimeoutAction, Timer},
@@ -31,8 +33,8 @@ use smithay::{
         input::Libinput,
         rustix::fs::OFlags,
     },
-    utils::{DeviceFd, Transform},
-    wayland::dmabuf::DmabufFeedbackBuilder,
+    utils::{DeviceFd, Monotonic, Time, Transform},
+    wayland::{dmabuf::DmabufFeedbackBuilder, presentation::Refresh},
 };
 
 use crate::{
@@ -41,7 +43,7 @@ use crate::{
 };
 
 type GbmDrmCompositor =
-    DrmCompositor<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>;
+    DrmCompositor<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, Option<OutputPresentationFeedback>, DrmDeviceFd>;
 
 pub struct UdevData {
     pub session: LibSeatSession,
@@ -221,11 +223,35 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
         }
     })?;
 
-    let drm_token = handle.insert_source(drm_notifier, |event, _, state| match event {
+    let drm_token = handle.insert_source(drm_notifier, |event, meta, state| match event {
         DrmEvent::VBlank(_) => {
+            let now = state.clock.now();
             if let Some(Backend::Udev(udev)) = state.backend.as_mut() {
-                if let Err(err) = udev.compositor.frame_submitted() {
-                    tracing::warn!(?err, "frame_submitted failed");
+                match udev.compositor.frame_submitted() {
+                    Ok(Some(Some(mut feedback))) => {
+                        let (time, seq) = match meta {
+                            Some(DrmEventMetadata { time: DrmEventTime::Monotonic(t), sequence }) => {
+                                (Time::from(*t), *sequence as u64)
+                            }
+                            Some(m) => (now, m.sequence as u64),
+                            None => (now, 0),
+                        };
+                        let refresh = udev
+                            .output
+                            .current_mode()
+                            .map(|m| Refresh::fixed(Duration::from_secs_f64(1000.0 / m.refresh as f64)))
+                            .unwrap_or(Refresh::Unknown);
+                        feedback.presented::<_, Monotonic>(
+                            time,
+                            refresh,
+                            seq,
+                            wp_presentation_feedback::Kind::Vsync
+                                | wp_presentation_feedback::Kind::HwClock
+                                | wp_presentation_feedback::Kind::HwCompletion,
+                        );
+                    }
+                    Ok(_) => {}
+                    Err(err) => tracing::warn!(?err, "frame_submitted failed"),
                 }
                 udev.frame_pending = false;
             }
@@ -284,6 +310,7 @@ impl State {
         }
 
         let elements = self.render_elements(&mut udev.renderer);
+        let output = udev.output.clone();
         let mut queued = false;
         match udev
             .compositor
@@ -291,7 +318,8 @@ impl State {
         {
             Ok(result) => {
                 if !result.is_empty {
-                    match udev.compositor.queue_frame(()) {
+                    let feedback = self.take_presentation_feedback(&output);
+                    match udev.compositor.queue_frame(Some(feedback)) {
                         Ok(()) => queued = true,
                         Err(err) => tracing::warn!(?err, "queue_frame failed"),
                     }
@@ -306,7 +334,6 @@ impl State {
         if need_timer {
             udev.timer_scheduled = true;
         }
-        let output = udev.output.clone();
         self.backend = Some(Backend::Udev(udev));
 
         if need_timer {

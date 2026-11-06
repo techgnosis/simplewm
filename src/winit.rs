@@ -8,10 +8,14 @@ use smithay::{
         renderer::{ImportDma, damage::OutputDamageTracker, gles::GlesRenderer},
         winit::{self, WinitEvent, WinitGraphicsBackend},
     },
+    desktop::utils::OutputPresentationFeedback,
     output::{Mode, Output, PhysicalProperties, Subpixel},
-    reexports::{calloop::EventLoop, winit::dpi::LogicalSize, winit::window::Window as WinitWindow},
-    utils::{Rectangle, Transform},
-    wayland::dmabuf::DmabufFeedbackBuilder,
+    reexports::{
+        calloop::EventLoop, wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
+        winit::dpi::LogicalSize, winit::window::Window as WinitWindow,
+    },
+    utils::{Monotonic, Rectangle, Transform},
+    wayland::{dmabuf::DmabufFeedbackBuilder, presentation::Refresh},
 };
 
 use crate::{
@@ -131,6 +135,10 @@ fn render(state: &mut State, output: &Output) {
     if rendered {
         if let Err(err) = data.backend.submit(Some(&[damage])) {
             tracing::warn!(?err, "submit failed");
+        } else {
+            // No vblank timing from the host window, so report "now".
+            let mut feedback = state.take_presentation_feedback(output);
+            feedback.presented::<_, Monotonic>(state.clock.now(), Refresh::Unknown, 0, wp_presentation_feedback::Kind::empty());
         }
     }
     data.backend.window().request_redraw();
@@ -140,6 +148,20 @@ fn render(state: &mut State, output: &Output) {
 }
 
 impl State {
+    /// Collect the wp_presentation feedback requested by everything drawn on
+    /// `output`, to be fired once the frame is on screen.
+    pub fn take_presentation_feedback(&self, output: &Output) -> OutputPresentationFeedback {
+        let mut feedback = OutputPresentationFeedback::new(output);
+        for window in self.space.elements() {
+            window.take_presentation_feedback(
+                &mut feedback,
+                |_, _| Some(output.clone()),
+                |_, _| wp_presentation_feedback::Kind::empty(),
+            );
+        }
+        feedback
+    }
+
     pub fn send_frames(&mut self, output: &Output) {
         let time = self.start_time.elapsed();
         for window in self.space.elements() {

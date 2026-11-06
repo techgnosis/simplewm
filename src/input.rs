@@ -6,8 +6,13 @@ use smithay::{
     desktop::Window,
     input::{
         keyboard::{FilterResult, keysyms},
-        pointer::{AxisFrame, ButtonEvent, CursorImageStatus, Focus, GrabStartData, MotionEvent},
+        pointer::{
+            AxisFrame, ButtonEvent, CursorImageStatus, Focus, GrabStartData, MotionEvent, PointerHandle,
+            RelativeMotionEvent,
+        },
     },
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
+    wayland::pointer_constraints::{PointerConstraint, with_pointer_constraint},
     reexports::calloop::timer::{TimeoutAction, Timer},
     utils::{Logical, Point, SERIAL_COUNTER, Serial},
 };
@@ -148,7 +153,27 @@ impl State {
             }
             InputEvent::PointerMotion { event } => {
                 let serial = SERIAL_COUNTER.next_serial();
+                let pointer = self.seat.get_pointer().unwrap();
+                let under = self.content_under(self.pointer_location).map(|(_, s, loc)| (s, loc));
+                // Relative motion reaches the surface under the pointer even when
+                // a pointer lock keeps the cursor still (games, gamescope).
+                pointer.relative_motion(
+                    self,
+                    under.clone(),
+                    &RelativeMotionEvent {
+                        delta: event.delta(),
+                        delta_unaccel: event.delta_unaccel(),
+                        utime: event.time(),
+                    },
+                );
                 let pos = self.pointer_location + event.delta();
+                if !pointer.is_grabbed()
+                    && let Some((surface, _)) = &under
+                    && !self.constraint_allows(surface, &pointer, pos)
+                {
+                    pointer.frame(self);
+                    return;
+                }
                 self.on_motion(pos, serial, event.time_msec());
             }
             InputEvent::PointerMotionAbsolute { event } => {
@@ -256,8 +281,73 @@ impl State {
         if focus.is_none() && !pointer.is_grabbed() {
             self.cursor_status = CursorImageStatus::default_named();
         }
+        let entered = focus.as_ref().map(|(s, _)| s.clone());
         pointer.motion(self, focus, &MotionEvent { location: pos, serial, time });
         pointer.frame(self);
+        if let Some(surface) = entered {
+            self.maybe_activate_constraint(&surface, &pointer);
+        }
+    }
+
+    /// The client surface under `pos`, with its window and global origin.
+    fn content_under(&self, pos: Point<f64, Logical>) -> Option<(Window, WlSurface, Point<f64, Logical>)> {
+        match self.hit_test(pos) {
+            Hit::Content(window, surface, loc) if self.ui.shot.is_none() => Some((window, surface, loc)),
+            _ => None,
+        }
+    }
+
+    /// Global origin of `surface` if it is the one under the pointer.
+    pub fn surface_origin_under_pointer(&self, surface: &WlSurface) -> Option<Point<f64, Logical>> {
+        self.content_under(self.pointer_location)
+            .filter(|(_, s, _)| s == surface)
+            .map(|(_, _, loc)| loc)
+    }
+
+    /// Activate a pointer lock or confinement on `surface` if the pointer is over
+    /// it, inside the constraint's region, and its window has keyboard focus (so
+    /// merely passing over a game doesn't trap the pointer).
+    pub fn maybe_activate_constraint(&self, surface: &WlSurface, pointer: &PointerHandle<State>) {
+        let Some((window, _, origin)) = self
+            .content_under(self.pointer_location)
+            .filter(|(_, s, _)| s == surface)
+        else {
+            return;
+        };
+        if self.focused_window().as_ref() != Some(&window) {
+            return;
+        }
+        let local = (self.pointer_location - origin).to_i32_round();
+        with_pointer_constraint(surface, pointer, |c| {
+            if let Some(c) = c
+                && !c.is_active()
+                && c.region().is_none_or(|r| r.contains(local))
+            {
+                c.activate();
+            }
+        });
+    }
+
+    /// Whether an active constraint on `surface` lets the pointer move to `pos`:
+    /// a lock never does, a confinement only within its region of the surface.
+    fn constraint_allows(&self, surface: &WlSurface, pointer: &PointerHandle<State>, pos: Point<f64, Logical>) -> bool {
+        let confined = with_pointer_constraint(surface, pointer, |c| match c {
+            Some(c) if c.is_active() => match &*c {
+                PointerConstraint::Locked(_) => Some(None),
+                PointerConstraint::Confined(confined) => Some(Some(confined.region().cloned())),
+            },
+            _ => None,
+        });
+        match confined {
+            None => true,
+            Some(None) => false,
+            Some(Some(region)) => match self.content_under(pos) {
+                Some((_, s, origin)) if &s == surface => {
+                    region.is_none_or(|r| r.contains((pos - origin).to_i32_round()))
+                }
+                _ => false,
+            },
+        }
     }
 
     fn handle_press(&mut self, button: u32, serial: Serial) -> Press {

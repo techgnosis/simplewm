@@ -17,15 +17,20 @@ use smithay::{
             protocol::wl_surface::WlSurface,
         },
     },
-    utils::{IsAlive, Logical, Point, Rectangle, SERIAL_COUNTER},
+    utils::{Clock, IsAlive, Monotonic, Logical, Point, Rectangle, SERIAL_COUNTER},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         dmabuf::{DmabufGlobal, DmabufState},
         output::OutputManagerState,
+        pointer_constraints::PointerConstraintsState,
+        presentation::PresentationState,
+        relative_pointer::RelativePointerManagerState,
         selection::data_device::DataDeviceState,
         shell::xdg::{XdgShellState, decoration::XdgDecorationState},
         shm::ShmState,
+        single_pixel_buffer::SinglePixelBufferState,
         socket::ListeningSocketSource,
+        viewporter::ViewporterState,
     },
 };
 
@@ -61,6 +66,18 @@ pub struct State {
     pub data_device_state: DataDeviceState,
     pub dmabuf_state: DmabufState,
     pub dmabuf_global: Option<DmabufGlobal>,
+    /// Protocols that nested compositors like gamescope require. They need no
+    /// handling beyond creating their globals (see handlers.rs).
+    #[allow(dead_code)]
+    pub extra_globals: (
+        ViewporterState,
+        PresentationState,
+        RelativePointerManagerState,
+        PointerConstraintsState,
+        SinglePixelBufferState,
+    ),
+    /// Monotonic clock for wp_presentation timestamps.
+    pub clock: Clock<Monotonic>,
 
     pub seat: Seat<State>,
     pub pointer_location: Point<f64, Logical>,
@@ -96,6 +113,14 @@ impl State {
         let mut seat_state = SeatState::new();
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let dmabuf_state = DmabufState::new();
+        let clock = Clock::<Monotonic>::new();
+        let extra_globals = (
+            ViewporterState::new::<Self>(&dh),
+            PresentationState::new::<Self>(&dh, clock.id() as u32),
+            RelativePointerManagerState::new::<Self>(&dh),
+            PointerConstraintsState::new::<Self>(&dh),
+            SinglePixelBufferState::new::<Self>(&dh),
+        );
 
         let mut seat: Seat<Self> = seat_state.new_wl_seat(&dh, "seat0");
         seat.add_keyboard(Default::default(), 200, 25)
@@ -154,6 +179,8 @@ impl State {
             data_device_state,
             dmabuf_state,
             dmabuf_global: None,
+            extra_globals,
+            clock,
             seat,
             pointer_location: (100.0, 100.0).into(),
             cursor_status: CursorImageStatus::default_named(),
