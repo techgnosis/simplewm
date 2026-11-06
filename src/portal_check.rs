@@ -60,7 +60,7 @@ impl Problems {
 }
 
 const RESTART_PORTAL: &str = "Run: systemctl --user restart xdg-desktop-portal";
-const INSTALL_PORTAL: &str = "Run: make install-portal";
+const INSTALL_PORTAL: &str = "Run: make install";
 
 fn run(ctx: &Context) -> Vec<EnvRow> {
     let mut problems = Problems::default();

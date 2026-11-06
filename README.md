@@ -122,7 +122,7 @@ window:
 The Launcher and Screenshot applets use the same File Picker to choose executables and
 the screenshot folder.
 
-One-time setup: `make install-portal`. It copies `simplewm.portal` to
+One-time setup: `make install`. It installs simplewm to `/usr/bin/`, copies `simplewm.portal` to
 `/usr/share/xdg-desktop-portal/portals/` (with sudo; the portal only looks there) and
 `simplewm-portals.conf` to `~/.config/xdg-desktop-portal/`. That config makes simplewm the
 only portal backend: no other backend is ever started, and portals simplewm does not
