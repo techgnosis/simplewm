@@ -15,9 +15,9 @@ A very simple Wayland compositor written in Rust with Smithay.
   network card's address and routes without simplewm running as root. Programs simplewm
   launches don't get the capability.
 * Nested (inside an existing Wayland session, for development): `make run` or `./simplewm`
-* On real hardware from a TTY: `./simplewm` (the TTY backend is chosen automatically when
-  no `WAYLAND_DISPLAY`, `WAYLAND_SOCKET` or `DISPLAY` is set). `--tty` (or `make tty`)
-  forces the TTY backend even inside a host session.
+* On real hardware from a TTY: `./simplewm`. simplewm takes no flags: it uses the TTY
+  backend when no `WAYLAND_DISPLAY`, `WAYLAND_SOCKET` or `DISPLAY` is set, and runs nested
+  otherwise.
 * `make clean` removes build output
 
 Only the first connected monitor is used.

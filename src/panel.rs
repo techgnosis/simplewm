@@ -151,7 +151,8 @@ const NOTE_H: i32 = 24;
 // Help applet
 const HELP_W: i32 = 460;
 const HELP_ROW_H: i32 = 24;
-const HELP_LINES: [&str; 3] = [
+const HELP_LINES: [&str; 4] = [
+    "No flags or environment variables. Just run simplewm.",
     "The resolution is the monitor's preferred mode.",
     "There is no plain text config file.",
     "There are no keyboard shortcuts.",

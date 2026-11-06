@@ -29,12 +29,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .init();
     }
 
-    // Use the TTY backend when asked to, or when there is no host session to nest in
-    // (e.g. launched from a bare virtual console).
+    // Use the TTY backend when there is no host session to nest in (e.g. launched
+    // from a bare virtual console); otherwise run nested.
     let host_session = ["WAYLAND_DISPLAY", "WAYLAND_SOCKET", "DISPLAY"]
         .iter()
         .any(|v| std::env::var_os(v).is_some_and(|s| !s.is_empty()));
-    let tty = std::env::args().any(|a| a == "--tty") || !host_session;
+    let tty = !host_session;
 
     let mut event_loop: EventLoop<'static, State> = EventLoop::try_new()?;
     let display: Display<State> = Display::new()?;

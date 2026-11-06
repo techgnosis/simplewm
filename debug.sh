@@ -4,4 +4,4 @@ set -e
 cd "$(dirname "$0")"
 make simplewm
 RUST_LOG=simplewm=debug,smithay::backend::drm=debug,smithay::backend::session=debug \
-    ./simplewm --tty 2&> simplewm-debug.log
+    ./simplewm 2&> simplewm-debug.log

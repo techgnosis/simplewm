@@ -1,4 +1,4 @@
-.PHONY: all simplewm run tty install clean
+.PHONY: all simplewm run install clean
 
 all: simplewm
 
@@ -17,9 +17,6 @@ simplewm:
 
 run: simplewm
 	./simplewm
-
-tty: simplewm
-	./simplewm --tty
 
 # Install simplewm to /usr/bin (with CAP_NET_ADMIN, as above) and register it
 # as the only backend of xdg-desktop-portal. The .portal file must live in
