@@ -626,23 +626,40 @@ pub fn window_title(window: &Window) -> String {
     })
 }
 
+/// Whether `window` is a nested gamescope session (by its app ID).
+fn is_gamescope(window: &Window) -> bool {
+    let Some(toplevel) = window.toplevel() else {
+        return false;
+    };
+    with_states(toplevel.wl_surface(), |states| {
+        states
+            .data_map
+            .get::<XdgToplevelSurfaceData>()
+            .and_then(|d| d.lock().unwrap().app_id.clone())
+            .is_some_and(|id| id.eq_ignore_ascii_case("gamescope"))
+    })
+}
+
 impl State {
     /// Frames of windows and panels that are completely hidden behind the
-    /// ones stacked above them (by any combination of them).
+    /// ones stacked above them (by any combination of them). Gamescope doesn't
+    /// count as covering anything, so a game doesn't get outlines drawn over it.
     fn hidden_frames(&self) -> Vec<Rectangle<i32, Logical>> {
         let mut above: Vec<Rectangle<i32, Logical>> = Vec::new();
         let mut hidden = Vec::new();
         for item in self.stack_top_down() {
-            let content = match &item {
-                StackEntry::Window(w) => self.space.element_geometry(w),
-                StackEntry::Panel(id) => Some(self.panels.content_rect(*id)),
+            let (content, covers) = match &item {
+                StackEntry::Window(w) => (self.space.element_geometry(w), !is_gamescope(w)),
+                StackEntry::Panel(id) => (Some(self.panels.content_rect(*id)), true),
             };
             let Some(content) = content else { continue };
             let frame = frame_rect(content);
             if !above.is_empty() && frame.subtract_rects(above.iter().copied()).is_empty() {
                 hidden.push(frame);
             }
-            above.push(frame);
+            if covers {
+                above.push(frame);
+            }
         }
         hidden
     }
