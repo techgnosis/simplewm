@@ -38,13 +38,26 @@ still growing: the user is open to experiments and new features, within the rule
   interfaces are simply missing. Results are plain file paths, so Flatpak apps can't open
   them (that would need xdg-document-portal); the user doesn't care about Flatpak. If
   another process has the name, simplewm queues for it, and stops a leftover
-  `xdg-desktop-portal` with `systemctl --user stop`. The user means to mask
-  xdg-desktop-portal, xdg-document-portal and xdg-permission-store. simplewm exports
-  nothing to systemd or D-Bus activation. Nested, it doesn't take the name, so nested apps
-  get the host's file dialogs.
+  `xdg-desktop-portal` by sending its PID SIGTERM. Nothing in simplewm uses `systemctl`.
+  simplewm exports nothing to systemd or D-Bus activation. The portal starts once the
+  session bus is up and restarts when the bus comes back after a stop
+  (`State::ensure_portal`). Nested, it doesn't take the name, so nested apps get the
+  host's file dialogs.
+- simplewm runs the user services it always needs, in place of `systemd --user`
+  (`services.rs`): the session bus (`dbus-daemon`, not dbus-broker, whose launcher needs
+  systemd), `pipewire`, `pipewire-pulse` and `wireplumber`. On a TTY it starts them in
+  that order at startup, each once the one it needs answers on its socket. One that's
+  already running (systemd's socket, a host desktop) is left alone and shown as "Run by
+  PID n (program)". Their output is kept as a log (last 2000 lines each). Nothing restarts
+  them when they exit; the user presses Start. They're stopped when simplewm quits, and
+  get SIGTERM if it dies (`PR_SET_PDEATHSIG`). The Sound applet has Start/Stop and Log for
+  the three sound services, the D-Bus applet for the bus. The user doesn't want a smaller
+  systemd: no unit files, no dependency engine, no other services. To try it on their
+  systemd host they mask the user units `pipewire.socket pipewire.service
+  pipewire-pulse.socket pipewire-pulse.service wireplumber.service dbus.socket`.
 - Long-term goal: boot simplewm in a minimal custom distro, doing as much as it can in one
   process. `DISTRO.md` records the plan and decisions so far (musl, seatd, libudev-zero +
-  mdevd, dbus-broker, a custom init that runs simplewm as the user with no login); keep it
+  mdevd, dbus-daemon started by simplewm, a custom init that runs simplewm as the user with no login); keep it
   current as they're made. The PipeWire tools and the `ip` script are staying.
 - simplewm runs with no special privileges. The Network applet sets a static IPv4 address,
   gateway and DNS server (no DHCP) only when the user presses Apply: the Password window
@@ -67,12 +80,17 @@ still growing: the user is open to experiments and new features, within the rule
   `cargo fmt` whenever you like.
 - Tests cover the logic that doesn't need a screen: the settings file, text fields, row
   lists, File Picker listing and search, screenshot PNGs, portal globs and checks, network
-  address and DNS parsing, resolv.conf contents and PipeWire output parsing. A few only do
+  address and DNS parsing, resolv.conf contents, PipeWire output parsing, and the service
+  manager's process handling (exit descriptions, PID handling, output cleaning). A few only do
   something on a machine that has the hardware or service.
 - The `#[ignore]`d tests need a setup; each one's doc comment says how to run it. Two
   exercise D-Bus on a scratch bus: `dbus-run-session -- cargo test bus -- --ignored` drives
   the portal the way apps do (including the hand-over of the bus name) and checks the
-  Desktop Portal bus checks. Run it after touching `portal.rs`, `portal_check.rs` or zbus. `network::namespace_test`
+  Desktop Portal bus checks. Run it after touching `portal.rs`, `portal_check.rs` or zbus.
+  `cargo test runs_the_session_daemon -- --ignored` starts and stops a real dbus-daemon on a
+  scratch socket through `Services`; run it after touching `services.rs`. Don't test
+  starting PipeWire for real: it would fight the user's running PipeWire for the HDMI
+  output. `network::namespace_test`
   runs the root `ip` script on a dummy card in a throwaway namespace, writing a scratch
   resolv.conf instead of the real one (no sudo, nothing real touched). Never test the sudo
   path with a wrong password: failed attempts count toward the account's faillock lockout.
@@ -99,7 +117,7 @@ still growing: the user is open to experiments and new features, within the rule
 ## Runtime dependencies
 
 What simplewm itself links, loads, runs or reads, on a systemd host (udevd and logind
-running, and a user session that provides `XDG_RUNTIME_DIR` and the session bus). Check
+running, and a user session that provides `XDG_RUNTIME_DIR`). Check
 linked libraries with `readelf -d target/release/simplewm | grep NEEDED`.
 
 - To start (TTY): libseat (talks to logind; seatd would also work), libudev, libinput,
@@ -107,9 +125,10 @@ linked libraries with `readelf -d target/release/simplewm | grep NEEDED`.
   libxkbcommon plus xkeyboard-config data (startup panics without it), glibc. Nested also needs the host's Wayland or X11 client libraries, which winit loads.
   The font is compiled in and the cursor is drawn by simplewm.
 - Per feature (simplewm starts without them):
+  - Services simplewm runs (unless something else already does): `dbus-daemon`,
+    `pipewire`, `pipewire-pulse`, `wireplumber`, found on `PATH`.
   - Sound applet: `pw-dump` (PipeWire) and `wpctl` (WirePlumber).
   - Portal: the D-Bus session bus (zbus is pure Rust, no libdbus).
-  - Portal clean-up and the Desktop Portal applet's checks: `systemctl --user`.
   - File Picker filters by MIME type: `/usr/share/mime/globs2` (shared-mime-info).
   - Network applet Apply: `/usr/bin/sudo`, `/bin/sh`, `ip` (iproute2), and `mktemp`,
     `chmod`, `mv`, `rm`. Reading the card uses only `/sys`, `/proc` and netlink.
@@ -137,6 +156,9 @@ Update this list when a change adds or drops one.
   `build_elements` (the whole scene, front-most first), plus drawing helpers (`text_in`,
   `text_centered`, `text_in_alpha`, `solid`).
 - `text.rs`: font rasterizing with fontdue (`measure`, `fit`).
+- `services.rs`: starts, stops and logs the user services (session bus, PipeWire, its
+  Pulse server, WirePlumber); see the module docs for the threads and PID handling. Also
+  `/proc` helpers (`find_process`, `describe_pid`) and `bus_address`.
 - `clock.rs`: local time through libc's `strftime` (no date crate).
 - Behind the applets, with no UI code:
   - `network.rs`: reads the card (sysfs, rtnetlink dumps) and `/etc/resolv.conf`, and sets
@@ -160,7 +182,11 @@ blocks:
 
 - `control.rs`: the Control Panel and Help.
 - `launcher.rs`, `screenshot.rs`, `network.rs` and `sound.rs`: one applet each.
-- `rows.rs`: Environment, Desktop Portal and the `RowList` they share with Network.
+- `rows.rs`: Environment, Desktop Portal and the `RowList` they share with Network and Log
+  (`set_following` keeps a log scrolled to its end).
+- `services.rs`: the service row (status, Start/Stop, Log) the Sound and D-Bus applets
+  share, the D-Bus applet, and the Log window (opened by a Log button, not in the Control
+  Panel). Service events reach `Panels::service_event`.
 - `picker.rs`: the File Picker.
 - `sudo.rs`: the Password window. An action asks for it with `ask_password(SudoJob)`, and
   `State::after_panel_action` opens and focuses it. A worker runs the job, and the result

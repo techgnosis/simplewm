@@ -478,7 +478,11 @@ impl State {
                                 self.panels.refresh_network();
                             }
                             if *applet == PanelId::Sound {
+                                self.panels.services.refresh();
                                 self.panels.refresh_sound();
+                            }
+                            if *applet == PanelId::Bus {
+                                self.panels.services.refresh();
                             }
                             let out = self.output_geometry();
                             self.panels.show(*applet, out);
@@ -503,6 +507,13 @@ impl State {
                     }
                     PanelHit::SoundDown => self.panels.sound_step(-1.0),
                     PanelHit::SoundUp => self.panels.sound_step(1.0),
+                    PanelHit::ServiceToggle(s) => {
+                        self.panels.service_toggle(s);
+                        if s == crate::services::Service::Bus {
+                            self.ensure_portal();
+                        }
+                    }
+                    PanelHit::ServiceLog(s) => self.panels.open_log(s),
                     PanelHit::SudoOk => self.panels.sudo_submit(),
                     PanelHit::SudoCancel => self.panels.sudo_cancel(),
                     PanelHit::ChooseShotDir => {

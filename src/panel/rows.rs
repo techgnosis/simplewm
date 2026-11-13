@@ -1,6 +1,6 @@
 //! Scrollable read-only row lists, and the two applets that are just one:
 //! Environment (how simplewm was started) and Desktop Portal (file dialog checks, see `crate::portal_check`, plus a
-//! Refresh button). The Network applet uses a `RowList` too.
+//! Refresh button). The Network applet and the Log window use a `RowList` too.
 
 use smithay::{
     backend::renderer::{element::solid::SolidColorBuffer, gles::GlesRenderer},
@@ -32,7 +32,7 @@ const REFRESH_W: i32 = 100;
 
 const ENV_HEADER_BG: [f32; 4] = [0.19, 0.21, 0.26, 1.0];
 
-/// A row in the Environment, Desktop Portal or Network window.
+/// A row in the Environment, Desktop Portal, Network or Log window.
 #[derive(Debug, Clone)]
 pub enum EnvRow {
     Header(String),
@@ -61,6 +61,22 @@ impl RowList {
     pub(super) fn set(&mut self, rows: Vec<EnvRow>, vp: Rect) {
         self.rows = rows;
         self.scroll = self.scroll.min(self.max_scroll(vp));
+    }
+
+    /// Replace the rows, staying at the end if the list was scrolled to the end (so a
+    /// log follows new lines).
+    pub(super) fn set_following(&mut self, rows: Vec<EnvRow>, vp: Rect) {
+        let at_end = self.scroll >= self.max_scroll(vp);
+        self.rows = rows;
+        if at_end {
+            self.scroll_to_end(vp);
+        } else {
+            self.scroll = self.scroll.min(self.max_scroll(vp));
+        }
+    }
+
+    pub(super) fn scroll_to_end(&mut self, vp: Rect) {
+        self.scroll = self.max_scroll(vp);
     }
 
     /// Scroll by `amount` (pointer axis units; positive scrolls down).
@@ -180,7 +196,7 @@ impl super::Panels {
             .then_some(PanelHit::Refresh)
     }
 
-    /// Scroll a row list window (Environment, Desktop Portal, Network) by
+    /// Scroll a row list window (Environment, Desktop Portal, Network, Log) by
     /// `amount` (pointer axis units; positive scrolls down).
     pub fn scroll_rows(&mut self, id: PanelId, amount: f64) {
         match id {
@@ -193,6 +209,10 @@ impl super::Panels {
                 self.portal_rows.scroll_by(amount, vp);
             }
             PanelId::Network => self.scroll_network(amount),
+            PanelId::Log => {
+                let vp = self.log_viewport();
+                self.log_rows.scroll_by(amount, vp);
+            }
             _ => {}
         }
     }
@@ -257,5 +277,20 @@ mod tests {
         assert_eq!(list.scroll, 3);
         list.set(rows(2), vp);
         assert_eq!(list.scroll, 0);
+    }
+
+    #[test]
+    fn follows_the_end() {
+        let vp = Rectangle::new((0, 0).into(), (100, 5 * ENV_ROW_H).into());
+        let mut list = RowList::default();
+        // At the end: new rows keep it at the end.
+        list.set_following(rows(8), vp);
+        assert_eq!(list.scroll, 3);
+        list.set_following(rows(10), vp);
+        assert_eq!(list.scroll, 5);
+        // Scrolled up: it stays put.
+        list.scroll_by(-2.0 * ENV_ROW_H as f64, vp);
+        list.set_following(rows(12), vp);
+        assert_eq!(list.scroll, 3);
     }
 }

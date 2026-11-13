@@ -1,5 +1,6 @@
 //! The Sound applet: choose which of PipeWire's sound cards sound goes to, and
-//! set its volume (see `crate::sound`). PipeWire remembers both itself.
+//! set its volume (see `crate::sound`). PipeWire remembers both itself. Below that,
+//! the sound services simplewm runs, each with Start/Stop and Log (see `services`).
 
 use smithay::{
     backend::renderer::{element::solid::SolidColorBuffer, gles::GlesRenderer},
@@ -9,8 +10,10 @@ use smithay::{
 use super::{
     BTN_H, BUTTON, BUTTON_HOT, CELL_HOT, FIELD_BG, HEADER_H, NOTE_H, PAD, PanelHit, PanelId, Rect,
     SEPARATOR, bufs,
+    services::{SERVICE_ROW_H, ServiceRow, service_row},
 };
 use crate::{
+    services::Service,
     sound::{self, Sink},
     text::TextRenderer,
     ui::{self, CustomElement},
@@ -31,6 +34,9 @@ const THUMB_W: i32 = 6;
 const VOLUME_FILL: [f32; 4] = [0.25, 0.45, 0.80, 1.0];
 const THUMB: [f32; 4] = [0.90, 0.92, 0.96, 1.0];
 const THUMB_HOT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+/// The services shown, in order.
+const SERVICES: [Service; 3] = [Service::PipeWire, Service::Pulse, Service::WirePlumber];
+
 /// The chosen output, when there are several to choose from.
 const ROW_SELECTED: [f32; 4] = [0.25, 0.42, 0.70, 1.0];
 
@@ -56,6 +62,9 @@ struct SoundLayout {
     up: Rect,
     percent: Rect,
     note: Rect,
+    services_separator: Rect,
+    services_header: Rect,
+    services: Vec<ServiceRow>,
 }
 
 fn layout(c: Rect, cards: usize) -> SoundLayout {
@@ -83,6 +92,14 @@ fn layout(c: Rect, cards: usize) -> SoundLayout {
     let percent = Rectangle::new((x + w - PERCENT_W, y).into(), (PERCENT_W, BTN_H).into());
     y += BTN_H + 4;
     let note = Rectangle::new((x, y).into(), (w, NOTE_H).into());
+    y += NOTE_H + PAD;
+    let services_separator = Rectangle::new((x, y).into(), (w, 1).into());
+    y += 1 + PAD;
+    let services_header = Rectangle::new((x, y).into(), (w, HEADER_H).into());
+    y += HEADER_H;
+    let services = (0..SERVICES.len() as i32)
+        .map(|i| service_row(x, y + i * SERVICE_ROW_H, w))
+        .collect();
     SoundLayout {
         header,
         cards,
@@ -93,11 +110,27 @@ fn layout(c: Rect, cards: usize) -> SoundLayout {
         up,
         percent,
         note,
+        services_separator,
+        services_header,
+        services,
     }
 }
 
 fn content_height(cards: usize) -> i32 {
-    PAD + HEADER_H + cards.max(1) as i32 * CARD_H + PAD + 1 + PAD + BTN_H + 4 + NOTE_H + PAD
+    PAD + HEADER_H
+        + cards.max(1) as i32 * CARD_H
+        + PAD
+        + 1
+        + PAD
+        + BTN_H
+        + 4
+        + NOTE_H
+        + PAD
+        + 1
+        + PAD
+        + HEADER_H
+        + SERVICES.len() as i32 * SERVICE_ROW_H
+        + PAD
 }
 
 // --- Panels glue ---------------------------------------------------------------
@@ -137,6 +170,11 @@ impl super::Panels {
 
     pub(super) fn sound_hit(&self, p: Point<f64, Logical>) -> Option<PanelHit> {
         let l = self.sound_layout();
+        for (s, row) in SERVICES.iter().zip(&l.services) {
+            if let Some(hit) = self.service_row_hit(*s, row, p) {
+                return Some(hit);
+            }
+        }
         let inside = |r: Rect| r.to_f64().contains(p);
         // With only one output there is nothing to choose.
         if self.sound.sinks.len() > 1
@@ -223,8 +261,35 @@ impl super::Panels {
             solids,
         } = &mut self.sound;
         let n = sinks.len();
-        // Buffers: one per card, separator, −, +, bar track, bar fill, thumb.
-        let solids = bufs(solids, n + 6);
+        // Buffers: one per card, separator, −, +, bar track, bar fill, thumb, then the
+        // services' separator and two per service (Start/Stop, Log).
+        let solids = bufs(solids, n + 7 + 2 * SERVICES.len());
+
+        elems.extend(ui::text_in(
+            text,
+            renderer,
+            "Services",
+            l.services_header.loc.x,
+            l.services_header,
+        ));
+        for (i, (s, row)) in SERVICES.iter().zip(&l.services).enumerate() {
+            let at = n + 7 + 2 * i;
+            Self::render_service_row(
+                &self.services,
+                *s,
+                row,
+                &mut solids[at..at + 2],
+                text,
+                renderer,
+                hovered,
+                elems,
+            );
+        }
+        elems.push(ui::solid(
+            &mut solids[n + 6],
+            l.services_separator,
+            SEPARATOR,
+        ));
 
         let header = if n > 1 {
             "Sound output — click one to use it"

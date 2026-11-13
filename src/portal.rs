@@ -16,7 +16,9 @@
 //! carries a oneshot sender for the answer. `serve` waits on those answers and on the
 //! bus's NameOwnerChanged signal (to cancel the dialogs of apps that quit) in one loop.
 //!
-//! Only started on a TTY: nested, the host session's portal keeps the name.
+//! Only started on a TTY: nested, the host session's portal keeps the name. On a TTY it
+//! starts once the session bus is up, and again whenever the bus comes back after being
+//! stopped (see `State::ensure_portal`); losing the bus ends `serve`.
 
 use std::{
     collections::HashMap,
@@ -31,6 +33,7 @@ use std::{
     task::{Poll, Waker},
 };
 
+use crate::services::process_name;
 use futures_channel::oneshot;
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
@@ -128,6 +131,8 @@ pub enum State {
     },
     /// Gave up, with why.
     Failed(String),
+    /// On a TTY with no session bus running yet (see `crate::services`).
+    NoBus,
 }
 
 /// How the portal is doing, shown in the Desktop Portal applet.
@@ -158,6 +163,20 @@ fn update_status(f: impl FnOnce(&mut Status)) {
 
 fn set_state(state: State) {
     update_status(|s| s.state = state);
+}
+
+/// Whether `start` would do anything: not started, given up, or waiting for a bus.
+pub fn needs_start() -> bool {
+    matches!(status().state, State::Off | State::Failed(_) | State::NoBus)
+}
+
+/// Note that there's no session bus to serve on (yet).
+pub fn no_bus() {
+    update_status(|s| {
+        if matches!(s.state, State::Off | State::Failed(_)) {
+            s.state = State::NoBus;
+        }
+    });
 }
 
 /// Become the desktop portal on the session bus (in the background).
@@ -243,8 +262,9 @@ async fn serve(chooser: FileChooser, tx: Sender<PortalEvent>, shared: Arc<Shared
             set_state(State::Waiting { owner });
             // A leftover xdg-desktop-portal: on a TTY we are the session, so stop it.
             // (It can't come back: D-Bus only starts it while nobody owns the name.)
-            if owner.is_some_and(|pid| process_name(pid).contains("xdg-desktop-portal")) {
-                stop_xdg_desktop_portal();
+            if let Some(pid) = owner.filter(|pid| process_name(*pid).contains("xdg-desktop-portal"))
+            {
+                stop_xdg_desktop_portal(pid);
             }
         }
         Err(err) => return fail("cannot ask for the bus name", err),
@@ -325,31 +345,15 @@ async fn owner_pid(dbus: &DBusProxy<'_>) -> Option<u32> {
     dbus.get_connection_unix_process_id(name).await.ok()
 }
 
-fn stop_xdg_desktop_portal() {
-    tracing::info!("portal: stopping xdg-desktop-portal");
-    let out = std::process::Command::new("systemctl")
-        .args(["--user", "stop", "xdg-desktop-portal.service"])
-        .output();
-    match out {
-        Ok(out) if out.status.success() => {}
-        Ok(out) => tracing::warn!(
-            stderr = %String::from_utf8_lossy(&out.stderr).trim(),
-            "portal: cannot stop xdg-desktop-portal"
-        ),
-        Err(err) => tracing::warn!(?err, "portal: cannot run systemctl"),
+/// Stop a leftover xdg-desktop-portal by PID (SIGTERM), whoever started it.
+fn stop_xdg_desktop_portal(pid: u32) {
+    tracing::info!(pid, "portal: stopping xdg-desktop-portal");
+    // SAFETY: plain syscall. The PID was the name's owner a moment ago; if it already
+    // exited, kill just fails.
+    if unsafe { libc::kill(pid as i32, libc::SIGTERM) } != 0 {
+        let err = std::io::Error::last_os_error();
+        tracing::warn!(?err, pid, "portal: cannot stop xdg-desktop-portal");
     }
-}
-
-/// The program running as `pid`: its command line's first word, else its `comm`
-/// (empty if unknown).
-pub fn process_name(pid: u32) -> String {
-    std::fs::read_to_string(format!("/proc/{pid}/cmdline"))
-        .ok()
-        .and_then(|c| c.split('\0').next().map(str::to_string))
-        .filter(|c| !c.is_empty())
-        .or_else(|| std::fs::read_to_string(format!("/proc/{pid}/comm")).ok())
-        .map(|c| c.trim().to_string())
-        .unwrap_or_default()
 }
 
 fn close_requests_from(shared: &Shared, tx: &Sender<PortalEvent>, sender: &str) {

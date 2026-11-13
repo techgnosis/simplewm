@@ -15,7 +15,12 @@
 //!   wired network card, and the DNS server in /etc/resolv.conf (see `network`
 //!   and `crate::network`).
 //! * The Sound applet window chooses PipeWire's sound card and sets its volume
-//!   (see `sound` and `crate::sound`).
+//!   (see `sound` and `crate::sound`), and starts and stops PipeWire, its Pulse
+//!   server and WirePlumber.
+//! * The D-Bus applet window starts and stops the session bus (see `services` and
+//!   `crate::services`).
+//! * The Log window is not in the Control Panel: a service's Log button opens it on
+//!   that service's output (see `services`).
 //! * The Password window is not in the Control Panel either: it asks for the
 //!   user's password when an applet needs root, and runs that through sudo
 //!   (see `sudo`).
@@ -38,6 +43,7 @@ use smithay::{
 };
 
 use crate::{
+    services::{Service, Services},
     text::TextRenderer,
     ui::{self, CustomElement, Frame},
 };
@@ -48,6 +54,7 @@ mod network;
 mod picker;
 mod rows;
 mod screenshot;
+mod services;
 mod sound;
 mod store;
 mod sudo;
@@ -62,6 +69,7 @@ pub use store::store_path;
 pub use sudo::{SudoDone, SudoPrompt};
 
 use rows::{ENV_H, ENV_ROW_H, ENV_W, PORTAL_H, PORTAL_W, RowList};
+use services::{LOG_WIN_H, LOG_WIN_W};
 use text_field::{field_char_at, render_field};
 
 pub const DEFAULT_LAUNCHER_ENTRY: &str = "/usr/bin/alacritty";
@@ -76,8 +84,10 @@ pub enum PanelId {
     Portal,
     Network,
     Sound,
+    Bus,
     FilePicker,
     Password,
+    Log,
 }
 
 impl PanelId {
@@ -91,20 +101,23 @@ impl PanelId {
             PanelId::Portal => "Desktop Portal",
             PanelId::Network => "Network",
             PanelId::Sound => "Sound",
+            PanelId::Bus => "D-Bus",
             PanelId::FilePicker => "File Picker",
             PanelId::Password => "Password",
+            PanelId::Log => "Log",
         }
     }
 }
 
 /// Applets shown as icons in the Control Panel: (name, window it opens).
-pub const APPLETS: [(&str, PanelId); 7] = [
+pub const APPLETS: [(&str, PanelId); 8] = [
     ("Launcher", PanelId::Launcher),
     ("Environment", PanelId::Environment),
     ("Screenshot", PanelId::Screenshot),
     ("Desktop Portal", PanelId::Portal),
     ("Network", PanelId::Network),
     ("Sound", PanelId::Sound),
+    ("D-Bus", PanelId::Bus),
     ("Help", PanelId::Help),
 ];
 
@@ -192,6 +205,9 @@ pub enum PanelHit {
     SoundBar(u32),
     SoundDown,
     SoundUp,
+    // A service's Start/Stop and Log buttons (Sound and D-Bus applets).
+    ServiceToggle(Service),
+    ServiceLog(Service),
     // Password window
     SudoOk,
     SudoCancel,
@@ -245,14 +261,22 @@ pub struct Panels {
     portal: PanelWindow,
     network: PanelWindow,
     sound_window: PanelWindow,
+    bus: PanelWindow,
     file_picker: PanelWindow,
     password: PanelWindow,
+    log_window: PanelWindow,
     pub picker: FilePicker,
     pub sudo: SudoPrompt,
     /// A panel that asked to be opened and focused (see `take_open_request`).
     open_request: Option<PanelId>,
     pub net: NetworkApplet,
     sound: SoundApplet,
+    /// The services simplewm runs (session bus, PipeWire, …).
+    pub services: Services,
+    /// The service the Log window shows, its title, and its rows.
+    log_service: Option<Service>,
+    log_title: String,
+    log_rows: RowList,
     /// Environment rows (refreshed when the window is opened).
     env: RowList,
     /// Desktop Portal check results (refreshed on open and by Refresh).
@@ -272,7 +296,7 @@ pub struct Panels {
 }
 
 impl Panels {
-    pub fn new() -> Self {
+    pub fn new(services: Services) -> Self {
         let store = store::Store::open();
         let entries = store.entries().to_vec();
         let shot_dir = store.setting(screenshot::SHOT_DIR_KEY).unwrap_or_default();
@@ -285,13 +309,19 @@ impl Panels {
             portal: PanelWindow::default(),
             network: PanelWindow::default(),
             sound_window: PanelWindow::default(),
+            bus: PanelWindow::default(),
             file_picker: PanelWindow::default(),
             password: PanelWindow::default(),
+            log_window: PanelWindow::default(),
             picker: FilePicker::default(),
             sudo: SudoPrompt::default(),
             open_request: None,
             net: NetworkApplet::default(),
             sound: SoundApplet::default(),
+            services,
+            log_service: None,
+            log_title: String::new(),
+            log_rows: RowList::default(),
             env: RowList::default(),
             portal_rows: RowList::default(),
             portal_refresh_buf: None,
@@ -316,8 +346,10 @@ impl Panels {
             PanelId::Portal => &self.portal,
             PanelId::Network => &self.network,
             PanelId::Sound => &self.sound_window,
+            PanelId::Bus => &self.bus,
             PanelId::FilePicker => &self.file_picker,
             PanelId::Password => &self.password,
+            PanelId::Log => &self.log_window,
         }
     }
 
@@ -331,8 +363,10 @@ impl Panels {
             PanelId::Portal => &mut self.portal,
             PanelId::Network => &mut self.network,
             PanelId::Sound => &mut self.sound_window,
+            PanelId::Bus => &mut self.bus,
             PanelId::FilePicker => &mut self.file_picker,
             PanelId::Password => &mut self.password,
+            PanelId::Log => &mut self.log_window,
         }
     }
 
@@ -357,6 +391,7 @@ impl Panels {
     fn title(&self, id: PanelId) -> &str {
         match id {
             PanelId::FilePicker => &self.picker.title,
+            PanelId::Log => &self.log_title,
             _ => id.title(),
         }
     }
@@ -373,8 +408,10 @@ impl Panels {
             PanelId::Portal => (PORTAL_W, PORTAL_H),
             PanelId::Network => self.network_size(),
             PanelId::Sound => self.sound_size(),
+            PanelId::Bus => self.bus_size(),
             PanelId::FilePicker => self.picker_size(),
             PanelId::Password => self.sudo_size(),
+            PanelId::Log => (LOG_WIN_W, LOG_WIN_H),
         }
     }
 
@@ -452,7 +489,8 @@ impl Panels {
             PanelId::Portal => self.portal_hit(p),
             PanelId::Network => self.network_hit(text, p),
             PanelId::Sound => self.sound_hit(p),
-            PanelId::Environment | PanelId::Help => None,
+            PanelId::Bus => self.bus_hit(p),
+            PanelId::Environment | PanelId::Help | PanelId::Log => None,
         };
         Some(hit.unwrap_or(PanelHit::Body))
     }
@@ -480,6 +518,8 @@ impl Panels {
             PanelId::Portal => self.render_portal(text, renderer, hovered, elems),
             PanelId::Network => self.render_network(text, renderer, hovered, elems),
             PanelId::Sound => self.render_sound(text, renderer, hovered, elems),
+            PanelId::Bus => self.render_bus(text, renderer, hovered, elems),
+            PanelId::Log => self.render_log(text, renderer, elems),
             PanelId::FilePicker => self.render_picker(text, renderer, hovered, elems),
             PanelId::Password => self.render_sudo(text, renderer, hovered, elems),
         }

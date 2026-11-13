@@ -2,10 +2,10 @@
 //! dialog (or a different one). simplewm is the portal itself on a TTY (see
 //! `crate::portal`), so this is mostly about who owns the portal's bus name.
 //!
-//! The checks talk to D-Bus and run `systemctl`, so they run on a worker thread and
-//! report back to the compositor through a calloop channel.
+//! The checks talk to D-Bus, so they run on a worker thread and report back to the
+//! compositor through a calloop channel.
 
-use std::{process::Command, time::Duration};
+use std::time::Duration;
 
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{Connection, OwnedVariant, fdo::DBusProxy, names::BusName};
@@ -13,17 +13,17 @@ use zbus::{Connection, OwnedVariant, fdo::DBusProxy, names::BusName};
 use crate::{
     panel::EnvRow,
     portal::{self, BUS_NAME, OBJECT_PATH},
+    services::{self, describe_pid},
 };
 
 const FILE_CHOOSER: &str = "org.freedesktop.portal.FileChooser";
-/// Portal services simplewm doesn't need (they're for Flatpak apps).
-const UNITS: [&str; 3] = [
-    "xdg-desktop-portal",
-    "xdg-document-portal",
-    "xdg-permission-store",
+/// Portal programs simplewm doesn't need (they're for Flatpak apps). As `comm` names,
+/// which the kernel cuts to 15 bytes.
+const PROGRAMS: [(&str, &str); 3] = [
+    ("xdg-desktop-portal", "xdg-desktop-por"),
+    ("xdg-document-portal", "xdg-document-po"),
+    ("xdg-permission-store", "xdg-permission-"),
 ];
-const MASK: &str =
-    "systemctl --user mask --now xdg-desktop-portal xdg-document-portal xdg-permission-store";
 
 /// Run the checks on a worker thread and send the rows to `tx`.
 pub fn spawn(tx: Sender<Vec<EnvRow>>) {
@@ -65,7 +65,7 @@ fn run() -> Vec<EnvRow> {
     portal_rows(&status, &mut rows, &mut problems);
     zbus::block_on(bus_rows(nested, &mut rows, &mut problems));
     if !nested {
-        unit_rows(&mut rows);
+        program_rows(&mut rows);
     }
 
     let checked = crate::clock::now("%H:%M:%S");
@@ -104,7 +104,7 @@ fn portal_rows(status: &portal::Status, rows: &mut Vec<EnvRow>, problems: &mut P
             if who.contains("xdg-desktop-portal") {
                 problems.add(
                     "xdg-desktop-portal holds the portal's D-Bus name",
-                    format!("Run: {MASK}"),
+                    "simplewm stopped it; if it's back, something restarts it",
                 );
             } else {
                 problems.add(
@@ -113,6 +113,10 @@ fn portal_rows(status: &portal::Status, rows: &mut Vec<EnvRow>, problems: &mut P
                 );
             }
             format!("waiting for {who} to let go of {BUS_NAME}")
+        }
+        portal::State::NoBus => {
+            problems.add("There is no session bus", "Start D-Bus in the D-Bus applet");
+            "waiting for the session bus".into()
         }
         portal::State::Failed(why) => {
             problems.add(
@@ -132,8 +136,8 @@ fn portal_rows(status: &portal::Status, rows: &mut Vec<EnvRow>, problems: &mut P
             .unwrap_or_else(|| "(none yet)".into()),
     ));
     rows.push(item(
-        "DBUS_SESSION_BUS_ADDRESS",
-        std::env::var("DBUS_SESSION_BUS_ADDRESS").unwrap_or_else(|_| "(not set)".into()),
+        "Session bus address",
+        services::bus_address().unwrap_or_else(|| "(none: XDG_RUNTIME_DIR is not set)".into()),
     ));
 }
 
@@ -152,7 +156,7 @@ async fn bus_rows(nested: bool, rows: &mut Vec<EnvRow>, problems: &mut Problems)
         Err(err) => {
             problems.add(
                 "Cannot connect to the session D-Bus",
-                "Check DBUS_SESSION_BUS_ADDRESS above",
+                "Check the D-Bus applet",
             );
             rows.push(item("Connection", format!("failed: {err}")));
             return;
@@ -213,99 +217,27 @@ async fn file_chooser_version(conn: &Connection) -> Result<u32, String> {
     u32::try_from(value).map_err(|e| e.to_string())
 }
 
-/// `PID 123 (/usr/lib/xdg-desktop-portal)`.
-fn describe_pid(pid: u32) -> String {
-    match portal::process_name(pid) {
-        name if name.is_empty() => format!("PID {pid}"),
-        name => format!("PID {pid} ({name})"),
-    }
-}
+// --- portal programs ---------------------------------------------------------------
 
-// --- systemd units -----------------------------------------------------------------
-
-/// Whether the portal services simplewm replaces are masked. Not problems: simplewm
-/// stops a running xdg-desktop-portal itself, and the others only run for Flatpak apps.
-fn unit_rows(rows: &mut Vec<EnvRow>) {
+/// Whether the portal programs simplewm replaces are running. Not problems: simplewm
+/// stops an xdg-desktop-portal that holds the name, and the others only matter to
+/// Flatpak apps. The session bus can still start them on demand.
+fn program_rows(rows: &mut Vec<EnvRow>) {
     rows.push(EnvRow::Header(
-        "Portal services simplewm doesn't need".into(),
+        "Portal programs simplewm doesn't need".into(),
     ));
-    let units: Vec<String> = UNITS.iter().map(|u| format!("{u}.service")).collect();
-    let out = Command::new("systemctl")
-        .args(["--user", "show", "--property=Id,LoadState,ActiveState"])
-        .args(&units)
-        .output();
-    let text = match out {
-        Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
-        Ok(out) => {
-            let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-            rows.push(item("systemctl", format!("failed: {err}")));
-            return;
-        }
-        Err(err) => {
-            rows.push(item("systemctl", format!("not available: {err}")));
-            return;
-        }
-    };
-    let states = unit_states(&text);
-    for unit in UNITS {
-        let state = states
-            .iter()
-            .find(|s| s.0 == format!("{unit}.service"))
-            .map(|(_, load, active)| describe_unit(load, active))
-            .unwrap_or_else(|| "unknown".into());
-        rows.push(item(unit, state));
-    }
-    if states
-        .iter()
-        .any(|(_, load, _)| load != "masked" && load != "not-found")
-    {
-        rows.push(EnvRow::Line("To keep them from starting, run:".into()));
-        rows.push(EnvRow::Line(format!("    {MASK}")));
-    }
-}
-
-/// `(Id, LoadState, ActiveState)` for each unit in `systemctl show` output.
-fn unit_states(text: &str) -> Vec<(String, String, String)> {
-    text.split("\n\n")
-        .filter_map(|block| {
-            let get = |key: &str| {
-                block.lines().find_map(|l| {
-                    l.strip_prefix(key)
-                        .and_then(|r| r.strip_prefix('='))
-                        .map(str::to_string)
-                })
-            };
-            Some((get("Id")?, get("LoadState")?, get("ActiveState")?))
-        })
-        .collect()
-}
-
-fn describe_unit(load: &str, active: &str) -> String {
-    match load {
-        "masked" => "masked".into(),
-        "not-found" => "not installed".into(),
-        _ if active == "active" => "running (not masked)".into(),
-        _ => "not running (not masked)".into(),
+    for (name, comm) in PROGRAMS {
+        let state = match services::find_process(comm) {
+            Some(pid) => format!("running (PID {pid})"),
+            None => "not running".into(),
+        };
+        rows.push(item(name, state));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn reads_unit_states() {
-        let text = "Id=xdg-desktop-portal.service\nLoadState=masked\nActiveState=inactive\n\n\
-                    Id=xdg-document-portal.service\nLoadState=loaded\nActiveState=active\n";
-        let states = unit_states(text);
-        assert_eq!(states.len(), 2);
-        assert_eq!(describe_unit(&states[0].1, &states[0].2), "masked");
-        assert_eq!(
-            describe_unit(&states[1].1, &states[1].2),
-            "running (not masked)"
-        );
-        assert_eq!(describe_unit("not-found", "inactive"), "not installed");
-    }
 
     /// Needs a scratch session bus:
     /// `dbus-run-session -- cargo test reads_an_empty_bus -- --ignored`.

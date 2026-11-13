@@ -7,6 +7,7 @@ mod panel;
 mod portal;
 mod portal_check;
 mod screenshot;
+mod services;
 mod sound;
 mod state;
 mod text;
@@ -48,6 +49,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     })?;
 
     udev::shutdown(&mut state);
+    state.panels.services.shutdown();
 
     Ok(())
 }

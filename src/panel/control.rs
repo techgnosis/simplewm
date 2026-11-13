@@ -40,6 +40,7 @@ const TILE_SCREENSHOT: [f32; 4] = [0.55, 0.32, 0.75, 1.0];
 const TILE_PORTAL: [f32; 4] = [0.15, 0.55, 0.65, 1.0];
 const TILE_NETWORK: [f32; 4] = [0.70, 0.30, 0.35, 1.0];
 const TILE_SOUND: [f32; 4] = [0.35, 0.55, 0.22, 1.0];
+const TILE_BUS: [f32; 4] = [0.45, 0.40, 0.70, 1.0];
 const TILE_GLYPH: [f32; 4] = [0.95, 0.97, 1.0, 1.0];
 
 struct ControlLayout {
@@ -148,7 +149,20 @@ fn applet_glyph(id: PanelId, tile: Rect) -> ([f32; 4], Vec<Rect>) {
             ];
             (TILE_SOUND, rects)
         }
-        PanelId::ControlPanel | PanelId::FilePicker | PanelId::Password => {
+        // A bus line with three programs hanging off it.
+        PanelId::Bus => {
+            let rects = vec![
+                r(6, 22, 36, 4), // the bus
+                r(9, 10, 8, 8),  // program, top left
+                r(12, 18, 2, 4), // its wire
+                r(31, 10, 8, 8), // program, top right
+                r(34, 18, 2, 4), // its wire
+                r(20, 30, 8, 8), // program, below
+                r(23, 26, 2, 4), // its wire
+            ];
+            (TILE_BUS, rects)
+        }
+        PanelId::ControlPanel | PanelId::FilePicker | PanelId::Password | PanelId::Log => {
             (TILE_LAUNCHER, Vec::new())
         }
     }

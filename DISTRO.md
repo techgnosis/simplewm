@@ -17,7 +17,9 @@ made.
 - **Devices: libudev-zero and mdevd.** libudev-zero is the libudev library that smithay,
   libinput and PipeWire use, with no daemon behind it. mdevd loads drivers, sets
   permissions in `/dev` and passes plug-in events on to libudev-zero. Why, below.
-- **D-Bus: dbus-broker, without its launcher.** Why and how, below.
+- **D-Bus: dbus-daemon, started by simplewm.** Why, below.
+- **simplewm runs the user services**, in place of `systemd --user`: the session bus,
+  PipeWire, pipewire-pulse and WirePlumber. Done (see "User services" below).
 - **Boot: a custom init that starts simplewm as you, with no login.** It sets up the bare
   minimum as root, then runs simplewm as a normal user. No logind, elogind, PAM or login
   prompt. Details below.
@@ -97,21 +99,48 @@ simplewm's portal needs a D-Bus session bus, and so do many apps. There are thre
 - **busd**, a new broker in Rust, built on zbus, the same D-Bus library simplewm uses. Its
   own README says it isn't ready for production yet.
 
-**Chosen: dbus-broker, without its launcher.** The broker runs fine without systemd. A
-launcher's job is small: create the bus socket, start the broker, and tell it who may
-connect through a documented control channel (see `man dbus-broker`). The one thing we give
-up is activation, where the bus starts a service when an app first calls it. simplewm
-already relies on nothing being activated: it takes the portal name itself, and everything
-else (PipeWire, WirePlumber) is started at boot anyway. Apps that try activation for
-optional extras (GTK looking for the accessibility bus, for example) just carry on without
-it.
+**First choice was dbus-broker without its launcher; changed to dbus-daemon.** dbus-broker
+splits the bus into two programs: the broker, which only passes messages and never opens
+files, and a launcher, which reads the config, creates the socket and hands both to the
+broker over a private channel. The launcher links against systemd, so we'd have to write
+our own, and the format for passing the bus's rules over that channel is private to the
+two programs: its man page says it's "still subject to change". dbus-daemon is the plain
+model instead: one process that reads its config and serves one socket. It's what Alpine,
+Void and the other musl distros use, and its few hundred KB don't matter here.
 
-The plan is for simplewm itself to be the launcher, in line with doing as much as possible
-in one process: simplewm already speaks D-Bus through zbus. Until then, the small
-`dbus-controllers` project can launch the broker without systemd. If dbus-broker gives
-trouble, dbus-daemon is the drop-in fallback.
+simplewm starts it as `dbus-daemon --session --nofork --address=unix:path=$XDG_RUNTIME_DIR/bus`
+(or whatever `DBUS_SESSION_BUS_ADDRESS` says). It uses the normal session config, so the bus
+can still start programs on demand when an app asks for one. If busd (the Rust broker on
+zbus) matures, it's the natural next step, maybe even inside simplewm.
 
-Still to check: that dbus-broker builds cleanly with musl.
+## User services
+
+simplewm owns the user services it always needs, without trying to be a smaller systemd:
+a fixed list, no unit files, no dependency engine.
+
+- On a TTY it starts the session bus, then PipeWire, then pipewire-pulse and WirePlumber,
+  each once the one before answers on its socket.
+- Anything already running (systemd's sockets, a host desktop when nested) is left alone
+  and shown as run by that program.
+- The Sound applet has Start/Stop and Log for PipeWire, pipewire-pulse and WirePlumber.
+  The D-Bus applet does the same for the bus. The Log window shows a service's output.
+- Nothing restarts a service that exits; you press Start. simplewm stops them when it
+  quits, and they're told to stop if simplewm crashes.
+- The portal starts once the bus is up and comes back when the bus is restarted.
+
+pipewire-pulse is there because most apps (Firefox, for example) play sound through the
+PulseAudio interface it provides, not through PipeWire directly.
+
+To try this on a systemd host, keep systemd from starting the same things by masking
+them for the user, then log out and back in:
+
+```
+systemctl --user mask pipewire.socket pipewire.service \
+    pipewire-pulse.socket pipewire-pulse.service wireplumber.service dbus.socket
+```
+
+`systemctl --user unmask` with the same names goes back. The masks apply to every session
+of that user, so a second user account just for testing keeps the main one untouched.
 
 ## Boot and logind's jobs
 
@@ -138,6 +167,9 @@ in order:
    what a login would have set (`HOME`, `USER`, `PATH`, `XDG_RUNTIME_DIR`), send output to
    a log file, and start simplewm.
 
+simplewm then starts the session bus, PipeWire, pipewire-pulse and WirePlumber itself (see
+"User services").
+
 simplewm doesn't need to own a terminal: seatd handles the virtual terminal, so Ctrl+Alt+F2
 to a text console still works.
 
@@ -155,8 +187,7 @@ If a login prompt is ever wanted, the usual fallback is `getty` with autologin o
 - The init's details: what it does when simplewm exits or crashes (restart it, drop to a
   text console, or shut down), shutting down cleanly, and whether it supervises seatd and
   mdevd.
-- What starts the user-level programs (the D-Bus session bus, PipeWire, WirePlumber): init
-  just before simplewm, or simplewm itself.
+- What `systemd --user` still does on this host that the distro won't have, if anything.
 - How much of that simplewm could take over itself, and what has to stay a separate
   root process (simplewm runs unprivileged, so loading drivers and changing `/dev`
   permissions can't move into it).

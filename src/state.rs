@@ -1,4 +1,8 @@
-use std::{ffi::OsString, sync::Arc, time::Instant};
+use std::{
+    ffi::OsString,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use smithay::{
     backend::renderer::gles::GlesRenderer,
@@ -36,7 +40,9 @@ use smithay::{
 
 use crate::{
     panel::{EnvRow, PanelId, Panels},
+    portal::PortalEvent,
     screenshot::SaveResult,
+    services::{Service, ServiceEvent, Services, Status},
     ui::{self, Ui},
 };
 
@@ -100,10 +106,15 @@ pub struct State {
     pub portal_check_tx: Sender<Vec<EnvRow>>,
     /// The key held down in one of simplewm's own windows, and its repeat timer.
     pub key_repeat: Option<(u32, RegistrationToken)>,
+    /// On a TTY simplewm is the session: it runs the services and is the portal.
+    tty: bool,
+    /// For (re)starting the portal when the session bus comes up.
+    portal_tx: Sender<PortalEvent>,
 }
 
 impl State {
-    /// `tty`: simplewm is the session, so it also becomes the desktop portal.
+    /// `tty`: simplewm is the session, so it also starts the services (session bus,
+    /// PipeWire, …) and becomes the desktop portal.
     pub fn new(
         event_loop: &mut EventLoop<'static, State>,
         display: Display<State>,
@@ -147,8 +158,28 @@ impl State {
             })
             .expect("failed to init screenshot channel");
 
+        // The services' threads report back here.
+        let (service_tx, service_rx) = channel::channel::<ServiceEvent>();
+        event_loop
+            .handle()
+            .insert_source(service_rx, |event, _, state| {
+                if let channel::Event::Msg(ev) = event {
+                    state.service_event(ev);
+                }
+            })
+            .expect("failed to init services channel");
+        let service_tx = Mutex::new(service_tx);
+        let services = Services::new(
+            Arc::new(move |ev| {
+                if let Ok(tx) = service_tx.lock() {
+                    let _ = tx.send(ev);
+                }
+            }),
+            socket_name.to_string_lossy().into_owned(),
+        );
+
         // The Password window's sudo workers report back here.
-        let mut panels = Panels::new();
+        let mut panels = Panels::new(services);
         let (sudo_tx, sudo_rx) = channel::channel::<crate::panel::SudoDone>();
         event_loop
             .handle()
@@ -164,8 +195,9 @@ impl State {
         panels.sudo.tx = Some(sudo_tx);
 
         // File chooser requests to simplewm's desktop portal (answered by the File Picker).
-        // Nested, the host session's portal keeps the bus name.
-        let (portal_tx, portal_rx) = channel::channel::<crate::portal::PortalEvent>();
+        // Nested, the host session's portal keeps the bus name. On a TTY the portal starts
+        // once the session bus is up (see `ensure_portal`).
+        let (portal_tx, portal_rx) = channel::channel::<PortalEvent>();
         event_loop
             .handle()
             .insert_source(portal_rx, |event, _, state| {
@@ -174,9 +206,6 @@ impl State {
                 }
             })
             .expect("failed to init portal channel");
-        if tty {
-            crate::portal::start(portal_tx);
-        }
 
         let (portal_check_tx, portal_check_rx) = channel::channel::<Vec<EnvRow>>();
         event_loop
@@ -188,7 +217,7 @@ impl State {
             })
             .expect("failed to init portal check channel");
 
-        Self {
+        let mut state = Self {
             start_time,
             display_handle: dh,
             loop_handle: event_loop.handle(),
@@ -220,6 +249,39 @@ impl State {
             screenshot_tx,
             portal_check_tx,
             key_repeat: None,
+            tty,
+            portal_tx,
+        };
+        if tty {
+            state.panels.services.autostart();
+            state.ensure_portal();
+        }
+        state
+    }
+
+    /// An event from one of the services' threads.
+    fn service_event(&mut self, ev: ServiceEvent) {
+        let s = ev.service;
+        self.panels.service_event(ev);
+        if s == Service::Bus {
+            self.ensure_portal();
+        }
+    }
+
+    /// On a TTY, start the portal whenever the session bus is up and the portal isn't
+    /// serving (at startup, and after the bus was stopped and started again).
+    pub fn ensure_portal(&mut self) {
+        if !self.tty {
+            return;
+        }
+        match self.panels.services.status(Service::Bus) {
+            Status::Running | Status::Elsewhere(_) => {
+                if crate::portal::needs_start() {
+                    crate::portal::start(self.portal_tx.clone());
+                }
+            }
+            // Including Starting: this runs again when it's up.
+            _ => crate::portal::no_bus(),
         }
     }
 
@@ -396,7 +458,14 @@ impl State {
 
     pub fn spawn(&self, command: &str) {
         tracing::info!(command, "spawning");
-        if let Err(err) = std::process::Command::new(command)
+        let mut cmd = std::process::Command::new(command);
+        // Apps find the session bus here when simplewm runs it (nobody set the variable).
+        if std::env::var_os("DBUS_SESSION_BUS_ADDRESS").is_none()
+            && let Some(bus) = crate::services::bus_address()
+        {
+            cmd.env("DBUS_SESSION_BUS_ADDRESS", bus);
+        }
+        if let Err(err) = cmd
             .env("WAYLAND_DISPLAY", &self.socket_name)
             .env("XDG_CURRENT_DESKTOP", "simplewm")
             .env_remove("DISPLAY")
