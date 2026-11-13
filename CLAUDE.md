@@ -12,8 +12,10 @@ feature complete, so expect bug fixes and UI polish, not new features.
   nested (`make run`) or on a TTY (`./simplewm`, or `./debug.sh` to log DRM and session
   details to `simplewm-debug.log`). Their machine has one sound output (HDMI), one wired
   network card and one monitor.
-- Keep this file current when behavior or structure changes. It's for Claude; nobody else
-  reads it.
+- Keep this file current when behavior or structure changes, and fix it whenever you find
+  it wrong, without asking. It's for Claude; nobody else reads it.
+- Claude owns git: commit when a change is done and checked, and push to `origin main`
+  when it sees fit, without asking. Work directly on `main`; no branches or PRs needed.
 
 ## Rules simplewm keeps
 
