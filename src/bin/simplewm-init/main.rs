@@ -40,6 +40,8 @@ use account::{Account, USER_UID};
 const PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 /// The screen's one VT.
 const SCREEN_TTY: &str = "/dev/tty1";
+/// Lines of simplewm's log shown when it exits.
+const LOG_TAIL: usize = 20;
 /// When even the shell can't start, how long until simplewm is tried again.
 const NO_SHELL_RETRY: Duration = Duration::from_secs(60);
 const STOP_GRACE: Duration = Duration::from_secs(5);
@@ -368,12 +370,22 @@ impl Supervisor {
     /// simplewm is gone (`how` follows "simplewm": "exited with status 1"). Never
     /// restart it here: give the user a shell on tty1 instead.
     fn simplewm_ended(&mut self, how: &str) {
-        // Clear the screen so the explanation starts at the top.
+        // Clear the screen so the report starts at the top: how it ended, the end of its
+        // log, and what to do, just above the shell's prompt.
         self.console.write("\x1b[H\x1b[2J");
-        self.console.say(&format!(
-            "simplewm {how}. Here's a shell as {}: run simplewm there to see what it says \
-             (when simplewm-init starts it, its output goes to ~/simplewm.log). Exit the \
-             shell to have simplewm started again.\n",
+        self.console.say(&format!("simplewm {how}."));
+        let log = std::fs::read(self.user.home.join("simplewm.log"))
+            .map(|b| String::from_utf8_lossy(&b).into_owned())
+            .unwrap_or_default();
+        if !log.trim().is_empty() {
+            self.console.write(&format!(
+                "\nThe end of ~/simplewm.log:\n\n{}\n",
+                tail_lines(&log, LOG_TAIL)
+            ));
+        }
+        self.console.write(&format!(
+            "Here's a shell as {}. Run simplewm to see what it says, or exit the shell to \
+             have simplewm-init start it again (its output then goes to ~/simplewm.log).\n\n",
             self.user.name
         ));
         match spawn_shell(&self.user, &self.runtime) {
@@ -497,4 +509,25 @@ fn spawn_shell(user: &Account, runtime: &Path) -> io::Result<i32> {
     let mut cmd = user_command(&user.shell, user, runtime, Some(SCREEN_TTY));
     cmd.arg("-l").env("TERM", "linux");
     Ok(cmd.spawn()?.id() as i32)
+}
+
+/// The last `n` lines of `text`, each ending in a newline.
+fn tail_lines(text: &str, n: usize) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    lines[lines.len().saturating_sub(n)..]
+        .iter()
+        .map(|l| format!("{l}\n"))
+        .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::tail_lines;
+
+    #[test]
+    fn tails_lines() {
+        assert_eq!(tail_lines("a\nb\nc\n", 2), "b\nc\n");
+        assert_eq!(tail_lines("a\nb", 5), "a\nb\n");
+        assert_eq!(tail_lines("", 3), "");
+    }
 }

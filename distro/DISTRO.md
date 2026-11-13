@@ -318,9 +318,11 @@ headless (screenshots through QEMU's monitor).
   no other consoles or shells, and nothing reads the serial port. When simplewm exits,
   the kernel's text console comes back on tty1 and simplewm-init writes why there (and on
   the serial console when the kernel uses one). It never restarts simplewm, whatever
-  the reason (quitting on purpose too): it starts the user's login shell on tty1 instead
-  (tty1 is theirs while it runs). Running `simplewm` there shows what goes wrong; exiting
-  the shell has simplewm-init start simplewm again.
+  the reason (quitting on purpose too): it clears tty1, writes how simplewm ended and
+  the last 20 lines of `~/simplewm.log`, and starts the user's login shell there (tty1 is
+  theirs while it runs). Running `simplewm` there shows what goes wrong as it happens;
+  exiting the shell has simplewm-init start simplewm again (fix, exit, read the log tail
+  if it fails again).
 - **The same environment either way.** simplewm-init starts simplewm through the user's
   login shell too (`bash -l -c 'exec simplewm'`, which replaces itself with simplewm), so
   both get what `/etc/profile` sets (`LANG`, `CHARSET`, …) on top of `HOME`, `USER`,
