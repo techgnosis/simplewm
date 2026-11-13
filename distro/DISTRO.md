@@ -271,8 +271,8 @@ headless (screenshots through QEMU's monitor).
   Each build starts from an empty root, so simplewm's settings in the user's home start
   over too. Downloaded packages are kept in `cache/`. `root/`, `out/` and `cache/` are
   git-ignored. busybox's install script warns it can't create device nodes; harmless.
-- `run.sh` boots `out/` in QEMU with KVM: the serial console is the terminal (Ctrl+A
-  then X quits; Ctrl+A then C switches to QEMU's monitor, where `screendump file.ppm` takes
+- `run.sh` boots `out/` in QEMU with KVM: the serial console is the terminal, output
+  only (the kernel's and simplewm-init's messages; Ctrl+A then X quits; Ctrl+A then C switches to QEMU's monitor, where `screendump file.ppm` takes
   a screenshot). The screen is a plain virtio-vga card sized to fill what a window can use
   on the host's monitor (its preferred mode from `/sys/class/drm`, less simplewm's bar and
   a window's title bar and borders; 3832x2096 on the user's 4K monitor), shown pixel for
@@ -309,21 +309,27 @@ headless (screenshots through QEMU's monitor).
   appended to `~/simplewm.log`. Every child starts with no signals blocked (simplewm-init
   blocks the ones it reads from a signalfd; inherited, they made simplewm and its
   services ignore SIGTERM).
-- **One VT.** Only simplewm runs on tty1, and simplewm has no Ctrl+Alt+F-keys. When
-  simplewm exits, the kernel's text console comes back on tty1 and simplewm-init writes
-  why there (and on the serial console when the kernel uses one). It starts simplewm
-  again after 2 s, but after 3 exits within a minute it clears the screen, shows the exit
-  and the last 20 lines of `~/simplewm.log`, and waits for Enter on tty1, as often as
-  needed (fix it from elsewhere, press Enter).
-- **Development shell:** a root `bash -l` with no password on the serial port (ttyS0),
-  restarted when it exits. In QEMU that's the terminal running it; on a PC with nothing
-  on the serial port it does nothing. No other consoles.
+- **One VT.** Only simplewm runs on tty1, and simplewm has no Ctrl+Alt+F-keys. There are
+  no other consoles or shells, and nothing reads the serial port. When simplewm exits,
+  the kernel's text console comes back on tty1 and simplewm-init writes why there (and on
+  the serial console when the kernel uses one). It starts simplewm again after 2 s, but
+  after 3 exits within a minute it clears the screen, explains, and starts the user's
+  login shell on tty1 instead (tty1 is theirs while it runs). Running `simplewm` there
+  shows what goes wrong; exiting the shell has simplewm-init start simplewm again.
+- **The same environment either way.** simplewm-init starts simplewm through the user's
+  login shell too (`bash -l -c 'exec simplewm'`, which replaces itself with simplewm), so
+  both get what `/etc/profile` sets (`LANG`, `CHARSET`, …) on top of `HOME`, `USER`,
+  `LOGNAME`, `SHELL`, `PATH` and `XDG_RUNTIME_DIR`, with the same IDs and groups. Checked
+  in the VM: the only differences are `TERM=linux` (the shell has a terminal) and
+  `SHLVL`. simplewm's output goes to `~/simplewm.log` from simplewm-init, to the screen
+  from the shell.
 - **Shutting down:** busybox's `poweroff`, `reboot` and `halt` signal PID 1 (SIGUSR2,
-  SIGTERM, SIGUSR1). simplewm-init SIGKILLs the serial shell's session (nothing to save,
-  and an interactive bash ignores SIGTERM), sends everything else SIGTERM, names and
-  SIGKILLs whatever is left after 5 s, syncs, remounts `/` read-only and powers off,
-  reboots or halts. Ctrl+Alt+Del is turned off. Logs: `~user/simplewm.log`,
-  `/var/log/seatd.log` (udevd's output goes nowhere for now).
+  SIGTERM, SIGUSR1); from simplewm that's `sudo poweroff` in a terminal. simplewm-init
+  SIGKILLs the user's shell's session if one is open (an interactive bash ignores
+  SIGTERM), sends everything else SIGTERM, names and SIGKILLs whatever is left after
+  5 s, syncs, remounts `/` read-only and powers off, reboots or halts. Ctrl+Alt+Del is
+  turned off. Logs: `~user/simplewm.log`, `/var/log/seatd.log` (udevd's output goes
+  nowhere for now).
 - Device rules are eudev's own (`/usr/lib/udev/rules.d`): drivers load by modalias
   through its built-in kmod, `/dev/dri` goes to video (render nodes 0666), `/dev/snd` to
   audio and input devices to input, and sound cards get `SOUND_INITIALIZED`. kmod is also

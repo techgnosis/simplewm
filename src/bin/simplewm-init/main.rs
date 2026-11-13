@@ -5,13 +5,11 @@
 //! it running. There is nothing to configure.
 //!
 //! The screen has one VT, tty1, and only simplewm runs there. When simplewm exits, the
-//! kernel's text console comes back on tty1 and simplewm-init writes why there. After
-//! three exits within a minute it stops restarting simplewm, shows the end of its log and
-//! waits for Enter on tty1 to try again, as often as needed.
-//!
-//! For development, a root shell with no password runs on the serial port (ttyS0): in
-//! QEMU that's the terminal running it. On a PC with nothing plugged into the serial port
-//! it does nothing.
+//! kernel's text console comes back on tty1 and simplewm-init writes why there (and on
+//! the serial console, when the kernel uses one: QEMU's terminal). It starts simplewm
+//! again, but after three exits within a minute it starts a login shell as the user on
+//! tty1 instead, with exactly the environment simplewm gets, so running `simplewm` there
+//! shows what goes wrong. When that shell exits, simplewm is started again.
 //!
 //! Shutting down: busybox's `poweroff`, `reboot` and `halt` signal PID 1 with SIGUSR2,
 //! SIGTERM and SIGUSR1. Everything gets SIGTERM, then SIGKILL after 5 s, the root
@@ -40,19 +38,15 @@ use std::{
 use account::{Account, USER_UID};
 
 const PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
-const SERIAL_TTY: &str = "/dev/ttyS0";
 /// The screen's one VT.
 const SCREEN_TTY: &str = "/dev/tty1";
-/// Exits within `FAILURE_WINDOW` that make simplewm-init stop and wait for Enter.
+/// Exits within `FAILURE_WINDOW` that make simplewm-init start a shell instead.
 const FAILURES: usize = 3;
 const FAILURE_WINDOW: Duration = Duration::from_secs(60);
 const SIMPLEWM_RESTART: Duration = Duration::from_secs(2);
-const SHELL_RESTART: Duration = Duration::from_secs(1);
 const STOP_GRACE: Duration = Duration::from_secs(5);
 /// The screen's console font (Terminus 16x32, from font-terminus), loaded with setfont.
 const CONSOLE_FONT: &str = "/usr/share/consolefonts/ter-132n.psf.gz";
-/// Lines of simplewm's log shown when it keeps failing.
-const LOG_TAIL: usize = 20;
 
 fn main() {
     if std::process::id() != 1 {
@@ -116,9 +110,6 @@ fn run() -> Result<(), String> {
     start_seatd(&console);
 
     let user = Account::load(USER_UID)?;
-    let root_shell = Account::load(0)
-        .map(|a| a.shell)
-        .unwrap_or_else(|_| "/bin/sh".into());
     let runtime =
         make_runtime_dir(&user).map_err(|e| format!("can't make the runtime dir: {e}"))?;
 
@@ -137,15 +128,10 @@ fn run() -> Result<(), String> {
         console,
         user,
         runtime,
-        root_shell,
-        simplewm: Job::due_now(),
-        serial: if Path::new(SERIAL_TTY).exists() {
-            Job::due_now()
-        } else {
-            Job::default()
-        },
+        simplewm: None,
+        start_at: Some(Instant::now()),
         exits: Vec::new(),
-        waiting: None,
+        shell: None,
     };
     sup.run(&signals);
     Ok(())
@@ -320,50 +306,32 @@ impl Console {
     }
 }
 
-/// A program simplewm-init keeps running.
-#[derive(Default)]
-struct Job {
-    pid: Option<i32>,
-    /// When to start it (again); `None` while it runs, or while waiting for Enter.
-    start_at: Option<Instant>,
-}
-
-impl Job {
-    fn due_now() -> Job {
-        Job {
-            pid: None,
-            start_at: Some(Instant::now()),
-        }
-    }
-}
-
 struct Supervisor {
     console: Console,
     user: Account,
     runtime: PathBuf,
-    root_shell: PathBuf,
-    simplewm: Job,
-    serial: Job,
+    /// simplewm's PID while it runs.
+    simplewm: Option<i32>,
+    /// When to start simplewm (again).
+    start_at: Option<Instant>,
     /// When simplewm last exited, within `FAILURE_WINDOW`.
     exits: Vec<Instant>,
-    /// tty1, read for Enter after simplewm kept failing.
-    waiting: Option<File>,
+    /// The user's shell on tty1, after simplewm kept failing.
+    shell: Option<i32>,
 }
 
 impl Supervisor {
     fn run(&mut self, signals: &sys::Signals) {
         loop {
-            self.start_due();
-            let timeout = [self.simplewm.start_at, self.serial.start_at]
-                .into_iter()
-                .flatten()
-                .min()
+            if self.start_at.is_some_and(|t| t <= Instant::now()) {
+                self.start_at = None;
+                self.start_simplewm();
+            }
+            let timeout = self
+                .start_at
                 .map(|t| t.saturating_duration_since(Instant::now()).as_millis() as i32)
                 .unwrap_or(-1);
-            let mut fds = vec![signals.fd()];
-            fds.extend(self.waiting.as_ref().map(|f| f.as_raw_fd()));
-            let ready = sys::poll(&fds, timeout);
-
+            sys::poll(&[signals.fd()], timeout);
             while let Some(signal) = signals.next() {
                 match signal {
                     libc::SIGCHLD => self.reap(),
@@ -373,53 +341,38 @@ impl Supervisor {
                     _ => {} // SIGINT: Ctrl+Alt+Del, which does nothing.
                 }
             }
-            if ready.get(1) == Some(&true) {
-                self.read_enter();
-            }
         }
     }
 
-    fn start_due(&mut self) {
-        let now = Instant::now();
-        if self.serial.start_at.is_some_and(|t| t <= now) {
-            self.serial.start_at = None;
-            match spawn_shell(&self.root_shell, SERIAL_TTY) {
-                Ok(pid) => self.serial.pid = Some(pid),
-                Err(e) => {
-                    self.console
-                        .say(&format!("can't start the serial shell: {e}"));
-                    self.serial.start_at = Some(now + SHELL_RESTART * 10);
-                }
-            }
-        }
-        if self.simplewm.start_at.is_some_and(|t| t <= now) {
-            self.simplewm.start_at = None;
-            self.console.say(&format!(
-                "starting simplewm as {} (log: ~/simplewm.log)",
-                self.user.name
-            ));
-            match spawn_simplewm(&self.user, &self.runtime) {
-                Ok(pid) => self.simplewm.pid = Some(pid),
-                Err(e) => self.simplewm_ended(&format!("couldn't be started ({e})")),
-            }
+    fn start_simplewm(&mut self) {
+        self.console.say(&format!(
+            "starting simplewm as {} (log: ~/simplewm.log)",
+            self.user.name
+        ));
+        match spawn_simplewm(&self.user, &self.runtime) {
+            Ok(pid) => self.simplewm = Some(pid),
+            Err(e) => self.simplewm_ended(&format!("couldn't be started ({e})")),
         }
     }
 
     fn reap(&mut self) {
         while let Some((pid, status)) = sys::reap() {
-            if self.serial.pid == Some(pid) {
-                self.serial.pid = None;
-                self.serial.start_at = Some(Instant::now() + SHELL_RESTART);
-            } else if self.simplewm.pid == Some(pid) {
-                self.simplewm.pid = None;
+            if self.simplewm == Some(pid) {
+                self.simplewm = None;
                 self.simplewm_ended(&sys::describe_status(status));
+            } else if self.shell == Some(pid) {
+                self.shell = None;
+                let _ = std::os::unix::fs::chown(SCREEN_TTY, Some(0), None);
+                self.exits.clear();
+                self.console.say("the shell exited");
+                self.start_at = Some(Instant::now());
             }
             // Anything else is an orphan that ended up with us; reaping it is enough.
         }
     }
 
     /// simplewm is gone (`how` follows "simplewm": "exited with status 1"): start it
-    /// again shortly, or after too many exits, explain on tty1 and wait for Enter.
+    /// again shortly, or after too many exits, give the user a shell on tty1.
     fn simplewm_ended(&mut self, how: &str) {
         let now = Instant::now();
         self.exits
@@ -430,54 +383,37 @@ impl Supervisor {
                 "simplewm {how}; starting it again in {} s",
                 SIMPLEWM_RESTART.as_secs()
             ));
-            self.simplewm.start_at = Some(now + SIMPLEWM_RESTART);
+            self.start_at = Some(now + SIMPLEWM_RESTART);
             return;
         }
-        let log = self.user.home.join("simplewm.log");
-        let tail = log_tail(&log, LOG_TAIL);
-        // Clear the screen so the report starts at the top.
+        // Clear the screen so the explanation starts at the top.
         self.console.write("\x1b[H\x1b[2J");
         self.console.say(&format!(
-            "simplewm {how}. It stopped {FAILURES} times within a minute, so it won't be \
-             started again until you press Enter."
+            "simplewm {how}. It stopped {FAILURES} times within a minute, so here's a shell \
+             as {} instead. Run simplewm there to see what goes wrong (earlier runs logged to \
+             ~/simplewm.log). Exit the shell to have simplewm started again.\n",
+            self.user.name
         ));
-        self.console
-            .write(&format!("\nThe end of {}:\n\n{tail}\n", log.display()));
-        self.console.write("Press Enter to start simplewm again.\n");
-        self.waiting = open_for_enter();
-        if self.waiting.is_none() {
-            self.console
-                .say("can't read tty1; trying again in a minute");
-            self.simplewm.start_at = Some(now + FAILURE_WINDOW);
-        }
-    }
-
-    fn read_enter(&mut self) {
-        let Some(tty) = self.waiting.as_mut() else {
-            return;
-        };
-        let mut buf = [0u8; 256];
-        match tty.read(&mut buf) {
-            Ok(n) if buf[..n].contains(&b'\n') => {
-                self.waiting = None;
-                self.exits.clear();
-                self.simplewm.start_at = Some(Instant::now());
+        match spawn_shell(&self.user, &self.runtime) {
+            Ok(pid) => self.shell = Some(pid),
+            Err(e) => {
+                self.console.say(&format!(
+                    "can't start a shell ({e}); trying simplewm again in a minute"
+                ));
+                self.start_at = Some(now + FAILURE_WINDOW);
             }
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {}
-            Err(_) => self.waiting = open_for_enter(),
         }
     }
 
     fn shutdown(&mut self, signals: &sys::Signals, how: libc::c_int, what: &str) -> ! {
         self.console.say(what);
-        self.waiting = None;
-        sys::kill_all(libc::SIGTERM);
-        // The serial shell has nothing to save, and an interactive bash ignores SIGTERM
-        // (and may be busy running `poweroff` itself): end its session at once.
-        if let Some(pid) = self.serial.pid {
+        self.start_at = None;
+        // An interactive bash ignores SIGTERM, and the user's shell may be the one
+        // running `poweroff`: end its session at once.
+        if let Some(pid) = self.shell {
             sys::kill_session(pid);
         }
+        sys::kill_all(libc::SIGTERM);
         let deadline = Instant::now() + STOP_GRACE;
         loop {
             while sys::reap().is_some() {}
@@ -510,75 +446,14 @@ impl Supervisor {
     }
 }
 
-/// tty1 for reading Enter, with anything typed earlier thrown away.
-fn open_for_enter() -> Option<File> {
-    let tty = OpenOptions::new()
-        .read(true)
-        .custom_flags(libc::O_NOCTTY | libc::O_NONBLOCK)
-        .open(SCREEN_TTY)
-        .ok()?;
-    // SAFETY: tcflush on a tty we just opened.
-    unsafe { libc::tcflush(tty.as_raw_fd(), libc::TCIFLUSH) };
-    Some(tty)
-}
-
-/// The last `n` lines of `path`, or a note why there are none.
-fn log_tail(path: &Path, n: usize) -> String {
-    match std::fs::read(path) {
-        Ok(bytes) => {
-            let text = String::from_utf8_lossy(&bytes);
-            let lines: Vec<&str> = text.lines().collect();
-            let start = lines.len().saturating_sub(n);
-            if lines.is_empty() {
-                "(empty)\n".into()
-            } else {
-                lines[start..].join("\n") + "\n"
-            }
-        }
-        Err(e) => format!("(can't read it: {e})\n"),
-    }
-}
-
-/// A root login shell on `tty`, which becomes its controlling terminal.
-fn spawn_shell(shell: &Path, tty: &str) -> io::Result<i32> {
-    let tty = CString::new(tty).expect("no NUL in a fixed path");
-    let mut cmd = command(shell);
-    cmd.arg("-l")
-        .env_clear()
-        .envs([
-            ("HOME", "/root"),
-            ("USER", "root"),
-            ("LOGNAME", "root"),
-            ("PATH", PATH),
-            ("TERM", "linux"),
-        ])
-        .env("SHELL", shell)
-        .current_dir("/root");
-    // SAFETY: only async-signal-safe calls (setsid, open, ioctl, dup2, close).
-    unsafe {
-        cmd.pre_exec(move || {
-            libc::setsid();
-            let fd: RawFd = libc::open(tty.as_ptr(), libc::O_RDWR);
-            if fd < 0 {
-                return Err(io::Error::last_os_error());
-            }
-            libc::ioctl(fd, libc::TIOCSCTTY as _, 0);
-            for target in 0..3 {
-                libc::dup2(fd, target);
-            }
-            if fd > 2 {
-                libc::close(fd);
-            }
-            Ok(())
-        });
-    }
-    Ok(cmd.spawn()?.id() as i32)
-}
-
-/// simplewm as the user: their IDs and groups, a fresh environment like a login's, and
-/// output appended to ~/simplewm.log.
-fn spawn_simplewm(user: &Account, runtime: &Path) -> io::Result<i32> {
-    let mut cmd = command("/usr/bin/simplewm");
+/// A command run as the user: their IDs and groups, their home folder, and a fresh
+/// login-like set of variables. simplewm and the shell given after failures are both
+/// made this way (and both go through the login shell), so running simplewm in that
+/// shell is the same as simplewm-init running it. With
+/// `tty`, that terminal (opened while still root) becomes its stdin, stdout, stderr and
+/// controlling terminal.
+fn user_command(program: &Path, user: &Account, runtime: &Path, tty: Option<&str>) -> Command {
+    let mut cmd = command(program);
     cmd.env_clear()
         .env("HOME", &user.home)
         .env("USER", &user.name)
@@ -586,16 +461,28 @@ fn spawn_simplewm(user: &Account, runtime: &Path) -> io::Result<i32> {
         .env("SHELL", &user.shell)
         .env("PATH", PATH)
         .env("XDG_RUNTIME_DIR", runtime)
-        .current_dir(&user.home)
-        .stdin(Stdio::null());
-    if let Some((out, err)) = log_file(&user.home.join("simplewm.log"), Some(user)) {
-        cmd.stdout(out).stderr(err);
-    }
+        .current_dir(&user.home);
     let (uid, gid, groups) = (user.uid, user.gid, user.groups.clone());
-    // SAFETY: only async-signal-safe calls (setsid, setgroups, setgid, setuid).
+    let tty = tty.map(|t| CString::new(t).expect("no NUL in a fixed path"));
+    // SAFETY: only async-signal-safe calls (setsid, open, ioctl, dup2, close, setgroups,
+    // setgid, setuid).
     unsafe {
         cmd.pre_exec(move || {
+            // A new session, which can take a terminal.
             libc::setsid();
+            if let Some(tty) = &tty {
+                let fd: RawFd = libc::open(tty.as_ptr(), libc::O_RDWR);
+                if fd < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                libc::ioctl(fd, libc::TIOCSCTTY as _, 0);
+                for target in 0..3 {
+                    libc::dup2(fd, target);
+                }
+                if fd > 2 {
+                    libc::close(fd);
+                }
+            }
             if libc::setgroups(groups.len(), groups.as_ptr()) < 0
                 || libc::setgid(gid) < 0
                 || libc::setuid(uid) < 0
@@ -605,5 +492,26 @@ fn spawn_simplewm(user: &Account, runtime: &Path) -> io::Result<i32> {
             Ok(())
         });
     }
+    cmd
+}
+
+/// simplewm as the user, its output appended to ~/simplewm.log. It goes through the
+/// user's login shell (which replaces itself with simplewm), so it gets what the login
+/// profile sets (LANG and so on), exactly like running `simplewm` in the shell given
+/// after failures.
+fn spawn_simplewm(user: &Account, runtime: &Path) -> io::Result<i32> {
+    let mut cmd = user_command(&user.shell, user, runtime, None);
+    cmd.args(["-l", "-c", "exec simplewm"]).stdin(Stdio::null());
+    if let Some((out, err)) = log_file(&user.home.join("simplewm.log"), Some(user)) {
+        cmd.stdout(out).stderr(err);
+    }
+    Ok(cmd.spawn()?.id() as i32)
+}
+
+/// The user's login shell on tty1. Like a login, the terminal is theirs while it runs.
+fn spawn_shell(user: &Account, runtime: &Path) -> io::Result<i32> {
+    let _ = std::os::unix::fs::chown(SCREEN_TTY, Some(user.uid), None);
+    let mut cmd = user_command(&user.shell, user, runtime, Some(SCREEN_TTY));
+    cmd.arg("-l").env("TERM", "linux");
     Ok(cmd.spawn()?.id() as i32)
 }

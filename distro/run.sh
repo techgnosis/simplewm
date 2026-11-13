@@ -3,11 +3,13 @@
 #
 #   distro/run.sh            the screen in a window (needs qemu-ui-gtk and
 #                            qemu-hw-display-virtio-vga on Arch; qemu-desktop has both)
-#   distro/run.sh headless   no window, for testing boots from a script; changes to the
-#                            disk are thrown away when QEMU exits
+#   distro/run.sh headless [image]
+#                            no window, for testing boots from a script; changes to the
+#                            disk are thrown away when QEMU exits. image: another disk
+#                            image to boot instead of out/root.img (a test variant)
 #
-# Either way the serial console is this terminal: kernel messages and a root shell.
-# Ctrl+A then X quits QEMU.
+# Either way the serial console is this terminal: the kernel's and simplewm-init's
+# messages (output only). Ctrl+A then X quits QEMU; Ctrl+A then C its monitor.
 #
 # Network: QEMU's user-mode network. In the Network applet: address 10.0.2.15/24,
 # gateway 10.0.2.2, DNS 10.0.2.3.
@@ -18,6 +20,8 @@ out=$(cd "$(dirname "$0")" && pwd)/out
 for f in vmlinuz initramfs.cpio.gz root.img; do
     [ -e "$out/$f" ] || { echo "no $out/$f; run distro/build.sh first" >&2; exit 1; }
 done
+image=$out/root.img
+[ "${1:-}" = headless ] && [ -n "${2:-}" ] && image=$2
 
 # The VM's screen fills what a window can use on the host's monitor: its preferred mode
 # (the first line of a connected connector's modes, as simplewm picks it), less
@@ -68,7 +72,7 @@ exec qemu-system-x86_64 \
     -kernel "$out/vmlinuz" \
     -initrd "$out/initramfs.cpio.gz" \
     -append "root=/dev/vda console=tty0 console=ttyS0" \
-    -drive "file=$out/root.img,format=raw,if=virtio" $snapshot \
+    -drive "file=$image,format=raw,if=virtio" $snapshot \
     -vga none $screen \
     -device virtio-keyboard-pci -device virtio-tablet-pci \
     -nic user,model=virtio-net-pci \

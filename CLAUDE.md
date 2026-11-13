@@ -146,9 +146,14 @@ plan and describes each script. `distro/build.sh` builds simplewm for musl
 (`build-simplewm.sh`, into `target/alpine/`), the root filesystem, kernel, initramfs and
 disk image (inside an Alpine container, `distro/container.sh`), and `distro/run.sh` boots
 them in QEMU, which starts straight into simplewm (`/sbin/init` is simplewm-init). Claude can test a boot itself with
-`distro/run.sh headless` (no window, and changes to the disk are thrown away): pipe commands into the serial root shell, take
-screenshots with Ctrl+A C then `screendump distro/out/x.ppm` (convert PPM to PNG to view),
-and end with `poweroff`. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
+`distro/run.sh headless [image]` (no window, and changes to the disk are thrown away).
+There's no shell on the serial port (it's output only), so drive the VM through QEMU's
+monitor (pipe Ctrl+A C, a command, Ctrl+A C into run.sh): `screendump distro/out/x.ppm`
+for screenshots (convert PPM to PNG to view), `sendkey` to type (one key per command:
+`spc`, `dot`, `shift-4` for `$`…), and `quit` at the end. To test failures, boot a copy
+of `out/root.img` changed with `debugfs -w` in the container (e2fsprogs-extra), e.g. with
+a stub `/usr/bin/simplewm`; after 3 failures simplewm-init gives a user shell on tty1 to
+type into. `build.sh` empties `out/`, so keep test images elsewhere or remake them. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
 
 ## Code map (`src/`)
 
