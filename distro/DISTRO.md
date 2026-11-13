@@ -263,6 +263,9 @@ headless (screenshots through QEMU's monitor).
   (`udevadm hwdb --update`), a machine ID for
   dbus-daemon, and the user (`USER_NAME`, uid 1000, in seat, audio, video, input and
   wheel, with the development password `USER_PASSWORD` for sudo; wheel may use sudo).
+  bash is the login shell for the user and root, and the development consoles run it;
+  `/bin/sh` stays busybox, which Alpine's package scripts and the Network applet's script
+  expect.
   Each build starts from an empty root, so simplewm's settings in the user's home start
   over too. Downloaded packages are kept in `cache/`. `root/`, `out/` and `cache/` are
   git-ignored. busybox's install script warns it can't create device nodes; harmless.
@@ -287,7 +290,7 @@ headless (screenshots through QEMU's monitor).
 - `initramfs-init` is the initramfs's `/init` (static busybox): it loads the drivers
   listed in `INITRAMFS_MODULES` (virtio disk, ext4, in dependency order worked out by
   kmod at build time), mounts `root=` and switches to its `/sbin/init`.
-- `init` is the root filesystem's `/sbin/init` (a shell script for now): it mounts
+- `init` is the root filesystem's `/sbin/init` (a bash script for now): it mounts
   `/proc`, `/sys`, `/dev/pts`, `/dev/shm`, `/run` and `/tmp`, starts udevd
   (`--daemon`), replays the devices already there with `udevadm trigger` (subsystems,
   then devices) so their drivers load, and `udevadm settle`s, starts seatd (`-g seat`), makes `/run/user/1000`, waits briefly for
