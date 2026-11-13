@@ -40,6 +40,8 @@ use crate::{
     ui::{self, Ui},
 };
 
+// There is only ever one Backend, so its size does not matter.
+#[allow(clippy::large_enum_variant)]
 pub enum Backend {
     Winit(crate::winit::WinitData),
     Udev(crate::udev::UdevData),

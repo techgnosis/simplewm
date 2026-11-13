@@ -212,10 +212,11 @@ impl State {
                     return;
                 }
 
-                if state == ButtonState::Pressed && !pointer.is_grabbed() {
-                    if let Press::Consume = self.handle_press(button, serial) {
-                        return;
-                    }
+                if state == ButtonState::Pressed
+                    && !pointer.is_grabbed()
+                    && let Press::Consume = self.handle_press(button, serial)
+                {
+                    return;
                 }
                 pointer.button(
                     self,

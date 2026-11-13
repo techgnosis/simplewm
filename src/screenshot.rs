@@ -198,7 +198,7 @@ impl State {
         let (w, h) = (w as usize, h as usize);
         let mut rgb = Vec::with_capacity(w * h * 3);
         for row in rgba.chunks_exact(w * 4).take(h) {
-            for px in row.chunks_exact(4) {
+            for px in row.as_chunks::<4>().0 {
                 rgb.extend_from_slice(&px[..3]);
             }
         }

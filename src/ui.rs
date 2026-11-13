@@ -414,10 +414,10 @@ pub enum Hit {
 
 impl State {
     pub fn hit_test(&self, pos: Point<f64, Logical>) -> Hit {
-        if let Some(menu) = &self.ui.menu {
-            if menu.rect.to_f64().contains(pos) {
-                return Hit::Menu(menu.item_at(pos));
-            }
+        if let Some(menu) = &self.ui.menu
+            && menu.rect.to_f64().contains(pos)
+        {
+            return Hit::Menu(menu.item_at(pos));
         }
 
         let out = self.output_geometry();

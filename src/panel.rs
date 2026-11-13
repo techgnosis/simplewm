@@ -1470,11 +1470,11 @@ pub fn db_path() -> Option<PathBuf> {
 
 fn open_db() -> Option<Connection> {
     let path = db_path()?;
-    if let Some(dir) = path.parent() {
-        if let Err(err) = std::fs::create_dir_all(dir) {
-            tracing::error!(?err, ?dir, "failed to create config directory");
-            return None;
-        }
+    if let Some(dir) = path.parent()
+        && let Err(err) = std::fs::create_dir_all(dir)
+    {
+        tracing::error!(?err, ?dir, "failed to create config directory");
+        return None;
     }
     let conn = match Connection::open(&path) {
         Ok(c) => c,

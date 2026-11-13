@@ -725,14 +725,13 @@ impl State {
                     .is_some_and(|r| r.id == id)
                 {
                     self.finish_pick(PickResult::Failed);
-                } else if let Some(i) = self.panels.picker.queue.iter().position(|r| r.id == id) {
-                    if let Some(PickRequest {
+                } else if let Some(i) = self.panels.picker.queue.iter().position(|r| r.id == id)
+                    && let Some(PickRequest {
                         reply: PickReply::Portal(tx),
                         ..
                     }) = self.panels.picker.queue.remove(i)
-                    {
-                        let _ = tx.send(PickResult::Failed);
-                    }
+                {
+                    let _ = tx.send(PickResult::Failed);
                 }
             }
         }
@@ -953,11 +952,11 @@ impl State {
         if p.save_mode() {
             let name = p.name.trim().to_string();
             if name.is_empty() {
-                if let [i] = p.selected[..] {
-                    if p.entries[i].is_dir {
-                        let path = p.path_of(i);
-                        p.enter(path);
-                    }
+                if let [i] = p.selected[..]
+                    && p.entries[i].is_dir
+                {
+                    let path = p.path_of(i);
+                    p.enter(path);
                 }
                 return;
             }
