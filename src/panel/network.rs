@@ -12,8 +12,8 @@ use smithay::{
 };
 
 use super::{
-    BTN_H, BUTTON, BUTTON_HOT, ENV_ROW_H, EnvRow, FIELD_H, Field, NOTE_H, PAD, PanelHit, PanelId,
-    Rect, RowList, SEPARATOR, bufs, field_char_at, render_field, sudo::SudoJob,
+    BTN_H, ENV_ROW_H, EnvRow, FIELD_H, Field, NOTE_H, PAD, PanelHit, PanelId, Rect, RowList,
+    SEPARATOR, bufs, button_color, field_char_at, render_field, sudo::SudoJob,
 };
 use crate::{
     network,
@@ -346,9 +346,13 @@ impl super::Panels {
         elems: &mut Vec<CustomElement>,
     ) {
         let l = self.net_layout();
-        self.net
-            .status
-            .render(l.status, &mut self.network.solids, text, renderer, elems);
+        self.net.status.render(
+            l.status,
+            &mut self.windows[PanelId::Network as usize].solids,
+            text,
+            renderer,
+            elems,
+        );
 
         // Buffers: 3 per field (address, gateway, DNS), separator, Apply,
         // Refresh.
@@ -422,13 +426,7 @@ impl super::Panels {
 
         elems.extend(ui::text_centered(text, renderer, "Apply", l.apply));
         elems.extend(ui::text_centered(text, renderer, "Refresh", l.refresh));
-        let button = |hit: PanelHit| {
-            if hovered == Some(hit) {
-                BUTTON_HOT
-            } else {
-                BUTTON
-            }
-        };
+        let button = |hit| button_color(hovered, hit);
         elems.push(ui::solid(&mut s[9], l.separator, SEPARATOR));
         elems.push(ui::solid(&mut s[10], l.apply, button(PanelHit::NetApply)));
         elems.push(ui::solid(

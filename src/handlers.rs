@@ -225,7 +225,7 @@ impl XdgShellHandler for State {
             .and_then(|c| c.get_credentials(&self.display_handle).ok())
             .map(|c| c.pid);
         let name = pid
-            .and_then(crate::ui::process_name)
+            .and_then(crate::ui::process_comm)
             .or_else(|| {
                 with_states(surface.wl_surface(), |states| {
                     states

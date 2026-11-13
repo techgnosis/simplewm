@@ -159,26 +159,10 @@ impl State {
         let socket_name = Self::init_wayland_listener(display, event_loop);
         tracing::info!(?socket_name, "listening on wayland socket");
 
-        let (screenshot_tx, screenshot_rx) = channel::channel::<SaveResult>();
-        event_loop
-            .handle()
-            .insert_source(screenshot_rx, |event, _, state| {
-                if let channel::Event::Msg(result) = event {
-                    state.screenshot_saved(result);
-                }
-            })
-            .expect("failed to init screenshot channel");
+        let screenshot_tx = report_to(event_loop, State::screenshot_saved);
 
         // The services' threads report back here.
-        let (service_tx, service_rx) = channel::channel::<ServiceEvent>();
-        event_loop
-            .handle()
-            .insert_source(service_rx, |event, _, state| {
-                if let channel::Event::Msg(ev) = event {
-                    state.service_event(ev);
-                }
-            })
-            .expect("failed to init services channel");
+        let service_tx = report_to(event_loop, State::service_event);
         let service_tx = Mutex::new(service_tx);
         let services = Services::new(
             Arc::new(move |ev| {
@@ -191,42 +175,18 @@ impl State {
 
         // The Password window's sudo workers report back here.
         let mut panels = Panels::new(services);
-        let (sudo_tx, sudo_rx) = channel::channel::<crate::panel::SudoDone>();
-        event_loop
-            .handle()
-            .insert_source(sudo_rx, |event, _, state| {
-                if let channel::Event::Msg(done) = event
-                    && state.panels.sudo_done(done)
-                    && state.panels.active.is_none()
-                {
-                    state.focus_top();
-                }
-            })
-            .expect("failed to init sudo channel");
-        panels.sudo.tx = Some(sudo_tx);
+        panels.sudo.tx = Some(report_to(event_loop, |state, done| {
+            if state.panels.sudo_done(done) && state.panels.active.is_none() {
+                state.focus_top();
+            }
+        }));
 
         // File chooser requests to simplewm's desktop portal (answered by the File Picker).
         // Nested, the host session's portal keeps the bus name. On a TTY the portal starts
         // once the session bus is up (see `ensure_portal`).
-        let (portal_tx, portal_rx) = channel::channel::<PortalEvent>();
-        event_loop
-            .handle()
-            .insert_source(portal_rx, |event, _, state| {
-                if let channel::Event::Msg(event) = event {
-                    state.portal_event(event);
-                }
-            })
-            .expect("failed to init portal channel");
-
-        let (portal_check_tx, portal_check_rx) = channel::channel::<Vec<EnvRow>>();
-        event_loop
-            .handle()
-            .insert_source(portal_check_rx, |event, _, state| {
-                if let channel::Event::Msg(rows) = event {
-                    state.panels.set_portal_rows(rows);
-                }
-            })
-            .expect("failed to init portal check channel");
+        let portal_tx = report_to(event_loop, State::portal_event);
+        let portal_check_tx =
+            report_to(event_loop, |state, rows| state.panels.set_portal_rows(rows));
 
         let mut state = Self {
             start_time,
@@ -341,6 +301,14 @@ impl State {
             .unwrap_or_else(|| Rectangle::from_size((1280, 800).into()))
     }
 
+    /// The part of the output below the bar, where windows go.
+    pub fn usable_area(&self) -> Rectangle<i32, Logical> {
+        let mut area = self.output_geometry();
+        area.loc.y += ui::BAR_HEIGHT;
+        area.size.h -= ui::BAR_HEIGHT;
+        area
+    }
+
     /// Returns the window owning the given toplevel wl_surface.
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<Window> {
         self.space
@@ -423,6 +391,13 @@ impl State {
         }
     }
 
+    /// Open a panel and give it focus.
+    pub fn show_panel(&mut self, id: PanelId) {
+        let out = self.output_geometry();
+        self.panels.show(id, out);
+        self.focus_panel(id);
+    }
+
     /// Give a panel focus: raise it and take keyboard focus away from client
     /// windows.
     pub fn focus_panel(&mut self, id: PanelId) {
@@ -500,13 +475,31 @@ impl State {
     pub fn initial_window_location(&mut self) -> Point<i32, Logical> {
         let n = (self.windows_opened % 10) as i32;
         self.windows_opened += 1;
-        let out = self.output_geometry();
+        let area = self.usable_area();
         (
-            out.loc.x + 60 + 32 * n,
-            out.loc.y + ui::BAR_HEIGHT + ui::TITLE_HEIGHT + 30 + 32 * n,
+            area.loc.x + 60 + 32 * n,
+            area.loc.y + ui::TITLE_HEIGHT + 30 + 32 * n,
         )
             .into()
     }
+}
+
+/// A channel that worker threads report back on: each message reaches `handle` on
+/// the event loop.
+fn report_to<T: 'static>(
+    event_loop: &EventLoop<'static, State>,
+    mut handle: impl FnMut(&mut State, T) + 'static,
+) -> Sender<T> {
+    let (tx, rx) = channel::channel::<T>();
+    event_loop
+        .handle()
+        .insert_source(rx, move |event, _, state| {
+            if let channel::Event::Msg(msg) = event {
+                handle(state, msg);
+            }
+        })
+        .expect("failed to add a channel to the event loop");
+    tx
 }
 
 /// One entry in the stacking order: a client window or a panel.

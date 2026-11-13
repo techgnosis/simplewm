@@ -43,6 +43,14 @@ fn repeats(sym: u32) -> bool {
     )
 }
 
+/// How far a scroll event moves along `axis`, in pixels. Wheels that only report
+/// steps (120 per notch) count 15 per notch.
+fn scroll_amount<I: InputBackend>(event: &I::PointerAxisEvent, axis: Axis) -> f64 {
+    event
+        .amount(axis)
+        .unwrap_or_else(|| event.amount_v120(axis).unwrap_or(0.0) * 15.0 / 120.0)
+}
+
 #[derive(Clone, Copy)]
 enum KeyAction {
     Panel(u32, Option<char>, bool),
@@ -73,9 +81,7 @@ impl State {
     /// Password window), or move focus on if it closed itself.
     fn after_panel_action(&mut self) {
         if let Some(id) = self.panels.take_open_request() {
-            let out = self.output_geometry();
-            self.panels.show(id, out);
-            self.focus_panel(id);
+            self.show_panel(id);
         } else if self.panels.active.is_none() {
             self.focus_top();
         }
@@ -242,9 +248,7 @@ impl State {
                     _,
                 ) = self.hit_test(self.pointer_location)
                 {
-                    let amount = event.amount(Axis::Vertical).unwrap_or_else(|| {
-                        event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0
-                    });
+                    let amount = scroll_amount::<I>(&event, Axis::Vertical);
                     if id == PanelId::FilePicker {
                         // A wheel notch (15) moves three rows; touchpads scroll by pixels.
                         let scale = if event.source() == AxisSource::Wheel {
@@ -259,12 +263,8 @@ impl State {
                     return;
                 }
                 let source = event.source();
-                let h_amount = event.amount(Axis::Horizontal).unwrap_or_else(|| {
-                    event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.0
-                });
-                let v_amount = event.amount(Axis::Vertical).unwrap_or_else(|| {
-                    event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0
-                });
+                let h_amount = scroll_amount::<I>(&event, Axis::Horizontal);
+                let v_amount = scroll_amount::<I>(&event, Axis::Vertical);
                 let mut frame = AxisFrame::new(event.time_msec()).source(source);
                 if h_amount != 0.0 {
                     frame = frame.value(Axis::Horizontal, h_amount);
@@ -304,10 +304,9 @@ impl State {
         self.pointer_location = pos;
 
         let pointer = self.seat.get_pointer().unwrap();
-        let focus = match self.hit_test(pos) {
-            Hit::Content(_, surface, loc) if self.ui.shot.is_none() => Some((surface, loc)),
-            _ => None,
-        };
+        let focus = self
+            .content_under(pos)
+            .map(|(_, surface, loc)| (surface, loc));
         if focus.is_none() && !pointer.is_grabbed() {
             self.cursor_status = CursorImageStatus::default_named();
         }
@@ -462,27 +461,8 @@ impl State {
                         self.focus_top();
                     }
                     PanelHit::Applet(i) => {
-                        if let Some((_, applet)) = APPLETS.get(i) {
-                            if *applet == PanelId::Environment {
-                                let rows = self.environment_rows();
-                                self.panels.set_environment(rows);
-                            }
-                            if *applet == PanelId::Portal {
-                                self.refresh_portal_check();
-                            }
-                            if *applet == PanelId::Network {
-                                self.panels.refresh_network();
-                            }
-                            if *applet == PanelId::Sound {
-                                self.panels.services.refresh();
-                                self.panels.refresh_sound();
-                            }
-                            if *applet == PanelId::Bus {
-                                self.panels.services.refresh();
-                            }
-                            let out = self.output_geometry();
-                            self.panels.show(*applet, out);
-                            self.focus_panel(*applet);
+                        if let Some(&applet) = APPLETS.get(i) {
+                            self.open_applet(applet);
                         }
                     }
                     PanelHit::Quit => {
@@ -561,16 +541,40 @@ impl State {
         }
     }
 
+    /// Open an applet's window, refreshing the live state it shows.
+    fn open_applet(&mut self, applet: PanelId) {
+        match applet {
+            PanelId::Environment => {
+                let rows = self.environment_rows();
+                self.panels.set_environment(rows);
+            }
+            PanelId::Portal => self.refresh_portal_check(),
+            PanelId::Network => self.panels.refresh_network(),
+            PanelId::Sound => {
+                self.panels.services.refresh();
+                self.panels.refresh_sound();
+            }
+            PanelId::Bus => self.panels.services.refresh(),
+            _ => {}
+        }
+        self.show_panel(applet);
+    }
+
+    /// Where a grab started by `button` begins.
+    fn grab_start(&self, button: u32) -> GrabStartData<State> {
+        GrabStartData {
+            focus: None,
+            button,
+            location: self.pointer_location,
+        }
+    }
+
     fn start_move(&mut self, window: Window, button: u32, serial: Serial) {
         let Some(initial_loc) = self.space.element_location(&window) else {
             return;
         };
         let pointer = self.seat.get_pointer().unwrap();
-        let start_data = GrabStartData {
-            focus: None,
-            button,
-            location: self.pointer_location,
-        };
+        let start_data = self.grab_start(button);
         let grab = MoveGrab {
             start_data,
             window,
@@ -581,11 +585,7 @@ impl State {
 
     fn start_resize(&mut self, window: Window, edges: Edges, button: u32, serial: Serial) {
         let pointer = self.seat.get_pointer().unwrap();
-        let start_data = GrabStartData {
-            focus: None,
-            button,
-            location: self.pointer_location,
-        };
+        let start_data = self.grab_start(button);
         let grab = ResizeGrab::start(self, start_data, window, edges);
         pointer.set_grab(self, grab, serial, Focus::Clear);
     }
@@ -595,11 +595,7 @@ impl State {
             return;
         };
         let pointer = self.seat.get_pointer().unwrap();
-        let start_data = GrabStartData {
-            focus: None,
-            button,
-            location: self.pointer_location,
-        };
+        let start_data = self.grab_start(button);
         pointer.set_grab(
             self,
             PanelMoveGrab {
@@ -613,14 +609,11 @@ impl State {
     }
 
     fn bar_button(&mut self, b: BarButton) {
-        let out = self.output_geometry();
         match b {
-            BarButton::ControlPanel => {
-                self.panels.show(PanelId::ControlPanel, out);
-                self.focus_panel(PanelId::ControlPanel);
-            }
+            BarButton::ControlPanel => self.show_panel(PanelId::ControlPanel),
             BarButton::Screenshot => self.start_screenshot(),
             BarButton::Launcher => {
+                let out = self.output_geometry();
                 let Some((_, rect)) = bar_buttons(&self.ui.text, out)
                     .into_iter()
                     .find(|(x, _)| *x == b)
@@ -652,12 +645,10 @@ impl State {
         let Some(content) = self.space.element_geometry(window) else {
             return;
         };
-        let out = self.output_geometry();
+        let area = self.usable_area();
         let frame = ui::frame_rect(content);
-        let area_top = out.loc.y + ui::BAR_HEIGHT;
-        let area_h = out.size.h - ui::BAR_HEIGHT;
-        let x = (out.loc.x + (out.size.w - frame.size.w) / 2).max(out.loc.x);
-        let y = (area_top + (area_h - frame.size.h) / 2).max(area_top);
+        let x = (area.loc.x + (area.size.w - frame.size.w) / 2).max(area.loc.x);
+        let y = (area.loc.y + (area.size.h - frame.size.h) / 2).max(area.loc.y);
         let loc = content.loc + (Point::from((x, y)) - frame.loc);
         self.focus_window(Some(window));
         self.space.map_element(window.clone(), loc, false);
@@ -672,16 +663,10 @@ impl State {
             return;
         };
 
-        // Usable area below the top bar, split at the middle in each direction.
-        let out = self.output_geometry();
-        let area_x = [
-            out.loc.x,
-            out.loc.x + out.size.w / 2,
-            out.loc.x + out.size.w,
-        ];
-        let area_top = out.loc.y + ui::BAR_HEIGHT;
-        let area_h = out.size.h - ui::BAR_HEIGHT;
-        let area_y = [area_top, area_top + area_h / 2, area_top + area_h];
+        // The area below the bar, split at the middle in each direction.
+        let a = self.usable_area();
+        let area_x = [a.loc.x, a.loc.x + a.size.w / 2, a.loc.x + a.size.w];
+        let area_y = [a.loc.y, a.loc.y + a.size.h / 2, a.loc.y + a.size.h];
 
         // Region covers the whole frame; shrink it to the client content.
         let b = ui::BORDER;

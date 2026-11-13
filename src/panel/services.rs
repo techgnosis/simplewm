@@ -8,7 +8,7 @@ use smithay::{
 };
 
 use super::{
-    BTN_H, BUTTON, BUTTON_HOT, HEADER_H, PAD, PanelHit, PanelId, Rect, SEPARATOR, bufs,
+    BTN_H, HEADER_H, PAD, PanelHit, PanelId, Rect, SEPARATOR, bufs, button_color,
     rows::{EnvRow, RowList},
 };
 use crate::{
@@ -132,13 +132,7 @@ impl super::Panels {
             row.status,
             0.8,
         ));
-        let color = |hit: PanelHit| {
-            if hovered == Some(hit) {
-                BUTTON_HOT
-            } else {
-                BUTTON
-            }
-        };
+        let color = |hit| button_color(hovered, hit);
         if let Some(start) = services.can_start(s) {
             let label = if start { "Start" } else { "Stop" };
             elems.extend(ui::text_centered(text, renderer, label, row.toggle));
@@ -171,7 +165,7 @@ impl super::Panels {
     pub fn service_event(&mut self, ev: ServiceEvent) {
         let s = ev.service;
         let changed = self.services.handle(ev);
-        if self.log_service == Some(s) && self.log_window.open {
+        if self.log_service == Some(s) && self.is_open(PanelId::Log) {
             self.fill_log();
         }
         if changed {
@@ -181,7 +175,7 @@ impl super::Panels {
 
     /// Refresh what depends on service `s`: the Sound applet's cards and volume.
     fn after_service_change(&mut self, s: Service) {
-        if s != Service::Bus && self.sound_window.open {
+        if s != Service::Bus && self.is_open(PanelId::Sound) {
             self.refresh_sound();
         }
     }
@@ -209,7 +203,7 @@ impl super::Panels {
     ) {
         let l = bus_layout(self.content_rect(PanelId::Bus));
         // Buffers: Start/Stop, Log, separator.
-        let solids = bufs(&mut self.bus.solids, 3);
+        let solids = bufs(&mut self.windows[PanelId::Bus as usize].solids, 3);
         elems.extend(ui::text_in(
             text,
             renderer,
@@ -286,7 +280,12 @@ impl super::Panels {
         elems: &mut Vec<CustomElement>,
     ) {
         let vp = self.log_viewport();
-        self.log_rows
-            .render(vp, &mut self.log_window.solids, text, renderer, elems);
+        self.log_rows.render(
+            vp,
+            &mut self.windows[PanelId::Log as usize].solids,
+            text,
+            renderer,
+            elems,
+        );
     }
 }

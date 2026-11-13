@@ -66,7 +66,7 @@ pub use picker::{FilePicker, PickHit};
 pub use rows::EnvRow;
 pub use sound::SoundApplet;
 pub use store::store_path;
-pub use sudo::{SudoDone, SudoPrompt};
+pub use sudo::SudoPrompt;
 
 use rows::{ENV_H, ENV_ROW_H, ENV_W, PORTAL_H, PORTAL_W, RowList};
 use services::{LOG_WIN_H, LOG_WIN_W};
@@ -74,6 +74,7 @@ use text_field::{field_char_at, render_field};
 
 pub const DEFAULT_LAUNCHER_ENTRY: &str = "/usr/bin/alacritty";
 
+/// simplewm's own windows. The order is `PanelId::ALL`'s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum PanelId {
     ControlPanel,
@@ -91,6 +92,22 @@ pub enum PanelId {
 }
 
 impl PanelId {
+    /// Every window, in `Panels::windows` order.
+    const ALL: [PanelId; 12] = [
+        PanelId::ControlPanel,
+        PanelId::Launcher,
+        PanelId::Environment,
+        PanelId::Screenshot,
+        PanelId::Help,
+        PanelId::Portal,
+        PanelId::Network,
+        PanelId::Sound,
+        PanelId::Bus,
+        PanelId::FilePicker,
+        PanelId::Password,
+        PanelId::Log,
+    ];
+
     pub fn title(self) -> &'static str {
         match self {
             PanelId::ControlPanel => "Control Panel",
@@ -109,16 +126,16 @@ impl PanelId {
     }
 }
 
-/// Applets shown as icons in the Control Panel: (name, window it opens).
-pub const APPLETS: [(&str, PanelId); 8] = [
-    ("Launcher", PanelId::Launcher),
-    ("Environment", PanelId::Environment),
-    ("Screenshot", PanelId::Screenshot),
-    ("Desktop Portal", PanelId::Portal),
-    ("Network", PanelId::Network),
-    ("Sound", PanelId::Sound),
-    ("D-Bus", PanelId::Bus),
-    ("Help", PanelId::Help),
+/// Applets shown as icons in the Control Panel, labeled with their titles.
+pub const APPLETS: [PanelId; 8] = [
+    PanelId::Launcher,
+    PanelId::Environment,
+    PanelId::Screenshot,
+    PanelId::Portal,
+    PanelId::Network,
+    PanelId::Sound,
+    PanelId::Bus,
+    PanelId::Help,
 ];
 
 /// An editable text field in one of the panels.
@@ -217,18 +234,23 @@ pub enum PanelHit {
 
 type Rect = Rectangle<i32, Logical>;
 
-fn new_buf() -> SolidColorBuffer {
-    SolidColorBuffer::new((0, 0), [0.0; 4])
-}
-
 fn buf(slot: &mut Option<SolidColorBuffer>) -> &mut SolidColorBuffer {
-    slot.get_or_insert_with(new_buf)
+    slot.get_or_insert_with(ui::solid_buffer)
 }
 
 /// Grow/shrink a list of buffers to `n`.
 fn bufs(v: &mut Vec<SolidColorBuffer>, n: usize) -> &mut Vec<SolidColorBuffer> {
-    v.resize_with(n, new_buf);
+    v.resize_with(n, ui::solid_buffer);
     v
+}
+
+/// A button's color: lighter while `hit` is hovered.
+fn button_color(hovered: Option<PanelHit>, hit: PanelHit) -> [f32; 4] {
+    if hovered == Some(hit) {
+        BUTTON_HOT
+    } else {
+        BUTTON
+    }
 }
 
 #[derive(Default)]
@@ -253,18 +275,8 @@ pub struct PanelWindow {
 }
 
 pub struct Panels {
-    control: PanelWindow,
-    launcher: PanelWindow,
-    environment: PanelWindow,
-    screenshot: PanelWindow,
-    help: PanelWindow,
-    portal: PanelWindow,
-    network: PanelWindow,
-    sound_window: PanelWindow,
-    bus: PanelWindow,
-    file_picker: PanelWindow,
-    password: PanelWindow,
-    log_window: PanelWindow,
+    /// Each window's state, in `PanelId::ALL` order (see `win`).
+    windows: [PanelWindow; PanelId::ALL.len()],
     pub picker: FilePicker,
     pub sudo: SudoPrompt,
     /// A panel that asked to be opened and focused (see `take_open_request`).
@@ -301,18 +313,7 @@ impl Panels {
         let entries = store.entries().to_vec();
         let shot_dir = store.setting(screenshot::SHOT_DIR_KEY).unwrap_or_default();
         let mut panels = Self {
-            control: PanelWindow::default(),
-            launcher: PanelWindow::default(),
-            environment: PanelWindow::default(),
-            screenshot: PanelWindow::default(),
-            help: PanelWindow::default(),
-            portal: PanelWindow::default(),
-            network: PanelWindow::default(),
-            sound_window: PanelWindow::default(),
-            bus: PanelWindow::default(),
-            file_picker: PanelWindow::default(),
-            password: PanelWindow::default(),
-            log_window: PanelWindow::default(),
+            windows: Default::default(),
             picker: FilePicker::default(),
             sudo: SudoPrompt::default(),
             open_request: None,
@@ -337,37 +338,11 @@ impl Panels {
     }
 
     fn win(&self, id: PanelId) -> &PanelWindow {
-        match id {
-            PanelId::ControlPanel => &self.control,
-            PanelId::Launcher => &self.launcher,
-            PanelId::Environment => &self.environment,
-            PanelId::Screenshot => &self.screenshot,
-            PanelId::Help => &self.help,
-            PanelId::Portal => &self.portal,
-            PanelId::Network => &self.network,
-            PanelId::Sound => &self.sound_window,
-            PanelId::Bus => &self.bus,
-            PanelId::FilePicker => &self.file_picker,
-            PanelId::Password => &self.password,
-            PanelId::Log => &self.log_window,
-        }
+        &self.windows[id as usize]
     }
 
     fn win_mut(&mut self, id: PanelId) -> &mut PanelWindow {
-        match id {
-            PanelId::ControlPanel => &mut self.control,
-            PanelId::Launcher => &mut self.launcher,
-            PanelId::Environment => &mut self.environment,
-            PanelId::Screenshot => &mut self.screenshot,
-            PanelId::Help => &mut self.help,
-            PanelId::Portal => &mut self.portal,
-            PanelId::Network => &mut self.network,
-            PanelId::Sound => &mut self.sound_window,
-            PanelId::Bus => &mut self.bus,
-            PanelId::FilePicker => &mut self.file_picker,
-            PanelId::Password => &mut self.password,
-            PanelId::Log => &mut self.log_window,
-        }
+        &mut self.windows[id as usize]
     }
 
     pub fn is_open(&self, id: PanelId) -> bool {
@@ -432,7 +407,7 @@ impl Panels {
         if self.win(id).loc.is_none() {
             let (w, h) = self.content_size(id);
             let min_y = out.loc.y + ui::BAR_HEIGHT + ui::TITLE_HEIGHT;
-            let loc = match (id, self.control.loc) {
+            let loc = match (id, self.loc(PanelId::ControlPanel)) {
                 (PanelId::ControlPanel | PanelId::FilePicker | PanelId::Password, _)
                 | (_, None) => Point::from((
                     out.loc.x + (out.size.w - w) / 2,
@@ -547,5 +522,17 @@ impl Panels {
         elems.push(ui::solid(buf(&mut fb.left), f.left, title_color));
         elems.push(ui::solid(buf(&mut fb.right), f.right, title_color));
         elems.push(ui::solid(buf(&mut fb.bottom), f.bottom, title_color));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn all_lists_every_window_in_order() {
+        for (i, id) in PanelId::ALL.into_iter().enumerate() {
+            assert_eq!(id as usize, i, "{id:?}");
+        }
     }
 }

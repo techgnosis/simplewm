@@ -15,8 +15,8 @@ use smithay::{
 };
 
 use super::{
-    BTN_H, BUTTON, BUTTON_HOT, FIELD_H, Field, HEADER_H, NOTE_H, PAD, PanelHit, PanelId, Rect,
-    bufs, field_char_at, render_field,
+    BTN_H, FIELD_H, Field, HEADER_H, NOTE_H, PAD, PanelHit, PanelId, Rect, bufs, button_color,
+    field_char_at, render_field,
 };
 use crate::{
     network::{self, ApplyError, Ipv4Config},
@@ -280,13 +280,7 @@ impl super::Panels {
         elems.extend(ui::text_centered(text, renderer, "Cancel", l.cancel));
         elems.extend(ui::text_centered(text, renderer, "OK", l.ok));
         let busy = s.busy;
-        let button = |hit: PanelHit| {
-            if hovered == Some(hit) && !busy {
-                BUTTON_HOT
-            } else {
-                BUTTON
-            }
-        };
+        let button = |hit| button_color(hovered.filter(|_| !busy), hit);
         elems.push(ui::solid(
             &mut solids[3],
             l.cancel,

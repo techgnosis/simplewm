@@ -699,7 +699,7 @@ impl super::Panels {
         let editing = self.editing == Some(Field::PickName);
         self.picker.render(
             c,
-            &mut self.file_picker.solids,
+            &mut self.windows[PanelId::FilePicker as usize].solids,
             editing,
             self.cursor,
             text,
@@ -833,9 +833,7 @@ impl State {
         let save = req.save;
         self.panels.picker.begin(req);
         self.panels.forget_loc(PanelId::FilePicker);
-        let out = self.output_geometry();
-        self.panels.show(PanelId::FilePicker, out);
-        self.focus_panel(PanelId::FilePicker);
+        self.show_panel(PanelId::FilePicker);
         if save {
             let end = self.panels.picker.name.chars().count();
             // Put the caret before the extension, like other file dialogs.

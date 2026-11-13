@@ -67,9 +67,7 @@ impl State {
     /// Bar button: enter selection mode, or ask for a folder first.
     pub fn start_screenshot(&mut self) {
         if self.panels.screenshot_dir().is_none() {
-            let out = self.output_geometry();
-            self.panels.show(PanelId::Screenshot, out);
-            self.focus_panel(PanelId::Screenshot);
+            self.show_panel(PanelId::Screenshot);
             self.ui.show_toast("Choose a folder for screenshots first");
             return;
         }

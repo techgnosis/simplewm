@@ -10,8 +10,8 @@ use smithay::{
 };
 
 use super::{
-    BTN_H, BUTTON, BUTTON_HOT, FIELD_BG, FIELD_H, FIELD_TEXT_PAD, HEADER_H, PAD, PanelHit, PanelId,
-    Rect, bufs,
+    BTN_H, FIELD_BG, FIELD_H, FIELD_TEXT_PAD, HEADER_H, PAD, PanelHit, PanelId, Rect, bufs,
+    button_color,
 };
 use crate::{
     text::TextRenderer,
@@ -144,7 +144,10 @@ impl super::Panels {
         let l = self.launcher_layout();
         let n = self.entries.len();
         // Buffers: [path, change, remove] per entry, then add.
-        let s = bufs(&mut self.launcher.solids, 3 * n + 1);
+        let s = bufs(
+            &mut self.windows[PanelId::Launcher as usize].solids,
+            3 * n + 1,
+        );
 
         elems.extend(ui::text_in(
             text,
@@ -162,13 +165,7 @@ impl super::Panels {
         }
         elems.extend(ui::text_centered(text, renderer, "Add…", l.add));
 
-        let button = |hit: PanelHit| {
-            if hovered == Some(hit) {
-                BUTTON_HOT
-            } else {
-                BUTTON
-            }
-        };
+        let button = |hit| button_color(hovered, hit);
         for (i, row) in l.rows.iter().enumerate() {
             elems.push(ui::solid(&mut s[3 * i], row.path, FIELD_BG));
             elems.push(ui::solid(

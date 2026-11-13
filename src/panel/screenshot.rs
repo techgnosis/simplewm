@@ -9,8 +9,8 @@ use smithay::{
 };
 
 use super::{
-    BUTTON, BUTTON_HOT, FIELD_BG, FIELD_H, FIELD_TEXT_PAD, HEADER_H, NOTE_H, PAD, PanelHit,
-    PanelId, Rect, bufs,
+    FIELD_BG, FIELD_H, FIELD_TEXT_PAD, HEADER_H, NOTE_H, PAD, PanelHit, PanelId, Rect, bufs,
+    button_color,
 };
 use crate::{
     text::TextRenderer,
@@ -100,7 +100,7 @@ impl super::Panels {
     ) {
         let l = self.screenshot_layout();
         // Buffers: path box, Choose button.
-        let s = bufs(&mut self.screenshot.solids, 2);
+        let s = bufs(&mut self.windows[PanelId::Screenshot as usize].solids, 2);
 
         elems.extend(ui::text_in(
             text,
@@ -136,11 +136,7 @@ impl super::Panels {
         ));
 
         elems.push(ui::solid(&mut s[0], l.path, FIELD_BG));
-        let cc = if hovered == Some(PanelHit::ChooseShotDir) {
-            BUTTON_HOT
-        } else {
-            BUTTON
-        };
+        let cc = button_color(hovered, PanelHit::ChooseShotDir);
         elems.push(ui::solid(&mut s[1], l.choose, cc));
     }
 }

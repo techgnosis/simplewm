@@ -8,8 +8,8 @@ use smithay::{
 };
 
 use super::{
-    BTN_H, BUTTON, BUTTON_HOT, CELL_HOT, FIELD_BG, HEADER_H, NOTE_H, PAD, PanelHit, PanelId, Rect,
-    SEPARATOR, bufs,
+    BTN_H, BUTTON, CELL_HOT, FIELD_BG, HEADER_H, NOTE_H, PAD, PanelHit, PanelId, Rect, SEPARATOR,
+    bufs, button_color,
     services::{SERVICE_ROW_H, ServiceRow, service_row},
 };
 use crate::{
@@ -356,13 +356,7 @@ impl super::Panels {
             elems.extend(ui::text_centered(text, renderer, &percent, l.percent));
             elems.extend(ui::text_centered(text, renderer, "−", l.down));
             elems.extend(ui::text_centered(text, renderer, "+", l.up));
-            let button = |hit: PanelHit| {
-                if hovered == Some(hit) {
-                    BUTTON_HOT
-                } else {
-                    BUTTON
-                }
-            };
+            let button = |hit| button_color(hovered, hit);
             elems.push(ui::solid(
                 &mut solids[n + 1],
                 l.down,

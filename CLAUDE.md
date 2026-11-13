@@ -257,14 +257,15 @@ Drawing rules:
 - Keep each panel's `SolidColorBuffer`s from frame to frame with
   `bufs(&mut self.<window>.solids, n)`, and comment what each slot holds. The damage
   tracker tells elements apart by their buffer.
-- Colors are premultiplied RGBA. Hovered controls use the `*_HOT` colors.
+- Colors are premultiplied RGBA. Hovered controls use the `*_HOT` colors (`button_color`
+  for plain buttons).
 
 Adding an applet means touching all of these:
 
-- `PanelId` and its `title`, and `APPLETS`.
-- A `PanelWindow` field in `Panels`, in `new`, `win` and `win_mut`.
+- `PanelId`, its `title` (also the applet's label), `PanelId::ALL` (in the enum's
+  order; a test checks) and `APPLETS`. `Panels::windows` holds a `PanelWindow` per id.
 - The `content_size`, `hit` and `render` matches.
 - A glyph in `control::applet_glyph` (a test checks that it fits its tile).
-- New `PanelHit` variants and their actions in `input.rs`, plus a refresh when the applet
-  opens if it shows live state.
+- New `PanelHit` variants and their actions in `input.rs`, plus a refresh in
+  `State::open_applet` if it shows live state.
 - A new file under `panel/`.

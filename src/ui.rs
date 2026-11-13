@@ -113,7 +113,6 @@ render_elements! {
 // ---------------------------------------------------------------------------
 
 pub struct Frame {
-    #[allow(dead_code)]
     pub content: Rectangle<i32, Logical>,
     /// Visible frame (title bar + borders + content)
     pub frame: Rectangle<i32, Logical>,
@@ -302,8 +301,9 @@ pub fn window_tag(window: &Window) -> Option<&WindowTag> {
     window.user_data().get::<WindowTag>()
 }
 
-/// Name of the program behind `pid`, from `/proc/<pid>/comm`.
-pub fn process_name(pid: i32) -> Option<String> {
+/// Short name of the program behind `pid`, from `/proc/<pid>/comm` (see also
+/// `services::process_name`, the full program path).
+pub fn process_comm(pid: i32) -> Option<String> {
     let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
     let comm = comm.trim();
     (!comm.is_empty()).then(|| comm.to_string())
@@ -353,16 +353,6 @@ pub const SIZE_OPTIONS: [(&str, [i32; 4]); 7] = [
     ("Full screen", [0, 0, 2, 2]),
 ];
 
-const SIZE_LABELS: [&str; 7] = {
-    let mut labels = [""; 7];
-    let mut i = 0;
-    while i < 7 {
-        labels[i] = SIZE_OPTIONS[i].0;
-        i += 1;
-    }
-    labels
-};
-
 #[derive(Clone, PartialEq)]
 pub enum MenuKind {
     /// Executable paths from the Control Panel's Launcher section.
@@ -377,7 +367,7 @@ impl MenuKind {
                 vec!["Add apps in Control Panel".into()]
             }
             MenuKind::Launcher(paths) => paths.iter().map(|p| crate::panel::exe_name(p)).collect(),
-            MenuKind::Size(_) => SIZE_LABELS.iter().map(|s| s.to_string()).collect(),
+            MenuKind::Size(_) => SIZE_OPTIONS.iter().map(|(s, _)| s.to_string()).collect(),
         }
     }
 }
@@ -574,7 +564,7 @@ impl State {
 // Ui state + rendering
 // ---------------------------------------------------------------------------
 
-fn solid_buffer() -> SolidColorBuffer {
+pub fn solid_buffer() -> SolidColorBuffer {
     SolidColorBuffer::new((0, 0), [0.0; 4])
 }
 
@@ -587,6 +577,13 @@ struct DecoBuffers {
     size: SolidColorBuffer,
     /// The window's tab on the bar.
     tab: SolidColorBuffer,
+}
+
+/// The decoration buffers kept on `window` (made the first time).
+fn deco_buffers(window: &Window) -> std::cell::RefMut<'_, DecoBuffers> {
+    let data = window.user_data();
+    data.insert_if_missing(|| RefCell::new(DecoBuffers::default()));
+    data.get::<RefCell<DecoBuffers>>().unwrap().borrow_mut()
 }
 
 impl Default for DecoBuffers {
@@ -894,6 +891,8 @@ impl State {
                 Hit::Menu(Some(i)) => Some(i),
                 _ => None,
             };
+            // An empty Launcher menu shows a faded hint that can't be chosen.
+            let empty = matches!(&menu.kind, MenuKind::Launcher(p) if p.is_empty());
             if let MenuKind::Size(_) = menu.kind {
                 if let Some(i) = hl {
                     let label = SIZE_OPTIONS[i].0;
@@ -915,7 +914,6 @@ impl State {
                     elems.push(solid(&mut ui.icon_screens[i], screen, ICON_SCREEN));
                 }
             } else {
-                let empty = matches!(&menu.kind, MenuKind::Launcher(p) if p.is_empty());
                 let alpha = if empty { 0.5 } else { 1.0 };
                 for (i, label) in menu.kind.items().iter().enumerate() {
                     let r = menu.item_rect(i);
@@ -929,7 +927,6 @@ impl State {
                     ));
                 }
             }
-            let empty = matches!(&menu.kind, MenuKind::Launcher(p) if p.is_empty());
             if let Some(i) = hl.filter(|_| !empty) {
                 elems.push(solid(&mut ui.menu_hl, menu.item_rect(i), MENU_HL));
             }
@@ -973,16 +970,7 @@ impl State {
                 (false, true) => BAR_BUTTON_HOT,
                 (false, false) => BAR_BUTTON,
             };
-            tab.window
-                .user_data()
-                .insert_if_missing(|| RefCell::new(DecoBuffers::default()));
-            let mut deco = tab
-                .window
-                .user_data()
-                .get::<RefCell<DecoBuffers>>()
-                .unwrap()
-                .borrow_mut();
-            elems.push(solid(&mut deco.tab, tab.rect, color));
+            elems.push(solid(&mut deco_buffers(&tab.window).tab, tab.rect, color));
         }
         let ui = &mut self.ui;
         let bar = Rectangle::new(out.loc, (out.size.w, BAR_HEIGHT).into());
@@ -1040,14 +1028,7 @@ impl State {
             let close_hot = matches!(&hovered, Hit::Close(w) if *w == window);
             let size_hot = matches!(&hovered, Hit::SizeButton(w) if *w == window);
 
-            window
-                .user_data()
-                .insert_if_missing(|| RefCell::new(DecoBuffers::default()));
-            let mut deco = window
-                .user_data()
-                .get::<RefCell<DecoBuffers>>()
-                .unwrap()
-                .borrow_mut();
+            let mut deco = deco_buffers(&window);
             elems.push(solid(
                 &mut deco.close,
                 frame.close,

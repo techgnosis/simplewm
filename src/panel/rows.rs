@@ -8,8 +8,8 @@ use smithay::{
 };
 
 use super::{
-    BTN_H, BUTTON, BUTTON_HOT, PAD, PanelHit, PanelId, Rect, SCROLL_THUMB, SCROLL_TRACK,
-    SCROLLBAR_W, buf, bufs,
+    BTN_H, PAD, PanelHit, PanelId, Rect, SCROLL_THUMB, SCROLL_TRACK, SCROLLBAR_W, buf, bufs,
+    button_color,
 };
 use crate::{
     text::TextRenderer,
@@ -224,8 +224,13 @@ impl super::Panels {
         elems: &mut Vec<CustomElement>,
     ) {
         let vp = self.env_viewport();
-        self.env
-            .render(vp, &mut self.environment.solids, text, renderer, elems);
+        self.env.render(
+            vp,
+            &mut self.windows[PanelId::Environment as usize].solids,
+            text,
+            renderer,
+            elems,
+        );
     }
 
     pub(super) fn render_portal(
@@ -237,14 +242,15 @@ impl super::Panels {
     ) {
         let vp = self.portal_viewport();
         let refresh = self.portal_refresh();
-        self.portal_rows
-            .render(vp, &mut self.portal.solids, text, renderer, elems);
+        self.portal_rows.render(
+            vp,
+            &mut self.windows[PanelId::Portal as usize].solids,
+            text,
+            renderer,
+            elems,
+        );
         elems.extend(ui::text_centered(text, renderer, "Refresh", refresh));
-        let rc = if hovered == Some(PanelHit::Refresh) {
-            BUTTON_HOT
-        } else {
-            BUTTON
-        };
+        let rc = button_color(hovered, PanelHit::Refresh);
         elems.push(ui::solid(buf(&mut self.portal_refresh_buf), refresh, rc));
     }
 }

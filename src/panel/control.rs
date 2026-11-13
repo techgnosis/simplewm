@@ -219,10 +219,13 @@ impl super::Panels {
         let l = self.control_layout();
         // Per applet: cell highlight, tile, glyph rects. Then separator, quit.
         let per = 2 + GLYPH_MAX;
-        let s = bufs(&mut self.control.solids, APPLETS.len() * per + 2);
+        let s = bufs(
+            &mut self.windows[PanelId::ControlPanel as usize].solids,
+            APPLETS.len() * per + 2,
+        );
 
         let mut back: Vec<CustomElement> = Vec::new();
-        for (i, ((name, applet), cell)) in APPLETS.iter().zip(&l.cells).enumerate() {
+        for (i, (applet, cell)) in APPLETS.iter().zip(&l.cells).enumerate() {
             let b = &mut s[i * per..(i + 1) * per];
             let tile = Rectangle::new(
                 (cell.loc.x + (CELL_W - TILE) / 2, cell.loc.y + 8).into(),
@@ -232,7 +235,7 @@ impl super::Panels {
                 (cell.loc.x, tile.loc.y + TILE + 6).into(),
                 (CELL_W, 20).into(),
             );
-            elems.extend(ui::text_centered(text, renderer, name, label));
+            elems.extend(ui::text_centered(text, renderer, applet.title(), label));
             let (tile_color, glyph) = applet_glyph(*applet, tile);
             for (k, r) in glyph.into_iter().take(GLYPH_MAX).enumerate() {
                 elems.push(ui::solid(&mut b[2 + k], r, TILE_GLYPH));
@@ -279,7 +282,8 @@ mod tests {
     #[test]
     fn every_applet_glyph_fits_its_tile() {
         let tile = Rectangle::new((0, 0).into(), (TILE, TILE).into());
-        for (name, id) in APPLETS {
+        for id in APPLETS {
+            let name = id.title();
             let (_, rects) = applet_glyph(id, tile);
             assert!(!rects.is_empty(), "{name} has no glyph");
             assert!(rects.len() <= GLYPH_MAX, "{name} glyph has too many rects");
