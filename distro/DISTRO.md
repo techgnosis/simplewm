@@ -393,6 +393,20 @@ since there's no package manager.
     file was there), `pkcs11.conf.example`, `vdpau_wrapper.cfg` (Flash Player settings),
     `profile.d/README` and the disabled `color_prompt.sh.disabled`, the `aclocal` and
     `pkgconfig` build files, and `/var/log/apk.log`.
+  - Data only something else would read: udev's hardware database sources
+    (`/usr/lib/udev/hwdb.d`, 7.6 MB; the build compiles them into `/etc/udev/hwdb.bin`
+    first, which is all udevd reads; checked with `udevadm hwdb --test` in a chroot),
+    GObject introspection typelibs (`/usr/lib/girepository-1.0`, for Python and
+    JavaScript bindings, none installed), kbd's keyboard layouts, character maps and
+    console fonts (`keymaps`, `consoletrans`, `unimaps`, `consolefonts`; nothing runs
+    `loadkeys`, and the US layout is the kernel's default), X11's font encodings and the
+    X font tools `mkfontscale`/`mkfontdir` (only for X core fonts), AppStream metadata
+    (`metainfo`, for software centers), `paxrelabel.d` (grsecurity), and
+    `pipewire-launcher` (Alpine's script for starting PipeWire from OpenRC user services;
+    simplewm starts it).
+  - `font-terminus` isn't installed at all: the build unpacks the one console font
+    simplewm-init loads (`ter-132n.psf.gz`) from its package, like the kernel. The rest
+    was 238 more console fonts and Terminus fonts that apps would have listed.
 - `REMOVE_DIRS`: folders that should be empty (or hold only empty folders). If a package
   ever puts files in one, the build stops and lists them instead of deleting them. So
   far: `/media`, `/mnt`, `/opt`, `/srv`, `/usr/local`, `/etc/opt`, `/etc/alsa`,
@@ -405,7 +419,8 @@ hostname, hosts, inputrc, machine-id, modprobe.d, mtab, passwd, profile, profile
 protocols, pulse, services, shadow, shells, ssl, sudoers, sudoers.d, terminfo, udev. Kept
 on purpose: `modprobe.d` (driver blacklists matter on real hardware), `/lib/firmware`
 (the real machine's GPU needs firmware), `/var/tmp`, `/var/run` and `/var/lock` (programs
-expect them). sudo's first-use lecture is turned off (`Defaults lecture=never`).
+expect them). sudo's first-use lecture is turned off (`Defaults lecture=never`). The only setuid program left is
+`sudo` (the Network applet needs it).
 
 Checked after trimming, with a test image that writes a report: all services run, the
 sound card is found, simplewm's portal is on the session bus, Firefox starts, sudo works.

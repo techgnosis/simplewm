@@ -30,7 +30,6 @@ PACKAGES="
     musl-utils
     procps-ng
     kbd
-    font-terminus
     kmod
 
     eudev
@@ -102,6 +101,19 @@ REMOVE="
     /etc/profile.d/README
     /etc/profile.d/color_prompt.sh.disabled
     /etc/dbus-1/system.conf
+
+    /usr/lib/udev/hwdb.d
+    /usr/lib/girepository-1.0
+    /usr/libexec/pipewire-launcher
+    /usr/share/keymaps
+    /usr/share/consoletrans
+    /usr/share/unimaps
+    /usr/share/consolefonts
+    /usr/share/metainfo
+    /usr/share/fonts/encodings
+    /usr/bin/mkfontscale
+    /usr/bin/mkfontdir
+    /usr/share/paxrelabel.d
 
     /usr/share/dbus-1/system.conf
     /usr/share/dbus-1/system.d
@@ -239,6 +251,12 @@ echo "== trimming"
 for path in $REMOVE; do
     rm -rf "${ROOT:?}$path"
 done
+# The one console font simplewm-init loads, unpacked from font-terminus (the rest of
+# that package, 238 more console fonts and Terminus for apps, isn't wanted).
+apk fetch --quiet --output "$CACHE" font-terminus
+mkdir -p "$ROOT/usr/share/consolefonts"
+tar -xzf "$(ls -t "$CACHE"/font-terminus-*.apk | head -n 1)" -C "$ROOT" \
+    usr/share/consolefonts/ter-132n.psf.gz 2>/dev/null
 for dir in $REMOVE_DIRS; do
     [ -e "$ROOT$dir" ] || continue
     find "$ROOT$dir" -depth -type d -empty -delete
