@@ -159,7 +159,9 @@ type into. To check what a screenshot can't show, give the test copy a
 the background and writes a report ending with `sync` (new data otherwise waits up to 30 s
 to reach the disk); test copies are written to, so read the report afterwards with
 `debugfs -c -R "cat /home/user/check.log"` (`-c`: QEMU's `quit` leaves the filesystem
-unclean). `build.sh` empties `out/`, so keep test images elsewhere or remake them. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
+unclean). Copy test images on the host with `cp --sparse=always` (the image is a 16 GB
+sparse file; busybox's `cp` in the container can't keep it sparse). `build.sh` empties
+`out/`, so keep test images elsewhere or remake them. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
 
 ## Code map (`src/`)
 

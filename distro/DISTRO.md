@@ -370,6 +370,18 @@ to the render node of the GPU it opened.
 **Fixed: no sound with libudev-zero.** PipeWire found no sound cards; switching to eudev
 fixed it (see "eudev vs libudev-zero").
 
+**Development tools** are in the image, a group of their own in `PACKAGES`: Rust (Alpine's
+`rustup`, whose `rustup-init` installs the toolchain into the user's home as usual; it
+needs `curl`, `ca-certificates` and `git`), C (`build-base`: gcc, musl headers, make,
+binutils; Rust needs a C linker), Go (`go`), Python (`python3`, `py3-pip`), and GNU
+`grep` and `sed` (busybox's lack options people and LLMs use, like `grep -P`). That
+roughly 530 MB took the root filesystem from 753 to 1281 MB, most of it Go and gcc.
+`ca-certificates` also fills `/etc/ssl/certs`, which was empty: until then only Firefox
+(which carries its own) could check HTTPS certificates. The disk image is 16 GB (or twice what's
+installed, if more): rustup failed with "no space left" when it was sized at what's
+installed plus half. It's a sparse file, so only what the system writes takes room on the
+host (1.4 GB at the time).
+
 **A smaller filesystem.** The user wants as little in the filesystem as possible, to
 lighten the load on whoever looks around it. But it stays a normal userland a developer
 can work in (rustup and Rust, Go, Zed, alacritty, curl, pkg-config, the usual tools): only
@@ -421,9 +433,10 @@ since there's no package manager.
   far: `/media`, `/mnt`, `/opt`, `/srv`, `/usr/local`, `/etc/opt`, `/etc/alsa`,
   `/etc/udev/rules.d`, the `modules-load.d` and `sysctl.d` folders, and `/var/mail`,
   `/var/opt`, `/var/local`, `/var/db`, `/var/empty`, `/var/lib/misc`, `/var/lib/dbus`,
-  `/var/cache/misc`, `/var/lib/sudo/lectured`, `/usr/share/misc`,
+  `/var/cache/misc`, `/var/lib/sudo/lectured`,
   `/usr/share/dbus-1/session.d`, `/usr/lib/gio/modules`. (`make install` and the like
-  make `/usr/local` again when they need it.)
+  make `/usr/local` again when they need it.) `/usr/share/misc` was on the list until the
+  development tools brought libmagic's `magic.mgc` into it; the safety stop caught that.
 
 How to look for more, from the host: sizes (`du` over `usr/lib`, `usr/share`), empty
 folders, and links that point nowhere, checked from inside the root

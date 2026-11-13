@@ -22,7 +22,10 @@ cd /work/distro
 KERNEL=virt
 
 # What goes into the root filesystem. wayland-utils (wayland-info) is for checking what
-# simplewm offers apps.
+# simplewm offers apps. The last group is for development: Rust (rustup-init installs the
+# toolchain into the user's home; it needs curl, CA certificates and git, and a C
+# toolchain to link), C (build-base: gcc, musl headers, make, binutils), Go and Python,
+# plus GNU grep and sed (busybox's lack options people and LLMs use, like grep -P).
 PACKAGES="
     alpine-baselayout
     busybox
@@ -58,6 +61,17 @@ PACKAGES="
 
     alacritty
     firefox
+
+    curl
+    ca-certificates
+    git
+    grep
+    sed
+    build-base
+    rustup
+    go
+    python3
+    py3-pip
     font-dejavu
     wayland-utils
 "
@@ -157,7 +171,6 @@ REMOVE_DIRS="
     /var/lib/dbus
     /var/cache/misc
     /var/lib/sudo/lectured
-    /usr/share/misc
     /usr/share/dbus-1/session.d
     /usr/lib/gio/modules
 "
@@ -279,7 +292,10 @@ done
 
 echo "== disk image"
 used=$(du -sm "$ROOT" | cut -f1)
-size=$((used + used / 2 + 256))
+# Room to work in (a Rust toolchain alone unpacks to well over 1 GB). The image is a sparse
+# file: space the system never writes takes nothing on the host's disk.
+size=16384
+[ "$size" -gt $((used * 2)) ] || size=$((used * 2))
 mkfs.ext4 -q -L simplewm -d "$ROOT" "$OUT/root.img" "${size}M"
 
 echo "== done: kernel $kver, root ${used} MB, image ${size} MB"
