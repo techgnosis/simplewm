@@ -98,8 +98,7 @@ still growing: the user is open to experiments and new features, within the rule
   runs the root `ip` script on a dummy card in a throwaway namespace, writing a scratch
   resolv.conf instead of the real one (no sudo, nothing real touched). Never test the sudo
   path with a wrong password: failed attempts count toward the account's faillock lockout.
-- `make` builds the release binary with `--locked`; `make install` puts it in `/usr/bin`
-  and removes the files that made it an `xdg-desktop-portal` backend before.
+- `make` builds the release binary with `--locked`; `make install` puts it in `/usr/bin`.
 
 ## Dependencies
 
