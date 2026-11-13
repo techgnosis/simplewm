@@ -89,13 +89,16 @@ apk --root "$ROOT" --initdb --quiet \
     --keys-dir /etc/apk/keys --repositories-file /etc/apk/repositories \
     --cache-dir "$CACHE" \
     add $PACKAGES
-cp /etc/apk/repositories "$ROOT/etc/apk/repositories"
 
 # The kernel is unpacked rather than installed: Alpine's kernel packages insist on an
 # initramfs generator (mkinitfs), and we make our own initramfs below.
 apk fetch --quiet --output "$CACHE" "linux-$KERNEL"
 tar -xzf "$(ls -t "$CACHE"/linux-"$KERNEL"-*.apk | head -n 1)" -C "$ROOT" \
     --exclude '.*' boot lib 2>/dev/null
+
+# No package manager in the system: it's changed only by rebuilding it. apk itself was
+# never installed; remove its records (database and settings) too.
+rm -rf "$ROOT/etc/apk" "$ROOT/lib/apk" "$ROOT/var/cache/apk"
 
 echo "== our pieces"
 install -m 755 /work/target/alpine/release/simplewm "$ROOT/usr/bin/simplewm"

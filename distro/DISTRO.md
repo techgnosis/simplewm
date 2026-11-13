@@ -259,7 +259,9 @@ headless (screenshots through QEMU's monitor).
   dynamically. Rust and Cargo's downloads are kept in `cache/`.
 - `build.sh` (run on the host; it re-runs itself in the container) runs
   `build-simplewm.sh`, then builds everything else from scratch: `root/` (from `PACKAGES`
-  via `apk --root … --initdb`), and in `out/` the kernel,
+  via `apk --root … --initdb`; afterwards apk's records, `/etc/apk` and `/lib/apk`,
+  are deleted, so the system has no package manager and is changed only by rebuilding
+  it), and in `out/` the kernel,
   the initramfs and `root.img` (ext4). It adds simplewm, the init, udev's compiled hardware database
   (`udevadm hwdb --update`), a machine ID for
   dbus-daemon, and the user (`USER_NAME`, uid 1000, in seat, audio, video, input and
