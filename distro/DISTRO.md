@@ -371,7 +371,9 @@ to the render node of the GPU it opened.
 fixed it (see "eudev vs libudev-zero").
 
 **A smaller filesystem.** The user wants as little in the filesystem as possible, to
-lighten the load on whoever looks around it. `build.sh` trims at the end of the build
+lighten the load on whoever looks around it. But it stays a normal userland a developer
+can work in (rustup and Rust, Go, Zed, alacritty, curl, pkg-config, the usual tools): only
+obscure things nobody would use go. `build.sh` trims at the end of the build
 with two lists; add to them to trim more. Nothing in the system can bring anything back,
 since there's no package manager.
 
@@ -392,18 +394,25 @@ since there's no package manager.
     comments), `/etc/pam.d` and `/etc/security` (sudo is built without PAM; only vlock's
     file was there), `pkcs11.conf.example`, `vdpau_wrapper.cfg` (Flash Player settings),
     `profile.d/README` and the disabled `color_prompt.sh.disabled`, the `aclocal` and
-    `pkgconfig` build files, and `/var/log/apk.log`.
+    and `/var/log/apk.log`.
   - Data only something else would read: udev's hardware database sources
     (`/usr/lib/udev/hwdb.d`, 7.6 MB; the build compiles them into `/etc/udev/hwdb.bin`
     first, which is all udevd reads; checked with `udevadm hwdb --test` in a chroot),
-    GObject introspection typelibs (`/usr/lib/girepository-1.0`, for Python and
-    JavaScript bindings, none installed), kbd's keyboard layouts, character maps and
+    kbd's keyboard layouts, character maps and
     console fonts (`keymaps`, `consoletrans`, `unimaps`, `consolefonts`; nothing runs
     `loadkeys`, and the US layout is the kernel's default), X11's font encodings and the
     X font tools `mkfontscale`/`mkfontdir` (only for X core fonts), AppStream metadata
     (`metainfo`, for software centers), `paxrelabel.d` (grsecurity), and
     `pipewire-launcher` (Alpine's script for starting PipeWire from OpenRC user services;
     simplewm starts it).
+  - Programs nobody here would run: PulseAudio's X11 helpers (`start-pulseaudio-x11`,
+    `pax11publish`), GTK's HTML5 display server `broadwayd`, sudo's log-server tools
+    (`sudo_logsrvd`, `sudo_sendlog`, `sudoreplay`), `libcamera-bug-report`. Kept on
+    purpose although a first pass listed them: `pkgconf`/`pkg-config` (Rust crates that
+    link C libraries need it), the `spirv-*`, `gi-*` and gdk-pixbuf developer tools,
+    GObject typelibs (`/usr/lib/girepository-1.0`, for Python or JavaScript GTK
+    programs), `/usr/share/pkgconfig` and `/usr/share/aclocal`.
+  - The kernel modules folder's `vmlinuz` link (it pointed into `/boot`).
   - `font-terminus` isn't installed at all: the build unpacks the one console font
     simplewm-init loads (`ter-132n.psf.gz`) from its package, like the kernel. The rest
     was 238 more console fonts and Terminus fonts that apps would have listed.
@@ -412,7 +421,14 @@ since there's no package manager.
   far: `/media`, `/mnt`, `/opt`, `/srv`, `/usr/local`, `/etc/opt`, `/etc/alsa`,
   `/etc/udev/rules.d`, the `modules-load.d` and `sysctl.d` folders, and `/var/mail`,
   `/var/opt`, `/var/local`, `/var/db`, `/var/empty`, `/var/lib/misc`, `/var/lib/dbus`,
-  `/var/cache/misc`.
+  `/var/cache/misc`, `/var/lib/sudo/lectured`, `/usr/share/misc`,
+  `/usr/share/dbus-1/session.d`, `/usr/lib/gio/modules`. (`make install` and the like
+  make `/usr/local` again when they need it.)
+
+How to look for more, from the host: sizes (`du` over `usr/lib`, `usr/share`), empty
+folders, and links that point nowhere, checked from inside the root
+(`chroot distro/root /bin/busybox find / -xdev -type l ! -exec test -e {} \; -print`;
+busybox's links are absolute, so a check from outside sees them all as dangling).
 
 After trimming, `/etc` holds: bash, dbus-1 (session.conf), fonts, group, gtk-3.0,
 hostname, hosts, inputrc, machine-id, modprobe.d, mtab, passwd, profile, profile.d,

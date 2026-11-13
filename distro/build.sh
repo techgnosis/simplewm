@@ -103,7 +103,6 @@ REMOVE="
     /etc/dbus-1/system.conf
 
     /usr/lib/udev/hwdb.d
-    /usr/lib/girepository-1.0
     /usr/libexec/pipewire-launcher
     /usr/share/keymaps
     /usr/share/consoletrans
@@ -113,14 +112,19 @@ REMOVE="
     /usr/share/fonts/encodings
     /usr/bin/mkfontscale
     /usr/bin/mkfontdir
+    /usr/bin/start-pulseaudio-x11
+    /usr/bin/pax11publish
+    /usr/bin/broadwayd
+    /usr/bin/sudoreplay
+    /usr/sbin/sudo_logsrvd
+    /usr/sbin/sudo_sendlog
+    /usr/bin/libcamera-bug-report
     /usr/share/paxrelabel.d
 
     /usr/share/dbus-1/system.conf
     /usr/share/dbus-1/system.d
     /usr/share/dbus-1/system-services
     /usr/share/udhcpc
-    /usr/share/aclocal
-    /usr/share/pkgconfig
 
     /var/spool
     /var/log/apk.log
@@ -152,6 +156,10 @@ REMOVE_DIRS="
     /var/lib/misc
     /var/lib/dbus
     /var/cache/misc
+    /var/lib/sudo/lectured
+    /usr/share/misc
+    /usr/share/dbus-1/session.d
+    /usr/lib/gio/modules
 "
 
 # Drivers the initramfs loads to reach the root filesystem (plus what they need).
@@ -251,6 +259,8 @@ echo "== trimming"
 for path in $REMOVE; do
     rm -rf "${ROOT:?}$path"
 done
+# The kernel's link to itself in /boot, which is gone.
+rm -f "$ROOT/lib/modules/$kver/vmlinuz"
 # The one console font simplewm-init loads, unpacked from font-terminus (the rest of
 # that package, 238 more console fonts and Terminus for apps, isn't wanted).
 apk fetch --quiet --output "$CACHE" font-terminus
