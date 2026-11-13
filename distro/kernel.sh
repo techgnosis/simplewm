@@ -55,6 +55,33 @@ if [ ! -d "$SRC" ]; then
     tar -xf "$TARBALL" -C "$CACHE"
 fi
 
+# Firmware built into the kernel (CONFIG_EXTRA_FIRMWARE): built-in drivers start before
+# the disk is mounted, so they can't load firmware from it. Each file comes from Alpine's
+# linux-firmware package named after its folder (amdgpu/… from linux-firmware-amdgpu),
+# unpacked into the container's /lib/firmware, where the kernel's build looks
+# (CONFIG_EXTRA_FIRMWARE_DIR's default). Alpine compresses firmware; the kernel wants it
+# plain.
+firmware=$(sed -n 's/^CONFIG_EXTRA_FIRMWARE="\(.*\)"$/\1/p' "$CONFIG")
+if [ -n "$firmware" ]; then
+    echo "== kernel: firmware"
+    apk add -q zstd
+    for pkg in $(for f in $firmware; do echo "linux-firmware-${f%%/*}"; done | sort -u); do
+        apk fetch --quiet --output /work/distro/cache "$pkg"
+        apkfile=$(ls -t /work/distro/cache/"$pkg"-[0-9]*.apk | head -n 1)
+        for f in $firmware; do
+            [ "linux-firmware-${f%%/*}" = "$pkg" ] || continue
+            tar -xzf "$apkfile" -C / "lib/firmware/$f.zst" 2>/dev/null ||
+                { echo "$pkg has no $f" >&2; exit 1; }
+        done
+    done
+    # Some files are links to others; zstd won't read links named on its command line,
+    # so each goes through stdin.
+    for f in $firmware; do
+        zstd -q -d < "/lib/firmware/$f.zst" > "/lib/firmware/$f" ||
+            { echo "can't decompress $f (a link to a file not listed?)" >&2; exit 1; }
+    done
+fi
+
 export KBUILD_BUILD_USER=simplewm KBUILD_BUILD_HOST=distro
 kmake() {
     make -s -C "$SRC" O="$BUILD" "$@"

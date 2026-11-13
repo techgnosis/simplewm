@@ -493,7 +493,8 @@ refresh` rewrites the file in its proper form (after hand edits, or after raisin
 How it was made: the kernel's `x86_64_defconfig`, plus `kvm_guest.config`, plus our
 changes, then `savedefconfig`. Our changes:
 
-- Built in or turned on: NVMe (for the real machine; AHCI SATA, USB storage, Intel
+- Built in or turned on: the user's AMD GPU (`DRM_AMDGPU`) with its firmware (below),
+  NVMe (for other machines; AHCI SATA, USB storage, Intel
   i915, Intel HDA sound, and e1000/e1000e/r8169 network cards are already in the
   defaults), virtio sound, HDA's generic, HDMI and Realtek codecs, USB HID, the DRM
   framebuffer console and simpledrm (the console before the GPU driver takes over),
@@ -512,17 +513,59 @@ evdev, mousedev, psmouse, i2c_piix4 (plus floppy, sr_mod/cdrom, kvm and qemu_fw_
 needed). With the new kernel simplewm, seatd, udevd, the session bus, PipeWire and
 WirePlumber all come up, with `/dev/dri`, `/dev/input` and `/dev/snd` in place.
 
+**Firmware** is compiled into the kernel (`CONFIG_EXTRA_FIRMWARE`, a list of files in
+`kernel.config`): a built-in driver starts before the disk is mounted, so it can't load
+firmware from it, and without its firmware amdgpu doesn't start. `kernel.sh` takes each
+listed file from Alpine's `linux-firmware-<folder>` package (`amdgpu/…` from
+`linux-firmware-amdgpu`), decompresses it (Alpine ships them zstd-compressed, some as
+links to others) into the container's `/lib/firmware`, where the kernel build looks. For
+the RX 480/580 that's the 21 `amdgpu/polaris10_*` files, the ones amdgpu names with
+`MODULE_FIRMWARE` for Polaris 10 plus its video decode and encode (UVD, VCE). Nothing is
+installed in the system's `/lib/firmware`.
+
 Still to do:
 
 - Trim the defaults that come along from `x86_64_defconfig` and that nothing here uses
   (many network drivers, cgroup controllers, hibernation, kexec, IPv4 multicast routing,
   tracing and the remaining debug options). One group at a time, with a boot test each.
-- Fit it to the real machine: its GPU, sound and network drivers (look at `lspci -k`
-  on the host). A built-in GPU driver can't load firmware from the disk (it starts before
-  the disk is mounted), so AMD and newer Intel GPUs need theirs compiled into the kernel
-  (`CONFIG_EXTRA_FIRMWARE`), or the driver doesn't start.
-- How the real machine boots it: the kernel is an EFI program (`EFI_STUB`), so the
-  firmware could start it directly with `root=` and `rw`, with no bootloader.
+- Intel CPU microcode (`intel-ucode`, also loadable as built-in firmware) isn't
+  included; the motherboard firmware's copy is what runs.
+- The Skylake CPU's own GPU is disabled on the user's machine, so `DRM_I915` could go.
+
+## On the user's machine
+
+The hardware (`lspci -k` on the host): Intel Core i5-6500 (Skylake), AMD Radeon RX
+480/580 (Polaris 10, "Ellesmere"; amdgpu) with the monitor on its HDMI, sound from the
+chipset's Intel HDA (Realtek ALC662 codec) and HDMI audio on the AMD card (both
+snd_hda_intel), an Intel I219-V network card (e1000e), and two SATA SSDs on the
+chipset's AHCI controller: `sda` (1 TB) is the CachyOS host with its systemd-boot,
+`sdb` (256 GB Samsung 850 PRO) is the distro's. USB is the chipset's xHCI. All of these
+drivers are built into our kernel.
+
+**The disk** (`install.sh`, run as root on the host): GPT with two partitions, which the
+scripts find by name, never by `sdX` (the disks' letters can swap between boots):
+
+- `distro-esp`, 512 MiB, FAT32 (label DISTRO): the EFI system partition. The kernel is
+  `\EFI\distro\vmlinuz.efi`.
+- `distro-root`, the rest: `out/root.img` written over it with `dd`, then checked and
+  grown to fill the partition (`resize2fs`).
+
+The first run erases the disk, after showing what's on it and asking for its name to be
+typed. Later runs replace the root filesystem and kernel without asking, so like every
+build the user's home starts over. It refuses a disk with anything mounted or that holds
+the host's root filesystem.
+
+**Booting** (`efibootmgr.sh`): no bootloader. The kernel is an EFI program (`EFI_STUB`),
+so an EFI boot entry called Distro starts it directly with the command line
+`root=PARTUUID=<distro-root's ID> rw rootwait`. The entry goes last in the boot order, so
+the machine still starts CachyOS; Distro is picked from the firmware's boot menu, or
+`efibootmgr.sh next` sets it for the next restart only (`BootNext`). Running it again
+replaces the entry; it only needs to after the disk is partitioned again (the entry and
+`root=` name the partitions by their IDs). No `console=` for the serial port: messages go
+to the screen (simpledrm on the firmware's framebuffer until amdgpu takes over).
+
+Claude can't run either script (sudo needs the user's password). The user runs them,
+e.g. `! sudo distro/install.sh /dev/sdb` in Claude Code, or in a terminal.
 
 ## Open questions
 
@@ -532,4 +575,4 @@ Still to do:
 - How much of that simplewm could take over itself, and what has to stay a separate
   root process (simplewm runs unprivileged, so loading drivers and changing `/dev`
   permissions can't move into it).
-- Fitting the kernel to the real machine (see "The kernel").
+- Trimming the kernel to the machine (see "The kernel").
