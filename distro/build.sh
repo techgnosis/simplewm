@@ -58,6 +58,7 @@ PACKAGES="
     shared-mime-info
 
     alacritty
+    firefox
     font-dejavu
     wayland-utils
 "

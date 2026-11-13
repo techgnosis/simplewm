@@ -247,6 +247,15 @@ user under seatd, with eudev handling devices, simplewm's own session bus, PipeW
 WirePlumber finding the VM's sound card, and alacritty opening from the launcher. Tested
 headless (screenshots through QEMU's monitor).
 
+**Firefox** (Alpine's `firefox`, 151 at the time; `firefox-esr` also exists) is in the
+image: the goal is a Firefox OS. It runs natively on Wayland under simplewm, drawing in
+software in the VM. It roughly doubled the root filesystem (419 to 788 MB). Tested by
+booting a copy of the image whose `~/.bash_profile` starts it in the background (simplewm
+is started through the login shell, so that runs alongside it). Still to do: it isn't in
+the Launcher by default (and settings reset with each build), it draws its own
+minimize/maximize/close buttons in its tab strip next to simplewm's title bar, and its
+file dialogs are GTK's own, not simplewm's portal.
+
 - `container.sh [command…]` runs a command (a shell by default) in an Alpine 3.24
   container with the project root mounted at `/work`. Root in the container is the host
   user, so files owned by root come out as the host user's; anything owned by another
