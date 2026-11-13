@@ -7,6 +7,7 @@ mod portal;
 mod portal_check;
 mod screenshot;
 mod session_env;
+mod sound;
 mod state;
 mod text;
 mod ui;

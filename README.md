@@ -94,6 +94,9 @@ Applets:
   default route with these, and saves them; simplewm sets them again each time it starts.
   Clearing both fields and applying stops that. There is no DHCP or DNS. If NetworkManager is
   running it may undo the settings, so mask it (`sudo systemctl mask --now NetworkManager`).
+* **Sound** — the sound cards PipeWire offers (its audio outputs); clicking one sends sound
+  to it. Below them is the chosen card's volume: click the bar to set it, or use − and +
+  (5% steps). PipeWire (WirePlumber) remembers both. Uses `pw-dump` and `wpctl`.
 * **Help** — a short read-only note: the resolution is the monitor's preferred mode, there is
   no plain text config file, and there are no keyboard shortcuts.
 

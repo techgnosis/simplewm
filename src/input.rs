@@ -413,6 +413,9 @@ impl State {
                             if *applet == PanelId::Network {
                                 self.panels.refresh_network();
                             }
+                            if *applet == PanelId::Sound {
+                                self.panels.refresh_sound();
+                            }
                             let out = self.output_geometry();
                             self.panels.show(*applet, out);
                             self.focus_panel(*applet);
@@ -430,6 +433,10 @@ impl State {
                     PanelHit::Refresh => self.refresh_portal_check(),
                     PanelHit::NetApply => self.panels.network_apply(),
                     PanelHit::NetRefresh => self.panels.refresh_network(),
+                    PanelHit::SoundCard(i) => self.panels.sound_choose(i),
+                    PanelHit::SoundBar(percent) => self.panels.sound_set_volume(percent as f64 / 100.0),
+                    PanelHit::SoundDown => self.panels.sound_step(-1.0),
+                    PanelHit::SoundUp => self.panels.sound_step(1.0),
                     PanelHit::ChooseShotDir => {
                         self.panels.stop_editing();
                         self.choose_screenshot_dir();

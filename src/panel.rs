@@ -13,6 +13,8 @@
 //!   dialog from the desktop portal (see `crate::portal_check`).
 //! * The Network applet window sets a static IPv4 address and gateway on the
 //!   wired network card (see `network` and `crate::network`).
+//! * The Sound applet window chooses PipeWire's sound card and sets its volume
+//!   (see `sound` and `crate::sound`).
 //! * The File Picker window is not in the Control Panel: it opens when an app
 //!   asks for a file through the desktop portal (see `picker`), or from the
 //!   Launcher and Screenshot applets.
@@ -36,9 +38,11 @@ use crate::{
 
 mod network;
 mod picker;
+mod sound;
 
 pub use network::NetworkApplet;
 pub use picker::{FilePicker, PickHit};
+pub use sound::SoundApplet;
 
 pub const DEFAULT_LAUNCHER_ENTRY: &str = "/usr/bin/alacritty";
 
@@ -51,6 +55,7 @@ pub enum PanelId {
     Help,
     Portal,
     Network,
+    Sound,
     FilePicker,
 }
 
@@ -65,18 +70,20 @@ impl PanelId {
             PanelId::Help => "Help",
             PanelId::Portal => "Desktop Portal",
             PanelId::Network => "Network",
+            PanelId::Sound => "Sound",
             PanelId::FilePicker => "File Picker",
         }
     }
 }
 
 /// Applets shown as icons in the Control Panel: (name, window it opens).
-pub const APPLETS: [(&str, PanelId); 6] = [
+pub const APPLETS: [(&str, PanelId); 7] = [
     ("Launcher", PanelId::Launcher),
     ("Environment", PanelId::Environment),
     ("Screenshot", PanelId::Screenshot),
     ("Desktop Portal", PanelId::Portal),
     ("Network", PanelId::Network),
+    ("Sound", PanelId::Sound),
     ("Help", PanelId::Help),
 ];
 
@@ -177,6 +184,7 @@ const TILE_HELP: [f32; 4] = [0.80, 0.50, 0.15, 1.0];
 const TILE_SCREENSHOT: [f32; 4] = [0.55, 0.32, 0.75, 1.0];
 const TILE_PORTAL: [f32; 4] = [0.15, 0.55, 0.65, 1.0];
 const TILE_NETWORK: [f32; 4] = [0.70, 0.30, 0.35, 1.0];
+const TILE_SOUND: [f32; 4] = [0.35, 0.55, 0.22, 1.0];
 const ENV_HEADER_BG: [f32; 4] = [0.19, 0.21, 0.26, 1.0];
 const SCROLL_TRACK: [f32; 4] = [0.18, 0.19, 0.23, 1.0];
 const SCROLL_THUMB: [f32; 4] = [0.40, 0.43, 0.50, 1.0];
@@ -202,6 +210,11 @@ pub enum PanelHit {
     // Network
     NetApply,
     NetRefresh,
+    // Sound: a card, the volume bar (percent under the pointer), − and +.
+    SoundCard(usize),
+    SoundBar(u32),
+    SoundDown,
+    SoundUp,
     // File Picker
     Pick(PickHit),
 }
@@ -463,6 +476,19 @@ fn applet_glyph(id: PanelId, tile: Rect) -> ([f32; 4], Vec<Rect>) {
             ];
             (TILE_NETWORK, rects)
         }
+        // A speaker: box, stepped cone and two sound waves.
+        PanelId::Sound => {
+            let (x, y) = (tile.loc.x, tile.loc.y);
+            let r = |dx, dy, w, h| Rectangle::new((x + dx, y + dy).into(), (w, h).into());
+            let rects = vec![
+                r(9, 19, 7, 10),  // box
+                r(16, 15, 4, 18), // cone
+                r(20, 11, 4, 26), // cone mouth
+                r(28, 19, 3, 10), // small wave
+                r(34, 14, 3, 20), // big wave
+            ];
+            (TILE_SOUND, rects)
+        }
         PanelId::ControlPanel | PanelId::FilePicker => (TILE_LAUNCHER, Vec::new()),
     }
 }
@@ -475,9 +501,11 @@ pub struct Panels {
     help: PanelWindow,
     portal: PanelWindow,
     network: PanelWindow,
+    sound_window: PanelWindow,
     file_picker: PanelWindow,
     pub picker: FilePicker,
     pub net: NetworkApplet,
+    sound: SoundApplet,
     /// Environment rows (refreshed when the window is opened).
     env: RowList,
     /// Desktop Portal check results (refreshed on open and by Refresh).
@@ -512,9 +540,11 @@ impl Panels {
             help: PanelWindow::default(),
             portal: PanelWindow::default(),
             network: PanelWindow::default(),
+            sound_window: PanelWindow::default(),
             file_picker: PanelWindow::default(),
             picker: FilePicker::default(),
             net: NetworkApplet::default(),
+            sound: SoundApplet::default(),
             env: RowList::default(),
             portal_rows: RowList::default(),
             portal_refresh_buf: None,
@@ -538,6 +568,7 @@ impl Panels {
             PanelId::Help => &self.help,
             PanelId::Portal => &self.portal,
             PanelId::Network => &self.network,
+            PanelId::Sound => &self.sound_window,
             PanelId::FilePicker => &self.file_picker,
         }
     }
@@ -551,6 +582,7 @@ impl Panels {
             PanelId::Help => &mut self.help,
             PanelId::Portal => &mut self.portal,
             PanelId::Network => &mut self.network,
+            PanelId::Sound => &mut self.sound_window,
             PanelId::FilePicker => &mut self.file_picker,
         }
     }
@@ -645,6 +677,7 @@ impl Panels {
             PanelId::Help => (HELP_W, PAD + HELP_LINES.len() as i32 * HELP_ROW_H + PAD),
             PanelId::Portal => (PORTAL_W, PORTAL_H),
             PanelId::Network => self.network_size(),
+            PanelId::Sound => self.sound_size(),
             PanelId::FilePicker => self.picker_size(),
         }
     }
@@ -795,6 +828,11 @@ impl Panels {
             }
             PanelId::Network => {
                 if let Some(h) = self.network_hit(text, p) {
+                    return Some(h);
+                }
+            }
+            PanelId::Sound => {
+                if let Some(h) = self.sound_hit(p) {
                     return Some(h);
                 }
             }
@@ -957,6 +995,7 @@ impl Panels {
             PanelId::Help => self.render_help(text, renderer, elems),
             PanelId::Portal => self.render_portal(text, renderer, hovered, elems),
             PanelId::Network => self.render_network(text, renderer, hovered, elems),
+            PanelId::Sound => self.render_sound(text, renderer, hovered, elems),
             PanelId::FilePicker => self.render_picker(text, renderer, hovered, elems),
         }
 
