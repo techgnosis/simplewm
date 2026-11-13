@@ -70,6 +70,17 @@ USER_NAME=user
 USER_PASSWORD=simplewm
 USER_GROUPS="seat audio video input wheel"
 
+# Folders the system doesn't need, removed from the root filesystem (Alpine's base layout
+# makes them). Only empty ones (or holding only empty folders) are removed; if a package
+# ever puts files in one, the build stops. Nothing can make them again: there's no package
+# manager in the system.
+REMOVE_DIRS="
+    /media
+    /mnt
+    /opt
+    /srv
+"
+
 # Drivers the initramfs loads to reach the root filesystem (plus what they need).
 INITRAMFS_MODULES="virtio_pci virtio_blk ext4"
 
@@ -122,6 +133,17 @@ done
 echo "$USER_NAME:$USER_PASSWORD" | chroot "$ROOT" chpasswd >/dev/null
 echo "%wheel ALL=(ALL:ALL) ALL" > "$ROOT/etc/sudoers.d/wheel"
 chmod 440 "$ROOT/etc/sudoers.d/wheel"
+
+echo "== trimming"
+for dir in $REMOVE_DIRS; do
+    [ -e "$ROOT$dir" ] || continue
+    find "$ROOT$dir" -depth -type d -empty -delete
+    if [ -e "$ROOT$dir" ]; then
+        echo "$dir isn't empty; not removing it:" >&2
+        find "$ROOT$dir" -not -type d >&2
+        exit 1
+    fi
+done
 
 echo "== kernel"
 kver=$(ls "$ROOT/lib/modules")

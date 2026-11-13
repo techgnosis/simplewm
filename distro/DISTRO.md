@@ -273,7 +273,7 @@ answers that one too, always "server side". Not in the Launcher by default yet.
   `build-simplewm.sh`, then builds everything else from scratch: `root/` (from `PACKAGES`
   via `apk --root … --initdb`; afterwards apk's records, `/etc/apk` and `/lib/apk`,
   are deleted, so the system has no package manager and is changed only by rebuilding
-  it), and in `out/` the kernel,
+  it; then the folders in `REMOVE_DIRS` are removed, see "A smaller filesystem"), and in `out/` the kernel,
   the initramfs and `root.img` (ext4). It adds simplewm, the init, udev's compiled hardware database
   (`udevadm hwdb --update`), a machine ID for
   dbus-daemon, and the user (`USER_NAME`, uid 1000, in seat, audio, video, input and
@@ -369,6 +369,13 @@ to the render node of the GPU it opened.
 
 **Fixed: no sound with libudev-zero.** PipeWire found no sound cards; switching to eudev
 fixed it (see "eudev vs libudev-zero").
+
+**A smaller filesystem.** The user wants as little in the filesystem as possible.
+`build.sh` removes the folders listed in `REMOVE_DIRS`; add to that list to trim more. So
+far: `/media`, `/mnt`, `/opt` and `/srv` (Alpine's base layout makes them, empty). Only
+empty folders (or ones holding only empty folders) are removed; if a package ever puts
+files in one, the build stops and lists them. Nothing in the system can make them again,
+since there's no package manager; anyone who wants one back can make it.
 
 **The kernel** is Alpine's `linux-virt` for now (smaller, meant for VMs; `KERNEL` in
 `build.sh`), switched to `linux-lts` or our own for the real machine. It's unpacked from
