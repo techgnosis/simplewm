@@ -214,7 +214,7 @@ impl State {
 /// creating the folder if needed.
 fn save_png(dir: &Path, image: &Image) -> SaveResult {
     std::fs::create_dir_all(dir).map_err(|e| format!("can't create {}: {e}", dir.display()))?;
-    let stamp = chrono::Local::now().format("%Y-%m-%d-%H%M%S").to_string();
+    let stamp = crate::clock::now("%Y-%m-%d-%H%M%S");
     let mut path = dir.join(format!("simplewm-screenshot-{stamp}.png"));
     let mut n = 2;
     while path.exists() {

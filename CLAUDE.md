@@ -9,8 +9,8 @@ still growing: the user is open to experiments and new features, within the rule
 - They never read the code. They judge simplewm by using it, so report changes in terms of
   what they'll see and do, not in terms of code.
 - Claude can't see the screen. After a UI change, say exactly what to try. The user runs it
-  nested (`make run`) or on a TTY (`./simplewm`, or `./debug.sh` to log DRM and session
-  details to `simplewm-debug.log`). Their machine has one sound output (HDMI), one wired
+  nested (`make run`) or on a TTY (`./simplewm`, or `./debug.sh`, which runs a debug build that logs DRM
+  and session details to `simplewm-debug.log`). Their machine has one sound output (HDMI), one wired
   network card and one monitor.
 - Keep this file current when behavior or structure changes, and fix it whenever you find
   it wrong, without asking. It's for Claude; nobody else reads it.
@@ -21,7 +21,8 @@ still growing: the user is open to experiments and new features, within the rule
 
 - No keyboard shortcuts. The one exception is Ctrl+Alt+F1… for switching virtual terminals
   on a TTY.
-- No config file, flags or environment variables. Every setting is changed in a Control
+- No config file, flags or environment variables (not even `RUST_LOG`: the log filter
+  is fixed in `main::init_logging`, more verbose in debug builds). Every setting is changed in a Control
   Panel applet and saved in `~/.config/simplewm/simplewm.dat`, a small binary file
   so nobody is tempted to hand-edit it (SQLite was dropped as overkill). The backend is
   chosen automatically: TTY when there's no `WAYLAND_DISPLAY`, `WAYLAND_SOCKET` or
@@ -134,6 +135,7 @@ Update this list when a change adds or drops one.
   `build_elements` (the whole scene, front-most first), plus drawing helpers (`text_in`,
   `text_centered`, `text_in_alpha`, `solid`).
 - `text.rs`: font rasterizing with fontdue (`measure`, `fit`).
+- `clock.rs`: local time through libc's `strftime` (no date crate).
 - Behind the applets, with no UI code:
   - `network.rs`: reads the card (sysfs, rtnetlink dumps) and `/etc/resolv.conf`, and sets
     both (sudo + `ip`, then the resolv.conf rewrite).

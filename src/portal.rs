@@ -596,7 +596,7 @@ async fn app_name(conn: &Connection, sender: &OwnedUniqueName) -> String {
 
 /// Record a request in the status (finished by `note_outcome`).
 fn note_request(kind: &str, app: &str, title: &str) {
-    let time = chrono::Local::now().format("%H:%M:%S");
+    let time = crate::clock::now("%H:%M:%S");
     update_status(|s| {
         s.requests += 1;
         s.last_request = Some(format!("{time} {kind} \"{title}\" from {app}: waiting"));

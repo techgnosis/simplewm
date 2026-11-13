@@ -1,3 +1,4 @@
+mod clock;
 mod grabs;
 mod handlers;
 mod input;
@@ -18,16 +19,7 @@ use smithay::reexports::{calloop::EventLoop, wayland_server::Display};
 use crate::state::State;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    if let Ok(filter) = tracing_subscriber::EnvFilter::try_from_default_env() {
-        tracing_subscriber::fmt().with_env_filter(filter).init();
-    } else {
-        // smithay warnings, minus drm::device::fd "Unable to become drm master": a false
-        // alarm under a libseat session, where logind/seatd already made the fd master and
-        // the kernel just refuses a repeat SET_MASTER from a process that didn't open it.
-        tracing_subscriber::fmt()
-            .with_env_filter("simplewm=info,smithay=warn,smithay::backend::drm::device::fd=error")
-            .init();
-    }
+    init_logging();
 
     // Use the TTY backend when there is no host session to nest in (e.g. launched
     // from a bare virtual console); otherwise run nested.
@@ -58,4 +50,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     udev::shutdown(&mut state);
 
     Ok(())
+}
+
+/// Log to stderr with a fixed filter (no RUST_LOG: simplewm reads no environment
+/// variables for settings). A debug build (`./debug.sh`) also logs simplewm's debug
+/// messages and smithay's DRM and session details.
+fn init_logging() {
+    use tracing::Level;
+    use tracing_subscriber::{filter::Targets, prelude::*};
+
+    let debug = cfg!(debug_assertions);
+    let mut filter = Targets::new()
+        .with_target("simplewm", if debug { Level::DEBUG } else { Level::INFO })
+        .with_target("smithay", Level::WARN);
+    if debug {
+        filter = filter
+            .with_target("smithay::backend::drm", Level::DEBUG)
+            .with_target("smithay::backend::session", Level::DEBUG);
+    } else {
+        // Hide drm::device::fd "Unable to become drm master": a false alarm under a
+        // libseat session, where logind/seatd already made the fd master and the kernel
+        // just refuses a repeat SET_MASTER from a process that didn't open it.
+        filter = filter.with_target("smithay::backend::drm::device::fd", Level::ERROR);
+    }
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(filter)
+        .init();
 }

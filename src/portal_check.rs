@@ -68,7 +68,7 @@ fn run() -> Vec<EnvRow> {
         unit_rows(&mut rows);
     }
 
-    let checked = chrono::Local::now().format("%H:%M:%S");
+    let checked = crate::clock::now("%H:%M:%S");
     let mut out = vec![EnvRow::Header("Summary".into())];
     match problems.0.len() {
         0 => out.push(EnvRow::Line(format!(

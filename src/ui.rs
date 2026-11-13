@@ -232,7 +232,7 @@ const BAR_GAP: i32 = 6;
 const CLOCK_GAP: i32 = 16;
 
 pub fn clock_text() -> String {
-    chrono::Local::now().format(CLOCK_FORMAT).to_string()
+    crate::clock::now(CLOCK_FORMAT)
 }
 
 /// Width reserved for the clock, so the centered group doesn't shift as the
