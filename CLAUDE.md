@@ -2,7 +2,7 @@
 
 A small stacking Wayland compositor in Rust on Smithay. It draws all of its own UI: a top
 bar, window title bars and a Windows-style Control Panel of settings applets. simplewm is
-feature complete, so expect bug fixes and UI polish, not new features.
+still growing: the user is open to experiments and new features, within the rules below.
 
 ## Working with the user
 
