@@ -281,7 +281,9 @@ headless (screenshots through QEMU's monitor).
   window: it opens small, and simplewm switches mode when the window is resized or
   maximized (it follows preferred-mode changes since this turned up). In a GTK window
   (`qemu-ui-gtk` and `qemu-hw-display-virtio-vga` on Arch; the user installed
-  `qemu-desktop`), or with `run.sh headless` no window, for testing from a script. No
+  `qemu-desktop`), or with `run.sh headless` no window, for testing from a script, in QEMU's snapshot
+  mode so a test never changes `root.img` (a test once left simplewm's binary renamed in
+  the image the user then booted). No
   OpenGL passthrough: Alpine's Mesa is built without virgl (its gallium driver list for
   x86_64 has no `virgl`; Mesa says "virtio_gpu: driver missing"), so everything in the
   guest draws with llvmpipe whatever QEMU offers. (virtio-vga-gl with `egl-headless` also

@@ -3,7 +3,8 @@
 #
 #   distro/run.sh            the screen in a window (needs qemu-ui-gtk and
 #                            qemu-hw-display-virtio-vga on Arch; qemu-desktop has both)
-#   distro/run.sh headless   no window, for testing boots from a script
+#   distro/run.sh headless   no window, for testing boots from a script; changes to the
+#                            disk are thrown away when QEMU exits
 #
 # Either way the serial console is this terminal: kernel messages and a root shell.
 # Ctrl+A then X quits QEMU.
@@ -40,8 +41,12 @@ yres=$(( (${host#*x} - 30 - 32) / 8 * 8 ))
 # guest draws in software either way (see DISTRO.md). No menu bar (Ctrl+Alt+M shows it)
 # and no scaling, so the picture is pixel for pixel.
 gpu="-device virtio-vga,xres=$xres,yres=$yres"
+snapshot=
 if [ "${1:-}" = headless ]; then
     screen="$gpu -display none"
+    # Test boots never change the disk image: writes go to a temporary layer that's
+    # thrown away when QEMU exits.
+    snapshot=-snapshot
 elif qemu-system-x86_64 -display help 2>/dev/null | grep -qx gtk; then
     screen="$gpu -display gtk,show-menubar=off,zoom-to-fit=off"
 else
@@ -63,7 +68,7 @@ exec qemu-system-x86_64 \
     -kernel "$out/vmlinuz" \
     -initrd "$out/initramfs.cpio.gz" \
     -append "root=/dev/vda console=tty0 console=ttyS0" \
-    -drive "file=$out/root.img,format=raw,if=virtio" \
+    -drive "file=$out/root.img,format=raw,if=virtio" $snapshot \
     -vga none $screen \
     -device virtio-keyboard-pci -device virtio-tablet-pci \
     -nic user,model=virtio-net-pci \

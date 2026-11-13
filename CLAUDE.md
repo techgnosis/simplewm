@@ -146,7 +146,7 @@ plan and describes each script. `distro/build.sh` builds simplewm for musl
 (`build-simplewm.sh`, into `target/alpine/`), the root filesystem, kernel, initramfs and
 disk image (inside an Alpine container, `distro/container.sh`), and `distro/run.sh` boots
 them in QEMU, which starts straight into simplewm (`/sbin/init` is simplewm-init). Claude can test a boot itself with
-`distro/run.sh headless` (no window): pipe commands into the serial root shell, take
+`distro/run.sh headless` (no window, and changes to the disk are thrown away): pipe commands into the serial root shell, take
 screenshots with Ctrl+A C then `screendump distro/out/x.ppm` (convert PPM to PNG to view),
 and end with `poweroff`. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
 
