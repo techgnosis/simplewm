@@ -27,11 +27,6 @@ const GAP: i32 = 8;
 
 const BUS_W: i32 = 600;
 const BUS_LINE_H: i32 = 22;
-const BUS_NOTES: [&str; 3] = [
-    "Apps, and simplewm's file dialogs, talk to each other over this bus.",
-    "Stopping it cuts them off; the file dialogs come back when it starts.",
-    "The bus also starts some programs on demand, when an app asks for them.",
-];
 
 pub(super) const LOG_WIN_W: i32 = 860;
 pub(super) const LOG_WIN_H: i32 = 500;
@@ -69,7 +64,6 @@ struct BusLayout {
     row: ServiceRow,
     separator: Rect,
     address: Rect,
-    notes: Vec<Rect>,
 }
 
 fn bus_layout(c: Rect) -> BusLayout {
@@ -83,16 +77,11 @@ fn bus_layout(c: Rect) -> BusLayout {
     let separator = Rectangle::new((x, y).into(), (w, 1).into());
     y += 1 + PAD;
     let address = Rectangle::new((x, y).into(), (w, BUS_LINE_H).into());
-    y += BUS_LINE_H + 6;
-    let notes = (0..BUS_NOTES.len() as i32)
-        .map(|i| Rectangle::new((x, y + i * BUS_LINE_H).into(), (w, BUS_LINE_H).into()))
-        .collect();
     BusLayout {
         header,
         row,
         separator,
         address,
-        notes,
     }
 }
 
@@ -200,10 +189,9 @@ impl super::Panels {
     // --- D-Bus applet ---------------------------------------------------------
 
     pub(super) fn bus_size(&self) -> (i32, i32) {
-        let notes = BUS_NOTES.len() as i32 * BUS_LINE_H;
         (
             BUS_W,
-            PAD + HEADER_H + SERVICE_ROW_H + PAD + 1 + PAD + BUS_LINE_H + 6 + notes + PAD,
+            PAD + HEADER_H + SERVICE_ROW_H + PAD + 1 + PAD + BUS_LINE_H + PAD,
         )
     }
 
@@ -248,9 +236,6 @@ impl super::Panels {
             l.address.loc.x,
             l.address,
         ));
-        for (note, r) in BUS_NOTES.iter().zip(&l.notes) {
-            elems.extend(ui::text_in_alpha(text, renderer, note, r.loc.x, *r, 0.6));
-        }
         elems.push(ui::solid(&mut solids[2], l.separator, SEPARATOR));
     }
 
