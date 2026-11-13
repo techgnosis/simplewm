@@ -191,5 +191,4 @@ If a login prompt is ever wanted, the usual fallback is `getty` with autologin o
 - How much of that simplewm could take over itself, and what has to stay a separate
   root process (simplewm runs unprivileged, so loading drivers and changing `/dev`
   permissions can't move into it).
-- What replaces `systemctl --user` in the portal clean-up and the Desktop Portal checks.
 - A custom kernel with the machine's drivers built in.
