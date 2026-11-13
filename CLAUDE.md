@@ -93,6 +93,28 @@ still growing: the user is open to experiments and new features, within the rule
   wrap their D-Bus calls in it on their worker thread. Never call `block_on` from inside a
   served D-Bus method.
 
+## Runtime dependencies
+
+What simplewm itself links, loads, runs or reads, on a systemd host (udevd and logind
+running, and a user session that provides `XDG_RUNTIME_DIR` and the session bus). Check
+linked libraries with `readelf -d target/release/simplewm | grep NEEDED`.
+
+- To start (TTY): libseat (talks to logind; seatd would also work), libudev, libinput,
+  libgbm and `libEGL.so.1` (loaded at startup) from Mesa or another GL stack,
+  libxkbcommon plus xkeyboard-config data (startup panics without it), libsqlite3,
+  glibc. Nested also needs the host's Wayland or X11 client libraries, which winit loads.
+  The font is compiled in and the cursor is drawn by simplewm.
+- Per feature (simplewm starts without them):
+  - Sound applet: `pw-dump` (PipeWire) and `wpctl` (WirePlumber).
+  - Portal: the D-Bus session bus (zbus is pure Rust, no libdbus).
+  - Portal clean-up and the Desktop Portal applet's checks: `systemctl --user`.
+  - File Picker filters by MIME type: `/usr/share/mime/globs2` (shared-mime-info).
+  - Network applet Apply: `/usr/bin/sudo`, `/bin/sh`, `ip` (iproute2), and `mktemp`,
+    `chmod`, `mv`, `rm`. Reading the card uses only `/sys`, `/proc` and netlink.
+  - Launcher: whatever is listed (default `/usr/bin/alacritty`).
+
+Update this list when a change adds or drops one.
+
 ## Code map (`src/`)
 
 - `main.rs`: picks the backend and runs the calloop event loop.
