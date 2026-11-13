@@ -26,6 +26,7 @@ use crate::{
 };
 
 const BTN_LEFT: u32 = 0x110;
+const BTN_RIGHT: u32 = 0x111;
 /// Key repeat for simplewm's own windows, matching the rate given to clients.
 const REPEAT_DELAY_MS: u64 = 200;
 const REPEAT_RATE: u64 = 25;
@@ -418,6 +419,15 @@ impl State {
             return Press::Consume;
         }
 
+        if let Hit::WindowTab(w) = &hit {
+            if button == BTN_LEFT {
+                self.focus_window(Some(w));
+            } else if button == BTN_RIGHT {
+                self.center_window(w);
+            }
+            return Press::Consume;
+        }
+
         if button != BTN_LEFT {
             return match hit {
                 Hit::Content(w, ..) => {
@@ -547,7 +557,7 @@ impl State {
                 self.focus_window(Some(&w));
                 Press::Consume
             }
-            Hit::Menu(_) | Hit::Bar | Hit::Background => Press::Consume,
+            Hit::Menu(_) | Hit::WindowTab(_) | Hit::Bar | Hit::Background => Press::Consume,
         }
     }
 
@@ -633,6 +643,24 @@ impl State {
             }
             MenuKind::Size(window) => self.apply_size(&window, index),
         }
+    }
+
+    /// Raise a window and move it, keeping its size, to the middle of the area
+    /// below the bar. One bigger than that area goes to its top left corner, so
+    /// its title bar can be reached.
+    fn center_window(&mut self, window: &Window) {
+        let Some(content) = self.space.element_geometry(window) else {
+            return;
+        };
+        let out = self.output_geometry();
+        let frame = ui::frame_rect(content);
+        let area_top = out.loc.y + ui::BAR_HEIGHT;
+        let area_h = out.size.h - ui::BAR_HEIGHT;
+        let x = (out.loc.x + (out.size.w - frame.size.w) / 2).max(out.loc.x);
+        let y = (area_top + (area_h - frame.size.h) / 2).max(area_top);
+        let loc = content.loc + (Point::from((x, y)) - frame.loc);
+        self.focus_window(Some(window));
+        self.space.map_element(window.clone(), loc, false);
     }
 
     /// Move/resize a window to one of the regions in `ui::SIZE_OPTIONS`.

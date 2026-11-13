@@ -103,6 +103,8 @@ pub struct State {
     pub stack: Vec<StackEntry>,
     pub backend: Option<Backend>,
     pub windows_opened: u32,
+    /// Windows numbered so far for their bar tabs.
+    pub windows_tagged: u32,
     /// Backend details recorded at startup, shown in the Environment applet.
     pub startup_info: Vec<(String, String)>,
     /// Screenshot worker threads report back through this.
@@ -255,6 +257,7 @@ impl State {
             stack: Vec::new(),
             backend: None,
             windows_opened: 0,
+            windows_tagged: 0,
             startup_info: Vec::new(),
             screenshot_tx,
             portal_check_tx,

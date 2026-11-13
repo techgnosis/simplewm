@@ -83,7 +83,7 @@ still growing: the user is open to experiments and new features, within the rule
 - `cargo build`, `cargo clippy --all-targets` (keep it at zero warnings), `cargo test`. Run
   `cargo fmt` whenever you like.
 - Tests cover the logic that doesn't need a screen: the settings file, text fields, row
-  lists, File Picker listing and search, screenshot PNGs, portal globs and checks, network
+  lists, File Picker listing and search, bar tab layout, screenshot PNGs, portal globs and checks, network
   address and DNS parsing, resolv.conf contents, PipeWire output parsing, simplewm-init's
   account lookup, and the service manager's process handling (exit descriptions, PID handling, output cleaning). A few only do
   something on a machine that has the hardware or service.
@@ -185,7 +185,10 @@ sparse file; busybox's `cp` in the container can't keep it sparse). `build.sh` e
   during a screenshot, the focused File Picker, the text field being edited, and otherwise
   the focused client.
 - `grabs.rs`: moving and resizing windows and panels.
-- `ui.rs`: the bar, menus, the Size picker, decorations, the cursor, toasts and
+- `ui.rs`: the bar (including a tab per window, left of the centered buttons: the
+  number it got when it opened and its process name from `/proc/<pid>/comm`, stored as
+  a `WindowTag` in its user data; hovering a tab outlines and tints the window red,
+  left click raises it, right click centers it below the bar), menus, the Size picker, decorations, the cursor, toasts and
   `build_elements` (the whole scene, front-most first), plus drawing helpers (`text_in`,
   `text_centered`, `text_in_alpha`, `solid`).
 - `text.rs`: font rasterizing with fontdue (`measure`, `fit`).

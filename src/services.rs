@@ -716,6 +716,11 @@ mod tests {
     #[test]
     fn finds_processes() {
         let mut child = Command::new("sleep").arg("5").spawn().unwrap();
+        // The child is only named sleep once it has exec'd.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while find_process("sleep").is_none() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
         assert!(find_process("sleep").is_some());
         assert!(describe_pid(child.id()).contains("sleep"));
         child.kill().unwrap();

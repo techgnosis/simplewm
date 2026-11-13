@@ -92,6 +92,16 @@ const TOAST_TIME: Duration = Duration::from_millis(2500);
 /// Outline drawn on top for windows hidden entirely behind others.
 const HIDDEN_OUTLINE: [f32; 4] = [0.90, 0.15, 0.15, 1.0];
 
+// Window tabs on the bar, and the red highlight of a hovered tab's window.
+const TAB_MAX_W: i32 = 170;
+const TAB_MIN_W: i32 = 44;
+const TAB_PAD: i32 = 8;
+const TAB_FOCUSED: [f32; 4] = TITLE_FOCUSED;
+const TAB_FOCUSED_HOT: [f32; 4] = [0.30, 0.44, 0.66, 1.0];
+const MARK_EDGE: [f32; 4] = [1.0, 0.12, 0.12, 1.0];
+const MARK_FILL: [f32; 4] = [0.35 * 1.0, 0.35 * 0.10, 0.35 * 0.10, 0.35];
+const MARK_THICK: i32 = 4;
+
 pub const CLEAR_COLOR: [f32; 4] = BG_COLOR;
 
 render_elements! {
@@ -277,6 +287,63 @@ pub fn bar_buttons(text: &TextRenderer, out: Rectangle<i32, Logical>) -> BarRect
     bar_layout(text, out).0
 }
 
+/// What a window's bar tab shows: a number given when it opened (counting up
+/// from 1) and the name of the process that owns it.
+pub struct WindowTag {
+    pub id: u32,
+    pub name: String,
+}
+
+impl WindowTag {
+    pub fn label(&self) -> String {
+        format!("{} {}", self.id, self.name)
+    }
+}
+
+/// The tag stored on `window` when it opened.
+pub fn window_tag(window: &Window) -> Option<&WindowTag> {
+    window.user_data().get::<WindowTag>()
+}
+
+/// Name of the program behind `pid`, from `/proc/<pid>/comm`.
+pub fn process_name(pid: i32) -> Option<String> {
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    let comm = comm.trim();
+    (!comm.is_empty()).then(|| comm.to_string())
+}
+
+/// One window's tab on the bar.
+pub struct WindowTab {
+    pub window: Window,
+    pub rect: Rectangle<i32, Logical>,
+    pub label: String,
+}
+
+/// Lay out tabs with the given full labels from `left` to `right` (x
+/// coordinates), at most `TAB_MAX_W` wide each. They shrink to share the
+/// room, and tabs that won't fit even at `TAB_MIN_W` are left out. Returns
+/// each tab's x and width.
+pub fn tab_slots(widths: &[i32], left: i32, right: i32) -> Vec<(i32, i32)> {
+    let room = right - left;
+    let n = widths.len() as i32;
+    if n == 0 || room < TAB_MIN_W {
+        return Vec::new();
+    }
+    let fits = ((room + BAR_GAP) / (TAB_MIN_W + BAR_GAP)).min(n);
+    let share = (room - (fits - 1) * BAR_GAP) / fits;
+    let mut x = left;
+    widths
+        .iter()
+        .take(fits as usize)
+        .map(|&w| {
+            let w = w.clamp(TAB_MIN_W, TAB_MAX_W).min(share);
+            let slot = (x, w);
+            x += w + BAR_GAP;
+            slot
+        })
+        .collect()
+}
+
 /// Size menu options: label and the target region in halves of the usable
 /// area, as (x0, y0, x1, y1) where 0 = start, 1 = middle, 2 = end.
 pub const SIZE_OPTIONS: [(&str, [i32; 4]); 7] = [
@@ -401,6 +468,8 @@ pub enum Hit {
     Menu(Option<usize>),
     Panel(PanelId, PanelHit),
     BarButton(BarButton),
+    /// A window's tab on the bar.
+    WindowTab(Window),
     Bar,
     Close(Window),
     SizeButton(Window),
@@ -413,6 +482,34 @@ pub enum Hit {
 }
 
 impl State {
+    /// The windows' tabs on the bar, in the order they opened, left of the
+    /// centered buttons.
+    pub fn window_tabs(&self) -> Vec<WindowTab> {
+        let out = self.output_geometry();
+        let text = &self.ui.text;
+        let mut windows: Vec<(u32, Window, String)> = self
+            .space
+            .elements()
+            .filter_map(|w| window_tag(w).map(|t| (t.id, w.clone(), t.label())))
+            .collect();
+        windows.sort_by_key(|(id, ..)| *id);
+        let widths: Vec<i32> = windows
+            .iter()
+            .map(|(_, _, l)| text.measure(l) + 2 * TAB_PAD)
+            .collect();
+        let group_left = bar_buttons(text, out)[0].1.loc.x;
+        let slots = tab_slots(&widths, out.loc.x + BAR_GAP, group_left - CLOCK_GAP);
+        windows
+            .into_iter()
+            .zip(slots)
+            .map(|((_, window, label), (x, w))| WindowTab {
+                window,
+                rect: Rectangle::new((x, out.loc.y + 4).into(), (w, BAR_HEIGHT - 8).into()),
+                label: text.fit(&label, w - 2 * TAB_PAD),
+            })
+            .collect()
+    }
+
     pub fn hit_test(&self, pos: Point<f64, Logical>) -> Hit {
         if let Some(menu) = &self.ui.menu
             && menu.rect.to_f64().contains(pos)
@@ -425,6 +522,11 @@ impl State {
             for (b, r) in bar_buttons(&self.ui.text, out) {
                 if r.to_f64().contains(pos) {
                     return Hit::BarButton(b);
+                }
+            }
+            for tab in self.window_tabs() {
+                if tab.rect.to_f64().contains(pos) {
+                    return Hit::WindowTab(tab.window);
                 }
             }
             return Hit::Bar;
@@ -486,6 +588,8 @@ struct DecoBuffers {
     bottom: SolidColorBuffer,
     close: SolidColorBuffer,
     size: SolidColorBuffer,
+    /// The window's tab on the bar.
+    tab: SolidColorBuffer,
 }
 
 impl Default for DecoBuffers {
@@ -497,6 +601,7 @@ impl Default for DecoBuffers {
             bottom: solid_buffer(),
             close: solid_buffer(),
             size: solid_buffer(),
+            tab: solid_buffer(),
         }
     }
 }
@@ -518,6 +623,9 @@ pub struct Ui {
     icon_fills: Vec<SolidColorBuffer>,
     /// Edge buffers for hidden-window outlines, four per hidden window.
     hidden_outlines: Vec<SolidColorBuffer>,
+    /// Red highlight of the window whose bar tab is hovered: four edges, then
+    /// the tint over the whole frame.
+    mark: [SolidColorBuffer; 5],
     cursor: MemoryRenderBuffer,
 }
 
@@ -537,6 +645,7 @@ impl Ui {
             icon_screens: SIZE_OPTIONS.iter().map(|_| solid_buffer()).collect(),
             icon_fills: SIZE_OPTIONS.iter().map(|_| solid_buffer()).collect(),
             hidden_outlines: Vec::new(),
+            mark: std::array::from_fn(|_| solid_buffer()),
             cursor: crate::text::arrow_cursor(),
         }
     }
@@ -881,6 +990,26 @@ impl State {
             elems.push(solid(buf, edge, HIDDEN_OUTLINE));
         }
 
+        // --- red highlight of the window whose tab is hovered ---------------
+        if let Hit::WindowTab(w) = &hovered
+            && let Some(content) = self.space.element_geometry(w)
+        {
+            let frame = frame_rect(content);
+            let (x, y, fw, fh) = (frame.loc.x, frame.loc.y, frame.size.w, frame.size.h);
+            let t = MARK_THICK;
+            let edges = [
+                Rectangle::new((x - t, y - t).into(), (fw + 2 * t, t).into()),
+                Rectangle::new((x - t, y + fh).into(), (fw + 2 * t, t).into()),
+                Rectangle::new((x - t, y).into(), (t, fh).into()),
+                Rectangle::new((x + fw, y).into(), (t, fh).into()),
+            ];
+            let (edge_bufs, fill) = ui.mark.split_at_mut(4);
+            for (buf, edge) in edge_bufs.iter_mut().zip(edges) {
+                elems.push(solid(buf, edge, MARK_EDGE));
+            }
+            elems.push(solid(&mut fill[0], frame, MARK_FILL));
+        }
+
         // --- top bar --------------------------------------------------------
         let open_bar = match ui.menu.as_ref().map(|m| &m.kind) {
             Some(MenuKind::Launcher(_)) => Some(BarButton::Launcher),
@@ -893,6 +1022,34 @@ impl State {
             let color = if hot { BAR_BUTTON_HOT } else { BAR_BUTTON };
             elems.push(solid(&mut ui.bar_buttons[i], r, color));
         }
+        for tab in self.window_tabs() {
+            let ui = &mut self.ui;
+            elems.extend(text_in(
+                &mut ui.text,
+                renderer,
+                &tab.label,
+                tab.rect.loc.x + TAB_PAD,
+                tab.rect,
+            ));
+            let hot = matches!(&hovered, Hit::WindowTab(w) if *w == tab.window);
+            let color = match (focused.as_ref() == Some(&tab.window), hot) {
+                (true, true) => TAB_FOCUSED_HOT,
+                (true, false) => TAB_FOCUSED,
+                (false, true) => BAR_BUTTON_HOT,
+                (false, false) => BAR_BUTTON,
+            };
+            tab.window
+                .user_data()
+                .insert_if_missing(|| RefCell::new(DecoBuffers::default()));
+            let mut deco = tab
+                .window
+                .user_data()
+                .get::<RefCell<DecoBuffers>>()
+                .unwrap()
+                .borrow_mut();
+            elems.push(solid(&mut deco.tab, tab.rect, color));
+        }
+        let ui = &mut self.ui;
         let bar = Rectangle::new(out.loc, (out.size.w, BAR_HEIGHT).into());
         // The text cache keeps the clock cheap; it only re-rasterizes when
         // the minute changes.
@@ -1042,4 +1199,32 @@ fn screenshot_overlay(
         rect(sx + sw, sy, ox + ow - (sx + sw), sh),
         SHOT_DIM,
     ));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tabs_keep_their_width_when_there_is_room() {
+        let slots = tab_slots(&[60, 300], 0, 1000);
+        assert_eq!(slots, vec![(0, 60), (60 + BAR_GAP, TAB_MAX_W)]);
+    }
+
+    #[test]
+    fn tabs_shrink_to_share_the_room() {
+        let slots = tab_slots(&[150, 150, 150], 0, 300);
+        assert_eq!(slots.len(), 3);
+        let (x, w) = *slots.last().unwrap();
+        assert!(x + w <= 300);
+        assert!(slots.iter().all(|&(_, w)| w >= TAB_MIN_W));
+    }
+
+    #[test]
+    fn tabs_that_cannot_fit_are_left_out() {
+        let slots = tab_slots(&[100; 10], 0, 2 * TAB_MIN_W + BAR_GAP);
+        assert_eq!(slots.len(), 2);
+        assert!(tab_slots(&[100], 0, TAB_MIN_W - 1).is_empty());
+        assert!(tab_slots(&[], 0, 500).is_empty());
+    }
 }

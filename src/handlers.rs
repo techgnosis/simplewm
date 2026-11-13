@@ -217,10 +217,34 @@ impl XdgShellHandler for State {
         surface.with_pending_state(|state| {
             state.decoration_mode = Some(DecorationMode::ServerSide);
         });
+        // The bar tab's label: a number and the owning process's name (its
+        // app ID if the process can't be found).
+        let pid = surface
+            .wl_surface()
+            .client()
+            .and_then(|c| c.get_credentials(&self.display_handle).ok())
+            .map(|c| c.pid);
+        let name = pid
+            .and_then(crate::ui::process_name)
+            .or_else(|| {
+                with_states(surface.wl_surface(), |states| {
+                    states
+                        .data_map
+                        .get::<XdgToplevelSurfaceData>()
+                        .and_then(|d| d.lock().unwrap().app_id.clone())
+                })
+            })
+            .unwrap_or_else(|| "window".to_string());
+        self.windows_tagged += 1;
+        let tag = crate::ui::WindowTag {
+            id: self.windows_tagged,
+            name,
+        };
         let window = Window::new_wayland_window(surface);
         window
             .user_data()
             .insert_if_missing(|| RefCell::new(ResizeState::Idle));
+        window.user_data().insert_if_missing(|| tag);
         let loc = self.initial_window_location();
         self.space.map_element(window.clone(), loc, false);
         self.focus_window(Some(&window));
