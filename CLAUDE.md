@@ -186,7 +186,7 @@ sparse file; busybox's `cp` in the container can't keep it sparse). `build.sh` e
 - `grabs.rs`: moving and resizing windows and panels.
 - `ui.rs`: the bar (including a tab per window, left of the centered buttons: the
   number it got when it opened and its process name from `/proc/<pid>/comm`, stored as
-  a `WindowTag` in its user data; hovering a tab outlines the window in red like a fully hidden one,
+  a `WindowTag` in its user data; hovering a tab outlines the window in red (the only time a red outline shows),
   left click raises it, right click centers it below the bar), menus, the Size picker, decorations, the cursor, toasts and
   `build_elements` (the whole scene, front-most first), plus drawing helpers (`text_in`,
   `text_centered`, `text_in_alpha`, `solid`).

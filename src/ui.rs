@@ -89,8 +89,8 @@ const TOAST_PAD: i32 = 14;
 const TOAST_H: i32 = 32;
 const TOAST_TIME: Duration = Duration::from_millis(2500);
 
-/// Outline drawn on top for windows hidden entirely behind others.
-const HIDDEN_OUTLINE: [f32; 4] = [0.90, 0.15, 0.15, 1.0];
+/// Red outline of the window whose bar tab is hovered.
+const TAB_MARK: [f32; 4] = [0.90, 0.15, 0.15, 1.0];
 
 // Window tabs on the bar.
 const TAB_MAX_W: i32 = 170;
@@ -618,8 +618,6 @@ pub struct Ui {
     menu_hl: SolidColorBuffer,
     icon_screens: Vec<SolidColorBuffer>,
     icon_fills: Vec<SolidColorBuffer>,
-    /// Edge buffers for hidden-window outlines, four per hidden window.
-    hidden_outlines: Vec<SolidColorBuffer>,
     /// Red outline (four edges) of the window whose bar tab is hovered.
     mark: [SolidColorBuffer; 4],
     cursor: MemoryRenderBuffer,
@@ -640,7 +638,6 @@ impl Ui {
             menu_hl: solid_buffer(),
             icon_screens: SIZE_OPTIONS.iter().map(|_| solid_buffer()).collect(),
             icon_fills: SIZE_OPTIONS.iter().map(|_| solid_buffer()).collect(),
-            hidden_outlines: Vec::new(),
             mark: std::array::from_fn(|_| solid_buffer()),
             cursor: crate::text::arrow_cursor(),
         }
@@ -778,44 +775,7 @@ pub fn window_title(window: &Window) -> String {
     })
 }
 
-/// Whether `window` is a nested gamescope session (by its app ID).
-fn is_gamescope(window: &Window) -> bool {
-    let Some(toplevel) = window.toplevel() else {
-        return false;
-    };
-    with_states(toplevel.wl_surface(), |states| {
-        states
-            .data_map
-            .get::<XdgToplevelSurfaceData>()
-            .and_then(|d| d.lock().unwrap().app_id.clone())
-            .is_some_and(|id| id.eq_ignore_ascii_case("gamescope"))
-    })
-}
-
 impl State {
-    /// Frames of windows and panels that are completely hidden behind the
-    /// ones stacked above them (by any combination of them). Gamescope doesn't
-    /// count as covering anything, so a game doesn't get outlines drawn over it.
-    fn hidden_frames(&self) -> Vec<Rectangle<i32, Logical>> {
-        let mut above: Vec<Rectangle<i32, Logical>> = Vec::new();
-        let mut hidden = Vec::new();
-        for item in self.stack_top_down() {
-            let (content, covers) = match &item {
-                StackEntry::Window(w) => (self.space.element_geometry(w), !is_gamescope(w)),
-                StackEntry::Panel(id) => (Some(self.panels.content_rect(*id)), true),
-            };
-            let Some(content) = content else { continue };
-            let frame = frame_rect(content);
-            if !above.is_empty() && frame.subtract_rects(above.iter().copied()).is_empty() {
-                hidden.push(frame);
-            }
-            if covers {
-                above.push(frame);
-            }
-        }
-        hidden
-    }
-
     /// Build all render elements, front-most first.
     pub fn render_elements(&mut self, renderer: &mut GlesRenderer) -> Vec<CustomElement> {
         self.build_elements(renderer, false)
@@ -839,7 +799,6 @@ impl State {
             self.hit_test(ptr)
         };
         let focused = self.focused_window();
-        let hidden = self.hidden_frames();
 
         if !capture {
             if let Some(sel) = &self.ui.shot {
@@ -871,7 +830,7 @@ impl State {
             }
         }
 
-        self.scene_elements(renderer, out, hovered, focused, hidden, &mut elems);
+        self.scene_elements(renderer, out, hovered, focused, &mut elems);
         elems
     }
 
@@ -925,7 +884,6 @@ impl State {
         out: Rectangle<i32, Logical>,
         hovered: Hit,
         focused: Option<Window>,
-        hidden: Vec<Rectangle<i32, Logical>>,
         elems: &mut Vec<CustomElement>,
     ) {
         let ui = &mut self.ui;
@@ -978,21 +936,12 @@ impl State {
             elems.push(solid(&mut ui.menu_bg, menu.rect, MENU_BG));
         }
 
-        // --- outlines of fully hidden windows, above all windows ------------
-        ui.hidden_outlines
-            .resize_with(hidden.len() * 4, solid_buffer);
-        let edges = hidden.into_iter().flat_map(outline);
-        for (buf, edge) in ui.hidden_outlines.iter_mut().zip(edges) {
-            elems.push(solid(buf, edge, HIDDEN_OUTLINE));
-        }
-
         // --- red highlight of the window whose tab is hovered ---------------
         if let Hit::WindowTab(w) = &hovered
             && let Some(content) = self.space.element_geometry(w)
         {
-            // The same outline a fully hidden window gets.
             for (buf, edge) in ui.mark.iter_mut().zip(outline(frame_rect(content))) {
-                elems.push(solid(buf, edge, HIDDEN_OUTLINE));
+                elems.push(solid(buf, edge, TAB_MARK));
             }
         }
 
