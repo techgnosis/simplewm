@@ -268,14 +268,17 @@ headless (screenshots through QEMU's monitor).
   git-ignored. busybox's install script warns it can't create device nodes; harmless.
 - `run.sh` boots `out/` in QEMU with KVM: the serial console is the terminal (Ctrl+A
   then X quits; Ctrl+A then C switches to QEMU's monitor, where `screendump file.ppm` takes
-  a screenshot). The screen is a plain virtio-vga card, in a GTK window
+  a screenshot). The screen is a plain virtio-vga card sized to fill what a window can use
+  on the host's monitor (its preferred mode from `/sys/class/drm`, less simplewm's bar and
+  a window's title bar and borders; 3832x2096 on the user's 4K monitor), shown pixel for
+  pixel with no GTK menu bar (Ctrl+Alt+M shows it) and no scaling, in a GTK window
   (`qemu-ui-gtk` and `qemu-hw-display-virtio-vga` on Arch; the user installed
   `qemu-desktop`), or with `run.sh headless` no window, for testing from a script. No
   OpenGL passthrough: Alpine's Mesa is built without virgl (its gallium driver list for
   x86_64 has no `virgl`; Mesa says "virtio_gpu: driver missing"), so everything in the
   guest draws with llvmpipe whatever QEMU offers. (virtio-vga-gl with `egl-headless` also
-  crashed QEMU on exit and couldn't take screenshots: "no surface".) A virtio network card
-  on QEMU's user network (address 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3), and an
+  crashed QEMU on exit and couldn't take screenshots: "no surface".) 4 CPUs, because
+  llvmpipe at that size is busy. A virtio network card on QEMU's user network (address 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3), and an
   Intel HDA sound card played through the host's PipeWire if QEMU has that driver
   (`qemu-audio-pipewire`).
 - `initramfs-init` is the initramfs's `/init` (static busybox): it loads the drivers
