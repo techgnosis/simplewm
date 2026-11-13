@@ -265,7 +265,8 @@ headless (screenshots through QEMU's monitor).
   wheel, with the development password `USER_PASSWORD` for sudo; wheel may use sudo).
   bash is the login shell for the user and root, and the development consoles run it;
   `/bin/sh` stays busybox, which Alpine's package scripts and the Network applet's script
-  expect.
+  expect. procps-ng replaces busybox's `ps`, `top`, `pgrep` and friends (busybox's `ps`
+  has no `ps auxf` tree).
   Each build starts from an empty root, so simplewm's settings in the user's home start
   over too. Downloaded packages are kept in `cache/`. `root/`, `out/` and `cache/` are
   git-ignored. busybox's install script warns it can't create device nodes; harmless.

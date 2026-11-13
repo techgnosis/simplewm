@@ -28,6 +28,7 @@ PACKAGES="
     busybox
     bash
     musl-utils
+    procps-ng
     kmod
 
     eudev
