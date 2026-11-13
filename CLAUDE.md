@@ -8,9 +8,10 @@ still growing: the user is open to experiments and new features, within the rule
 
 - They never read the code. They judge simplewm by using it, so report changes in terms of
   what they'll see and do, not in terms of code.
-- Claude can't see the screen. After a UI change, say exactly what to try. The user runs it
-  nested (`make run`) or on a TTY (`./simplewm`, or `./debug.sh`, which runs a debug build that logs DRM
-  and session details to `simplewm-debug.log`). Their machine has one sound output (HDMI), one wired
+- Claude can't see the screen. After a UI change, say exactly what to try. The user runs it with
+  `make run`, nested or on a TTY (the release build, from `target/release`; nothing is copied
+  into the project folder), or `./debug.sh`, which runs a debug build that logs DRM
+  and session details to `simplewm-debug.log`. Their machine has one sound output (HDMI), one wired
   network card and one monitor.
 - Keep this file current when behavior or structure changes, and fix it whenever you find
   it wrong, without asking. It's for Claude; nobody else reads it.
@@ -98,7 +99,8 @@ still growing: the user is open to experiments and new features, within the rule
   runs the root `ip` script on a dummy card in a throwaway namespace, writing a scratch
   resolv.conf instead of the real one (no sudo, nothing real touched). Never test the sudo
   path with a wrong password: failed attempts count toward the account's faillock lockout.
-- `make` builds the release binary with `--locked`; `make install` puts it in `/usr/bin`.
+- `make` builds the release binary with `--locked` (left in `target/release`); `make run`
+  runs it, `make install` puts it in `/usr/bin`.
 
 ## Dependencies
 
