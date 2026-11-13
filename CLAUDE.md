@@ -32,7 +32,8 @@ still growing: the user is open to experiments and new features, within the rule
   switching when that changes: a resized VM window, another monitor on the connector),
   US keyboard layout, one bundled font (DejaVu Sans).
 - Windows always float. Title bars are always drawn by simplewm (server-side decorations
-  are forced). Size moves and resizes a window once (halves, quarters, full screen below
+  are forced, through xdg-decoration and KDE's older server-decoration protocol, the only
+  one GTK 3 apps such as Firefox ask). Size moves and resizes a window once (halves, quarters, full screen below
   the bar) and doesn't snap it there.
 - On a TTY simplewm is the desktop portal itself: it owns `org.freedesktop.portal.Desktop`
   on the session bus (no `xdg-desktop-portal` process) and only implements FileChooser

@@ -251,10 +251,13 @@ headless (screenshots through QEMU's monitor).
 image: the goal is a Firefox OS. It runs natively on Wayland under simplewm, drawing in
 software in the VM. It roughly doubled the root filesystem (419 to 788 MB). Tested by
 booting a copy of the image whose `~/.bash_profile` starts it in the background (simplewm
-is started through the login shell, so that runs alongside it). Still to do: it isn't in
-the Launcher by default (and settings reset with each build), it draws its own
-minimize/maximize/close buttons in its tab strip next to simplewm's title bar, and its
-file dialogs are GTK's own, not simplewm's portal.
+is started through the login shell, so that runs alongside it). `distro/firefox.js` is
+installed as `/usr/lib/firefox/defaults/pref/simplewm.js`: `browser.tabs.inTitlebar = 0`
+(tabs out of the title bar, so no Firefox minimize/maximize/close buttons; Alt still shows
+the menu bar) and `widget.use-xdg-desktop-portal.file-picker = 1` (Ctrl+O and File → Open
+File… open simplewm's File Picker; checked). With tabs out of the title bar, GTK 3 drew a
+title bar of its own: it only asks KDE's older server-decoration protocol, so simplewm now
+answers that one too, always "server side". Not in the Launcher by default yet.
 
 - `container.sh [command…]` runs a command (a shell by default) in an Alpine 3.24
   container with the project root mounted at `/work`. Root in the container is the host

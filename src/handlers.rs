@@ -2,10 +2,10 @@ use std::cell::RefCell;
 
 use smithay::{
     backend::{allocator::dmabuf::Dmabuf, renderer::ImportDma},
-    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_output,
-    delegate_pointer_constraints, delegate_presentation, delegate_relative_pointer, delegate_seat,
-    delegate_shm, delegate_single_pixel_buffer, delegate_viewporter, delegate_xdg_decoration,
-    delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_kde_decoration,
+    delegate_output, delegate_pointer_constraints, delegate_presentation,
+    delegate_relative_pointer, delegate_seat, delegate_shm, delegate_single_pixel_buffer,
+    delegate_viewporter, delegate_xdg_decoration, delegate_xdg_shell,
     desktop::{PopupKind, Window, find_popup_root_surface, get_popup_toplevel_coords},
     input::{
         Seat, SeatHandler, SeatState,
@@ -44,6 +44,16 @@ use smithay::{
         },
         shm::{ShmHandler, ShmState},
     },
+};
+
+use smithay::{
+    reexports::{
+        wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration::{
+            Mode as KdeDecorationMode, OrgKdeKwinServerDecoration,
+        },
+        wayland_server::WEnum,
+    },
+    wayland::shell::kde::decoration::{KdeDecorationHandler, KdeDecorationState},
 };
 
 use crate::{
@@ -355,14 +365,36 @@ impl XdgDecorationHandler for State {
     }
 
     fn request_mode(&mut self, toplevel: ToplevelSurface, _mode: DecorationMode) {
-        self.new_decoration(toplevel);
+        XdgDecorationHandler::new_decoration(self, toplevel);
     }
 
     fn unset_mode(&mut self, toplevel: ToplevelSurface) {
-        self.new_decoration(toplevel);
+        XdgDecorationHandler::new_decoration(self, toplevel);
     }
 }
 delegate_xdg_decoration!(State);
+
+// KDE's server-decoration protocol, the only one GTK 3 (Firefox) asks: always server side
+// too, whatever the client asks for.
+impl KdeDecorationHandler for State {
+    fn kde_decoration_state(&self) -> &KdeDecorationState {
+        &self.kde_decoration_state
+    }
+
+    fn new_decoration(&mut self, _surface: &WlSurface, decoration: &OrgKdeKwinServerDecoration) {
+        decoration.mode(KdeDecorationMode::Server);
+    }
+
+    fn request_mode(
+        &mut self,
+        _surface: &WlSurface,
+        decoration: &OrgKdeKwinServerDecoration,
+        _mode: WEnum<KdeDecorationMode>,
+    ) {
+        decoration.mode(KdeDecorationMode::Server);
+    }
+}
+delegate_kde_decoration!(State);
 
 // ---------------------------------------------------------------------------
 // Protocols for nested compositors (gamescope): viewporter, presentation-time,

@@ -30,7 +30,10 @@ use smithay::{
         presentation::PresentationState,
         relative_pointer::RelativePointerManagerState,
         selection::data_device::DataDeviceState,
-        shell::xdg::{XdgShellState, decoration::XdgDecorationState},
+        shell::{
+            kde::decoration::KdeDecorationState,
+            xdg::{XdgShellState, decoration::XdgDecorationState},
+        },
         shm::ShmState,
         single_pixel_buffer::SinglePixelBufferState,
         socket::ListeningSocketSource,
@@ -67,6 +70,8 @@ pub struct State {
     pub xdg_shell_state: XdgShellState,
     #[allow(dead_code)]
     pub xdg_decoration_state: XdgDecorationState,
+    /// KDE's older decoration protocol: GTK 3 (Firefox) only asks this one.
+    pub kde_decoration_state: KdeDecorationState,
     pub shm_state: ShmState,
     #[allow(dead_code)]
     pub output_manager_state: OutputManagerState,
@@ -126,6 +131,10 @@ impl State {
         let compositor_state = CompositorState::new::<Self>(&dh);
         let xdg_shell_state = XdgShellState::new::<Self>(&dh);
         let xdg_decoration_state = XdgDecorationState::new::<Self>(&dh);
+        let kde_decoration_state = KdeDecorationState::new::<Self>(
+            &dh,
+            smithay::reexports::wayland_protocols_misc::server_decoration::server::org_kde_kwin_server_decoration_manager::Mode::Server,
+        );
         let shm_state = ShmState::new::<Self>(&dh, vec![]);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<Self>(&dh);
         let mut seat_state = SeatState::new();
@@ -228,6 +237,7 @@ impl State {
             compositor_state,
             xdg_shell_state,
             xdg_decoration_state,
+            kde_decoration_state,
             shm_state,
             output_manager_state,
             seat_state,

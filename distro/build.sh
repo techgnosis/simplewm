@@ -107,6 +107,7 @@ install -m 755 /work/target/alpine/release/simplewm "$ROOT/usr/bin/simplewm"
 install -m 755 /work/target/alpine/release/simplewm-init "$ROOT/sbin/simplewm-init"
 ln -sf simplewm-init "$ROOT/sbin/init"
 echo simplewm > "$ROOT/etc/hostname"
+install -m 644 firefox.js "$ROOT/usr/lib/firefox/defaults/pref/simplewm.js"
 # udevd reads the hardware database from this compiled file.
 chroot "$ROOT" udevadm hwdb --update
 # dbus-daemon wants a machine ID.
