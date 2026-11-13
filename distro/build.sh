@@ -26,6 +26,7 @@ KERNEL=virt
 PACKAGES="
     alpine-baselayout
     busybox
+    bash
     musl-utils
     kmod
 
@@ -103,7 +104,9 @@ chroot "$ROOT" udevadm hwdb --update
 # dbus-daemon wants a machine ID.
 chroot "$ROOT" dbus-uuidgen --ensure=/etc/machine-id
 
-chroot "$ROOT" adduser -D -u 1000 -s /bin/sh -g "$USER_NAME" "$USER_NAME"
+# bash is the login shell (root's too); /bin/sh stays busybox for scripts.
+sed -i 's|^root:\(.*\):/bin/sh$|root:\1:/bin/bash|' "$ROOT/etc/passwd"
+chroot "$ROOT" adduser -D -u 1000 -s /bin/bash -g "$USER_NAME" "$USER_NAME"
 for g in $USER_GROUPS; do
     chroot "$ROOT" addgroup "$USER_NAME" "$g"
 done

@@ -1,4 +1,4 @@
-#!/bin/sh
+#!/bin/bash
 # /sbin/init, PID 1: mount the basics, start udevd (devices) and seatd (screen and input
 # access) as root, then run simplewm as the user, and start it again if it exits.
 #
@@ -62,7 +62,7 @@ for tty in ttyS0 tty2; do
     [ -c /dev/$tty ] || continue
     (
         while :; do
-            setsid -c sh -l <>/dev/$tty >&0 2>&0
+            setsid -c bash -l <>/dev/$tty >&0 2>&0
             sleep 1
         done
     ) &
