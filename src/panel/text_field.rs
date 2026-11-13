@@ -21,6 +21,7 @@ impl super::Panels {
             Field::PickName => &self.picker.name,
             Field::NetAddress => &self.net.address,
             Field::NetGateway => &self.net.gateway,
+            Field::NetDns => &self.net.dns,
             Field::SudoPassword => &self.sudo.password,
         }
     }
@@ -30,6 +31,7 @@ impl super::Panels {
             Field::PickName => &mut self.picker.name,
             Field::NetAddress => &mut self.net.address,
             Field::NetGateway => &mut self.net.gateway,
+            Field::NetDns => &mut self.net.dns,
             Field::SudoPassword => &mut self.sudo.password,
         }
     }

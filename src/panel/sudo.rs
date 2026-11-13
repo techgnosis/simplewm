@@ -1,6 +1,7 @@
 //! The Password window: asks for the user's password when something needs
 //! root, then does that through sudo on a worker thread. Today the only such
-//! thing is setting the network address (`crate::network::apply`). The window
+//! thing is setting the network address and DNS server
+//! (`crate::network::apply`). The window
 //! is not in the Control Panel; it opens when asked for, focused.
 //!
 //! The password lives in `SudoPrompt::password` only while it is typed. It is
@@ -39,6 +40,9 @@ impl SudoJob {
     /// Why the password is needed.
     fn reason(&self) -> String {
         match self {
+            SudoJob::Network { dev, cfg } if cfg.dns.is_some() => {
+                format!("Setting the network on {dev} and the DNS server needs your password.")
+            }
             SudoJob::Network { dev, .. } => {
                 format!("Setting the network address on {dev} needs your password.")
             }
@@ -201,7 +205,7 @@ impl super::Panels {
     /// Tell the applet that asked how its job went.
     fn job_finished(&mut self, job: &SudoJob, result: Result<(), String>) {
         match job {
-            SudoJob::Network { dev, .. } => self.network_applied(dev, result),
+            SudoJob::Network { dev, cfg } => self.network_applied(dev, cfg.dns.is_some(), result),
         }
     }
 

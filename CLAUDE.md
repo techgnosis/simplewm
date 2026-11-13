@@ -33,14 +33,18 @@ feature complete, so expect bug fixes and UI polish, not new features.
   `WAYLAND_DISPLAY` and `XDG_CURRENT_DESKTOP=simplewm` to systemd at startup, restarts the
   portal, and removes them on exit. Nested, it leaves the host session alone, so nested
   apps get the host's file dialogs.
-- simplewm runs with no special privileges. The Network applet sets a static IPv4 address
-  and gateway (no DHCP, no DNS) only when the user presses Apply: the Password window asks
-  for their password and runs one fixed `ip` script through `sudo -k -S` on a worker thread
-  (`network::apply`, `panel/sudo.rs`). The values reach the script only as separate
-  arguments after `network::parse` has checked them, never as shell text. The password is
-  passed to sudo on stdin and wiped afterwards. Nothing is set at startup; the applet says
-  when the card lacks the saved settings. polkit is masked on the user's machine, so
-  don't use it. NetworkManager must stay masked or it undoes the settings.
+- simplewm runs with no special privileges. The Network applet sets a static IPv4 address,
+  gateway and DNS server (no DHCP) only when the user presses Apply: the Password window
+  asks for their password and runs one fixed `ip` script through `sudo -k -S` on a worker
+  thread (`network::apply`, `panel/sudo.rs`). simplewm owns `/etc/resolv.conf`: when a DNS
+  server is set, the script replaces the whole file (renamed into place, replacing any
+  symlink) with a "simplewm owns this file" comment and one `nameserver` line
+  (`network::resolv_conf`). An empty DNS field leaves the file alone. The values reach the
+  script only as separate arguments after `network::parse` has checked them, never as
+  shell text. The password is passed to sudo on stdin and wiped afterwards. Nothing is set
+  at startup; the applet says when the card or resolv.conf lacks the saved settings. polkit
+  is masked on the user's machine, so don't use it. NetworkManager and systemd-resolved
+  must stay masked or they undo the settings.
 - The Sound applet drives PipeWire through `pw-dump` and `wpctl`, and WirePlumber remembers
   the choices. With one output it just names it; with several it lists them to choose from.
 
@@ -50,15 +54,15 @@ feature complete, so expect bug fixes and UI polish, not new features.
   `cargo fmt` whenever you like.
 - Tests cover the logic that doesn't need a screen: the settings database, text fields, row
   lists, File Picker listing and search, screenshot PNGs, portal globs and checks, network
-  address parsing and PipeWire output parsing. A few only do something on a machine that has
-  the hardware or service.
+  address and DNS parsing, resolv.conf contents and PipeWire output parsing. A few only do
+  something on a machine that has the hardware or service.
 - The `#[ignore]`d tests need a setup; each one's doc comment says how to run it. Two
   exercise D-Bus on a scratch bus: `dbus-run-session -- cargo test bus -- --ignored` drives
   the file dialog backend the way an app would and checks the Desktop Portal bus checks.
   Run it after touching `portal.rs`, `portal_check.rs` or zbus. `network::namespace_test`
-  runs the root `ip` script on a dummy card in a throwaway namespace (no sudo, nothing real
-  touched). Never test the sudo path with a wrong password: failed attempts count toward
-  the account's faillock lockout.
+  runs the root `ip` script on a dummy card in a throwaway namespace, writing a scratch
+  resolv.conf instead of the real one (no sudo, nothing real touched). Never test the sudo
+  path with a wrong password: failed attempts count toward the account's faillock lockout.
 - `make` builds the release binary with `--locked`; `make install` puts it in `/usr/bin`
   and installs the portal files.
 
@@ -101,7 +105,8 @@ feature complete, so expect bug fixes and UI polish, not new features.
   `text_centered`, `text_in_alpha`, `solid`).
 - `text.rs`: font rasterizing with fontdue (`measure`, `fit`).
 - Behind the applets, with no UI code:
-  - `network.rs`: reads the card (sysfs, rtnetlink dumps) and sets it (sudo + `ip`).
+  - `network.rs`: reads the card (sysfs, rtnetlink dumps) and `/etc/resolv.conf`, and sets
+    both (sudo + `ip`, then the resolv.conf rewrite).
   - `sound.rs`: PipeWire.
   - `screenshot.rs`: offscreen re-render, then the PNG is written on a worker thread.
   - `portal.rs`: the zbus FileChooser backend, on its own thread inside `zbus::block_on`.

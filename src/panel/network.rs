@@ -1,8 +1,10 @@
 //! The Network applet: shows the wired card's state and sets a static IPv4
-//! address and default gateway on it (see `crate::network`). Apply saves the
-//! values and sets them on the card, which needs root: it opens the Password
-//! window (see `sudo`). simplewm never sets them on its own, so after a reboot
-//! the applet points out that they need applying.
+//! address and default gateway on it, and the DNS server, which simplewm
+//! writes as the whole of /etc/resolv.conf (see `crate::network`). Apply saves
+//! the values and sets them, which needs root: it opens the Password window
+//! (see `sudo`). simplewm never sets them on its own, so after a reboot the
+//! applet points out when they need applying (resolv.conf survives reboots,
+//! the address doesn't).
 
 use smithay::{
     backend::renderer::{element::solid::SolidColorBuffer, gles::GlesRenderer},
@@ -22,7 +24,7 @@ use crate::{
 // --- Layout (logical pixels) -----------------------------------------------
 
 const NET_W: i32 = 560;
-const STATUS_ROWS: i32 = 9;
+const STATUS_ROWS: i32 = 10;
 const LABEL_W: i32 = 76;
 const FIELD_GAP: i32 = 8;
 const APPLY_W: i32 = 90;
@@ -30,6 +32,7 @@ const REFRESH_W: i32 = 90;
 
 const KEY_ADDRESS: &str = "net_address";
 const KEY_GATEWAY: &str = "net_gateway";
+const KEY_DNS: &str = "net_dns";
 
 #[derive(Default)]
 pub struct NetworkApplet {
@@ -37,8 +40,11 @@ pub struct NetworkApplet {
     pub address: String,
     /// "192.168.1.1", or empty for no default route.
     pub gateway: String,
-    /// What is saved: (address, gateway). The fields may differ while edited.
-    saved: (String, String),
+    /// "1.1.1.1", or empty to leave /etc/resolv.conf alone.
+    pub dns: String,
+    /// What is saved: (address, gateway, dns). The fields may differ while
+    /// edited.
+    saved: (String, String, String),
     status: RowList,
     /// Result of the last Apply: (message, is an error).
     note: Option<(String, bool)>,
@@ -53,6 +59,8 @@ struct NetLayout {
     address: Rect,
     gateway_label: Rect,
     gateway: Rect,
+    dns_label: Rect,
+    dns: Rect,
     note: Rect,
     apply: Rect,
     refresh: Rect,
@@ -75,6 +83,8 @@ fn layout(c: Rect) -> NetLayout {
     let (address_label, address) = row(y);
     y += FIELD_H + FIELD_GAP;
     let (gateway_label, gateway) = row(y);
+    y += FIELD_H + FIELD_GAP;
+    let (dns_label, dns) = row(y);
     y += FIELD_H + 4;
     let note = Rectangle::new((x, y).into(), (w, NOTE_H).into());
     y += NOTE_H + 4;
@@ -87,6 +97,8 @@ fn layout(c: Rect) -> NetLayout {
         address,
         gateway_label,
         gateway,
+        dns_label,
+        dns,
         note,
         apply,
         refresh,
@@ -98,8 +110,8 @@ fn content_height() -> i32 {
         + PAD
         + 1
         + PAD
-        + 2 * FIELD_H
-        + FIELD_GAP
+        + 3 * FIELD_H
+        + 2 * FIELD_GAP
         + 4
         + NOTE_H
         + 4
@@ -127,12 +139,14 @@ fn status_rows(saved: Option<network::Ipv4Config>) -> Vec<EnvRow> {
             if let Some(cfg) = saved {
                 let has_addr = s.addrs.contains(&(cfg.addr, cfg.prefix));
                 let has_gw = cfg.gateway.is_none_or(|g| s.gateways.contains(&g));
-                if !(has_addr && has_gw) {
+                let has_dns = cfg
+                    .dns
+                    .is_none_or(|d| network::nameservers().is_ok_and(|ns| ns == [d.to_string()]));
+                if !(has_addr && has_gw && has_dns) {
                     rows.insert(
                         0,
                         EnvRow::Line(
-                            "The card doesn't have your saved settings. Press Apply to set them."
-                                .into(),
+                            "Your saved settings aren't all set. Press Apply to set them.".into(),
                         ),
                     );
                 }
@@ -177,6 +191,14 @@ fn status_rows(saved: Option<network::Ipv4Config>) -> Vec<EnvRow> {
             network::describe(&err)
         ))),
     }
+    rows.push(item(
+        "DNS server",
+        match network::nameservers() {
+            Ok(ns) if ns.is_empty() => "none".into(),
+            Ok(ns) => ns.join(", "),
+            Err(err) => format!("can't read {}: {}", network::RESOLV_CONF, err),
+        },
+    ));
     rows
 }
 
@@ -187,17 +209,22 @@ impl super::Panels {
         if let Some(conn) = &self.db {
             self.net.address = super::db::load_setting(conn, KEY_ADDRESS).unwrap_or_default();
             self.net.gateway = super::db::load_setting(conn, KEY_GATEWAY).unwrap_or_default();
+            self.net.dns = super::db::load_setting(conn, KEY_DNS).unwrap_or_default();
         }
-        self.net.saved = (self.net.address.clone(), self.net.gateway.clone());
+        self.net.saved = (
+            self.net.address.clone(),
+            self.net.gateway.clone(),
+            self.net.dns.clone(),
+        );
     }
 
     /// The saved settings, if there are any and they are valid.
     fn saved_network(&self) -> Option<network::Ipv4Config> {
-        let (address, gateway) = &self.net.saved;
+        let (address, gateway, dns) = &self.net.saved;
         if address.is_empty() {
             return None;
         }
-        network::parse(address, gateway).ok()
+        network::parse(address, gateway, dns).ok()
     }
 
     pub(super) fn network_size(&self) -> (i32, i32) {
@@ -230,6 +257,7 @@ impl super::Panels {
         for (f, rect) in [
             (Field::NetAddress, l.address),
             (Field::NetGateway, l.gateway),
+            (Field::NetDns, l.dns),
         ] {
             if inside(rect) {
                 let cursor = (self.editing == Some(f)).then_some(self.cursor);
@@ -252,18 +280,22 @@ impl super::Panels {
     /// the password to set them on the card.
     pub fn network_apply(&mut self) {
         self.stop_editing();
-        let (address, gateway) = (
+        let (address, gateway, dns) = (
             self.net.address.trim().to_string(),
             self.net.gateway.trim().to_string(),
+            self.net.dns.trim().to_string(),
         );
-        if address.is_empty() && gateway.is_empty() {
-            self.save_settings(&[(KEY_ADDRESS, ""), (KEY_GATEWAY, "")]);
+        if address.is_empty() && gateway.is_empty() && dns.is_empty() {
+            self.save_settings(&[(KEY_ADDRESS, ""), (KEY_GATEWAY, ""), (KEY_DNS, "")]);
             self.net.saved = Default::default();
-            self.net.note = Some(("Cleared. The card keeps what it has now.".into(), false));
+            self.net.note = Some((
+                "Cleared. The card and resolv.conf keep what they have now.".into(),
+                false,
+            ));
             self.refresh_network();
             return;
         }
-        let cfg = match network::parse(&address, &gateway) {
+        let cfg = match network::parse(&address, &gateway, &dns) {
             Ok(cfg) => cfg,
             Err(err) => {
                 self.net.note = Some((err, true));
@@ -272,8 +304,13 @@ impl super::Panels {
         };
         self.net.address = address.clone();
         self.net.gateway = gateway.clone();
-        self.save_settings(&[(KEY_ADDRESS, &address), (KEY_GATEWAY, &gateway)]);
-        self.net.saved = (address, gateway);
+        self.net.dns = dns.clone();
+        self.save_settings(&[
+            (KEY_ADDRESS, &address),
+            (KEY_GATEWAY, &gateway),
+            (KEY_DNS, &dns),
+        ]);
+        self.net.saved = (address, gateway, dns);
         match network::ethernet_device() {
             None => {
                 self.net.note = Some((
@@ -289,11 +326,16 @@ impl super::Panels {
         self.refresh_network();
     }
 
-    /// How setting the address on `dev` went (from the Password window).
-    pub(super) fn network_applied(&mut self, dev: &str, result: Result<(), String>) {
+    /// How setting the address on `dev` (and the DNS server, if `dns`) went,
+    /// from the Password window.
+    pub(super) fn network_applied(&mut self, dev: &str, dns: bool, result: Result<(), String>) {
         self.net.note = Some(match result {
+            Ok(()) if dns => (
+                format!("Set on {dev}, written to resolv.conf, and saved."),
+                false,
+            ),
             Ok(()) => (format!("Set on {dev} and saved."), false),
-            Err(err) => (format!("Saved, but not set on the card: {err}"), true),
+            Err(err) => (format!("Saved, but not set: {err}"), true),
         });
         self.refresh_network();
     }
@@ -310,8 +352,9 @@ impl super::Panels {
             .status
             .render(l.status, &mut self.network.solids, text, renderer, elems);
 
-        // Buffers: 3 per field, separator, Apply, Refresh.
-        let s = bufs(&mut self.net.solids, 9);
+        // Buffers: 3 per field (address, gateway, DNS), separator, Apply,
+        // Refresh.
+        let s = bufs(&mut self.net.solids, 12);
         let fields = [
             (
                 Field::NetAddress,
@@ -327,6 +370,13 @@ impl super::Panels {
                 l.gateway,
                 "192.168.1.1 (or empty for none)",
             ),
+            (
+                Field::NetDns,
+                "DNS",
+                l.dns_label,
+                l.dns,
+                "1.1.1.1 (or empty to leave resolv.conf alone)",
+            ),
         ];
         for (k, (f, label, label_rect, rect, placeholder)) in fields.into_iter().enumerate() {
             elems.extend(ui::text_in(
@@ -339,7 +389,8 @@ impl super::Panels {
             let cursor = (self.editing == Some(f)).then_some(self.cursor);
             let value = match f {
                 Field::NetAddress => &self.net.address,
-                _ => &self.net.gateway,
+                Field::NetGateway => &self.net.gateway,
+                _ => &self.net.dns,
             };
             render_field(
                 text,
@@ -380,10 +431,10 @@ impl super::Panels {
                 BUTTON
             }
         };
-        elems.push(ui::solid(&mut s[6], l.separator, SEPARATOR));
-        elems.push(ui::solid(&mut s[7], l.apply, button(PanelHit::NetApply)));
+        elems.push(ui::solid(&mut s[9], l.separator, SEPARATOR));
+        elems.push(ui::solid(&mut s[10], l.apply, button(PanelHit::NetApply)));
         elems.push(ui::solid(
-            &mut s[8],
+            &mut s[11],
             l.refresh,
             button(PanelHit::NetRefresh),
         ));

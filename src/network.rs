@@ -1,4 +1,6 @@
-//! Static IPv4 setup for the wired network card, behind the Network applet.
+//! Static IPv4 setup for the wired network card, behind the Network applet,
+//! plus the DNS server: simplewm owns /etc/resolv.conf and writes the whole
+//! file (a comment and one `nameserver` line) when the user applies one.
 //!
 //! The card's state is read without privileges, from /sys/class/net and
 //! rtnetlink dumps. Changing it needs root: `apply` runs one fixed `ip` script
@@ -15,17 +17,24 @@ use std::{
     process::{Command, Stdio},
 };
 
-/// An address with its prefix length, and the gateway for the default route.
+/// An address with its prefix length, the gateway for the default route, and
+/// the DNS server for /etc/resolv.conf.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Ipv4Config {
     pub addr: Ipv4Addr,
     pub prefix: u8,
     pub gateway: Option<Ipv4Addr>,
+    /// None leaves /etc/resolv.conf as it is.
+    pub dns: Option<Ipv4Addr>,
 }
 
-/// Parse the applet's fields: "192.168.1.50/24" and "192.168.1.1" (the gateway
-/// may be empty for no default route).
-pub fn parse(address: &str, gateway: &str) -> Result<Ipv4Config, String> {
+/// The file simplewm owns.
+pub const RESOLV_CONF: &str = "/etc/resolv.conf";
+
+/// Parse the applet's fields: "192.168.1.50/24", "192.168.1.1" and "1.1.1.1"
+/// (the gateway may be empty for no default route, the DNS server empty to
+/// leave /etc/resolv.conf alone).
+pub fn parse(address: &str, gateway: &str, dns: &str) -> Result<Ipv4Config, String> {
     let address = address.trim();
     let (addr, prefix) = address
         .split_once('/')
@@ -69,11 +78,49 @@ pub fn parse(address: &str, gateway: &str) -> Result<Ipv4Config, String> {
         }
         Some(gw)
     };
+
+    let dns = dns.trim();
+    let dns = if dns.is_empty() {
+        None
+    } else {
+        let ns: Ipv4Addr = dns
+            .parse()
+            .map_err(|_| format!("The DNS server \"{dns}\" is not an IPv4 address."))?;
+        if ns.is_unspecified() || ns.is_multicast() || ns.is_broadcast() {
+            return Err(format!("{ns} can't be used as a DNS server."));
+        }
+        Some(ns)
+    };
     Ok(Ipv4Config {
         addr,
         prefix,
         gateway,
+        dns,
     })
+}
+
+/// The whole of /etc/resolv.conf for DNS server `dns`.
+pub fn resolv_conf(dns: Ipv4Addr) -> String {
+    format!(
+        "# simplewm owns this file and rewrites it from its Network applet. Edits here are lost.\nnameserver {dns}\n"
+    )
+}
+
+/// The `nameserver` lines in /etc/resolv.conf, in order.
+pub fn nameservers() -> io::Result<Vec<String>> {
+    Ok(parse_nameservers(&fs::read_to_string(RESOLV_CONF)?))
+}
+
+fn parse_nameservers(conf: &str) -> Vec<String> {
+    conf.lines()
+        .filter_map(|l| {
+            let mut words = l.split_whitespace();
+            (words.next() == Some("nameserver"))
+                .then(|| words.next())
+                .flatten()
+                .map(str::to_string)
+        })
+        .collect()
 }
 
 fn mask(prefix: u8) -> u32 {
@@ -189,16 +236,28 @@ pub fn network_manager_running() -> bool {
 
 /// Run as root by `apply`: switch the card on, set the address (keeping it if
 /// it is already there, so connections survive), remove the other addresses,
-/// and replace the default route. Arguments: card, address/prefix, gateway
-/// (may be empty), then the addresses to remove.
+/// replace the default route, and replace /etc/resolv.conf. Arguments: card,
+/// address/prefix, gateway (may be empty), the whole new resolv.conf (empty to
+/// leave it alone), then the addresses to remove. The file is written beside
+/// the old one and renamed over it, so it is never seen half written, and a
+/// symlink there (from systemd-resolved, say) is replaced by the file.
 const APPLY_SCRIPT: &str = r#"set -e
-dev=$1 addr=$2 gw=$3
-shift 3
+resolv=/etc/resolv.conf
+dev=$1 addr=$2 gw=$3 conf=$4
+shift 4
 ip link set dev "$dev" up
 ip -4 addr replace "$addr" brd + dev "$dev"
 for old in "$@"; do ip -4 addr del "$old" dev "$dev"; done
 ip -4 route flush exact 0.0.0.0/0 dev "$dev"
 if [ -n "$gw" ]; then ip -4 route replace default via "$gw" dev "$dev" proto static; fi
+if [ -n "$conf" ]; then
+  tmp=$(mktemp "$resolv.simplewm.XXXXXX")
+  if ! { printf '%s' "$conf" > "$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "$resolv"; }; then
+    rm -f "$tmp"
+    echo "cannot write $resolv" >&2
+    exit 1
+  fi
+fi
 "#;
 
 /// Why `apply` failed.
@@ -217,6 +276,7 @@ fn script_args(dev: &str, cfg: &Ipv4Config, current: &[(Ipv4Addr, u8)]) -> Vec<S
         dev.to_string(),
         format!("{}/{}", cfg.addr, cfg.prefix),
         cfg.gateway.map(|g| g.to_string()).unwrap_or_default(),
+        cfg.dns.map(resolv_conf).unwrap_or_default(),
     ];
     args.extend(
         current
@@ -577,23 +637,49 @@ mod tests {
 
     #[test]
     fn parses_fields() {
-        let c = parse(" 192.168.1.50/24 ", "192.168.1.1").unwrap();
+        let c = parse(" 192.168.1.50/24 ", "192.168.1.1", " 1.1.1.1 ").unwrap();
         assert_eq!(c.addr, Ipv4Addr::new(192, 168, 1, 50));
         assert_eq!(c.prefix, 24);
         assert_eq!(c.gateway, Some(Ipv4Addr::new(192, 168, 1, 1)));
-        assert_eq!(parse("10.0.0.2/8", "").unwrap().gateway, None);
-        assert!(parse("192.168.1.50", "").is_err());
-        assert!(parse("192.168.1.50/33", "").is_err());
-        assert!(parse("192.168.1.0/24", "").is_err());
-        assert!(parse("192.168.1.255/24", "").is_err());
-        assert!(parse("192.168.1.50/24", "192.168.2.1").is_err());
-        assert!(parse("192.168.1.50/24", "192.168.1.50").is_err());
-        assert!(parse("10.0.0.1/32", "").is_ok());
+        assert_eq!(c.dns, Some(Ipv4Addr::new(1, 1, 1, 1)));
+        let c = parse("10.0.0.2/8", "", "").unwrap();
+        assert_eq!((c.gateway, c.dns), (None, None));
+        assert!(parse("192.168.1.50", "", "").is_err());
+        assert!(parse("192.168.1.50/33", "", "").is_err());
+        assert!(parse("192.168.1.0/24", "", "").is_err());
+        assert!(parse("192.168.1.255/24", "", "").is_err());
+        assert!(parse("192.168.1.50/24", "192.168.2.1", "").is_err());
+        assert!(parse("192.168.1.50/24", "192.168.1.50", "").is_err());
+        assert!(parse("10.0.0.1/32", "", "").is_ok());
+        // The DNS server may be anywhere, but must be a usable address.
+        assert!(parse("10.0.0.2/8", "", "9.9.9.9").is_ok());
+        assert!(parse("10.0.0.2/8", "", "127.0.0.53").is_ok());
+        assert!(parse("10.0.0.2/8", "", "dns.example").is_err());
+        assert!(parse("10.0.0.2/8", "", "1.1.1.1; reboot").is_err());
+        assert!(parse("10.0.0.2/8", "", "0.0.0.0").is_err());
+        assert!(parse("10.0.0.2/8", "", "224.0.0.1").is_err());
+        assert!(parse("10.0.0.2/8", "", "255.255.255.255").is_err());
+    }
+
+    #[test]
+    fn writes_and_reads_resolv_conf() {
+        let conf = resolv_conf(Ipv4Addr::new(1, 1, 1, 1));
+        let lines: Vec<&str> = conf.lines().collect();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("# simplewm owns this file"));
+        assert_eq!(lines[1], "nameserver 1.1.1.1");
+        assert_eq!(parse_nameservers(&conf), ["1.1.1.1"]);
+        assert_eq!(
+            parse_nameservers(
+                "# x\nsearch lan\nnameserver 10.0.0.1\n  nameserver  9.9.9.9 # y\nnameserver\n"
+            ),
+            ["10.0.0.1", "9.9.9.9"]
+        );
     }
 
     #[test]
     fn builds_script_args() {
-        let cfg = parse("10.0.0.5/24", "10.0.0.1").unwrap();
+        let cfg = parse("10.0.0.5/24", "10.0.0.1", "1.1.1.1").unwrap();
         let current = [
             (Ipv4Addr::new(10, 0, 0, 5), 24),
             (Ipv4Addr::new(192, 168, 1, 2), 24),
@@ -601,10 +687,19 @@ mod tests {
         // The new address is kept, not removed and re-added; the others go.
         assert_eq!(
             script_args("enp3s0", &cfg, &current),
-            ["enp3s0", "10.0.0.5/24", "10.0.0.1", "192.168.1.2/24"]
+            [
+                "enp3s0",
+                "10.0.0.5/24",
+                "10.0.0.1",
+                &resolv_conf(Ipv4Addr::new(1, 1, 1, 1)),
+                "192.168.1.2/24"
+            ]
         );
-        let cfg = parse("10.0.0.5/24", "").unwrap();
-        assert_eq!(script_args("eth0", &cfg, &[]), ["eth0", "10.0.0.5/24", ""]);
+        let cfg = parse("10.0.0.5/24", "", "").unwrap();
+        assert_eq!(
+            script_args("eth0", &cfg, &[]),
+            ["eth0", "10.0.0.5/24", "", ""]
+        );
     }
 
     #[test]
@@ -661,11 +756,18 @@ mod namespace_test {
     use super::*;
 
     /// Run `APPLY_SCRIPT` the way `apply` does, minus sudo (the test is
-    /// already root in its namespace).
-    fn run_script(dev: &str, cfg: &Ipv4Config) -> Result<(), ApplyError> {
+    /// already root in its namespace), writing `resolv` instead of
+    /// /etc/resolv.conf.
+    fn run_script(dev: &str, cfg: &Ipv4Config, resolv: &Path) -> Result<(), ApplyError> {
         let current = status(dev).unwrap().addrs;
+        let script = APPLY_SCRIPT.replacen(
+            &format!("resolv={RESOLV_CONF}\n"),
+            &format!("resolv={}\n", resolv.display()),
+            1,
+        );
+        assert_ne!(script, APPLY_SCRIPT);
         let out = Command::new("/bin/sh")
-            .args(["-c", APPLY_SCRIPT, "simplewm-net"])
+            .args(["-c", &script, "simplewm-net"])
             .args(script_args(dev, cfg, &current))
             .env("LC_ALL", "C")
             .output()
@@ -683,24 +785,46 @@ mod namespace_test {
     #[ignore]
     fn applies_to_a_card() {
         let dev = std::env::var("SIMPLEWM_TEST_DEV").expect("SIMPLEWM_TEST_DEV");
-        let first = parse("10.1.2.3/24", "10.1.2.1").unwrap();
-        run_script(&dev, &first).unwrap();
+        let dir = std::env::temp_dir().join(format!("simplewm-ns-{}", std::process::id()));
+        fs::create_dir_all(&dir).unwrap();
+        let resolv = dir.join("resolv.conf");
+        // A symlink, like systemd-resolved leaves, is replaced by the file.
+        std::os::unix::fs::symlink("/nonexistent/stub-resolv.conf", &resolv).unwrap();
+
+        let first = parse("10.1.2.3/24", "10.1.2.1", "1.1.1.1").unwrap();
+        run_script(&dev, &first, &resolv).unwrap();
         let s = status(&dev).unwrap();
         assert!(s.up);
         assert_eq!(s.addrs, [(first.addr, 24)]);
         assert_eq!(s.gateways, [first.gateway.unwrap()]);
+        assert!(!fs::symlink_metadata(&resolv).unwrap().is_symlink());
+        assert_eq!(
+            fs::read_to_string(&resolv).unwrap(),
+            resolv_conf(first.dns.unwrap())
+        );
         // Applying the same again is fine.
-        run_script(&dev, &first).unwrap();
+        run_script(&dev, &first, &resolv).unwrap();
         assert_eq!(status(&dev).unwrap().addrs, [(first.addr, 24)]);
-        // Applying something else replaces both.
-        let second = parse("172.16.0.9/16", "172.16.0.1").unwrap();
-        run_script(&dev, &second).unwrap();
+        // Applying something else replaces all three.
+        let second = parse("172.16.0.9/16", "172.16.0.1", "9.9.9.9").unwrap();
+        run_script(&dev, &second, &resolv).unwrap();
         let s = status(&dev).unwrap();
         assert_eq!(s.addrs, [(second.addr, 16)]);
         assert_eq!(s.gateways, [second.gateway.unwrap()]);
-        // No gateway: the default route goes away.
-        let third = parse("172.16.0.9/16", "").unwrap();
-        run_script(&dev, &third).unwrap();
+        assert_eq!(
+            fs::read_to_string(&resolv).unwrap(),
+            resolv_conf(second.dns.unwrap())
+        );
+        // No gateway: the default route goes away. No DNS server: the file stays.
+        let third = parse("172.16.0.9/16", "", "").unwrap();
+        run_script(&dev, &third, &resolv).unwrap();
         assert!(status(&dev).unwrap().gateways.is_empty());
+        assert_eq!(
+            fs::read_to_string(&resolv).unwrap(),
+            resolv_conf(second.dns.unwrap())
+        );
+        // Nothing is left beside it.
+        assert_eq!(fs::read_dir(&dir).unwrap().count(), 1);
+        fs::remove_dir_all(&dir).unwrap();
     }
 }

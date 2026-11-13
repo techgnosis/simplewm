@@ -12,7 +12,8 @@
 //! * The Desktop Portal applet window shows checks for when apps get no file
 //!   dialog from the desktop portal (see `crate::portal_check`).
 //! * The Network applet window sets a static IPv4 address and gateway on the
-//!   wired network card (see `network` and `crate::network`).
+//!   wired network card, and the DNS server in /etc/resolv.conf (see `network`
+//!   and `crate::network`).
 //! * The Sound applet window chooses PipeWire's sound card and sets its volume
 //!   (see `sound` and `crate::sound`).
 //! * The Password window is not in the Control Panel either: it asks for the
@@ -117,6 +118,8 @@ pub enum Field {
     NetAddress,
     /// Default gateway in the Network applet.
     NetGateway,
+    /// DNS server in the Network applet.
+    NetDns,
     /// The user's password, in the Password window (shown as dots).
     SudoPassword,
 }
@@ -125,7 +128,7 @@ impl Field {
     pub fn panel(self) -> PanelId {
         match self {
             Field::PickName => PanelId::FilePicker,
-            Field::NetAddress | Field::NetGateway => PanelId::Network,
+            Field::NetAddress | Field::NetGateway | Field::NetDns => PanelId::Network,
             Field::SudoPassword => PanelId::Password,
         }
     }
@@ -134,7 +137,8 @@ impl Field {
     fn next(self) -> Option<Field> {
         match self {
             Field::NetAddress => Some(Field::NetGateway),
-            Field::NetGateway => Some(Field::NetAddress),
+            Field::NetGateway => Some(Field::NetDns),
+            Field::NetDns => Some(Field::NetAddress),
             Field::PickName | Field::SudoPassword => None,
         }
     }
