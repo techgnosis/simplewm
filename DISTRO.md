@@ -14,7 +14,10 @@ made.
   input devices for simplewm and hands them over, and takes them back when you switch
   virtual terminals. Being in seatd's group is all simplewm needs, so it still runs with no
   special privileges. This also means no systemd and no logind.
-- **Device manager: not decided yet.** See the comparison below.
+- **Devices: libudev-zero and mdevd.** libudev-zero is the libudev library that smithay,
+  libinput and PipeWire use, with no daemon behind it. mdevd loads drivers, sets
+  permissions in `/dev` and passes plug-in events on to libudev-zero. Why, below.
+- **D-Bus: dbus-broker, without its launcher.** Why and how, below.
 
 ## Devices: the jobs involved
 
@@ -71,20 +74,50 @@ skarnet, also musl-friendly), which can load drivers and set permissions too.
 input devices at startup, plus hotplug for input. Both options give that. PipeWire also
 uses libudev to find the sound card, and works with both.
 
-**Leaning:** libudev-zero with mdevd fits the goal better: two small, readable pieces, no
+**Chosen: libudev-zero with mdevd.** It fits the goal better: two small, readable pieces, no
 rules language, and one machine with known hardware means the missing hardware database
 and network-name rules don't cost anything. eudev is the safer fallback if some program
 turns out to rely on udev behavior that libudev-zero doesn't copy. A third, less likely
 option is building systemd's udev on its own (Chimera Linux does this), which is the
 most compatible but the heaviest.
 
+## D-Bus
+
+simplewm's portal needs a D-Bus session bus, and so do many apps. There are three options:
+
+- **dbus-daemon**, the original from 2003. It's reliable and every non-systemd distro uses
+  it, but it's the old, larger design.
+- **dbus-broker**, the modern rewrite. It's lean, fast and only needs the kernel and a C
+  library. Fedora, Arch and now Ubuntu (26.10) use it by default. The catch is that it
+  comes in two parts: the broker itself, and `dbus-broker-launch`, which sets it up. The
+  launcher needs systemd: it starts services on demand ("activation") as systemd units.
+- **busd**, a new broker in Rust, built on zbus, the same D-Bus library simplewm uses. Its
+  own README says it isn't ready for production yet.
+
+**Chosen: dbus-broker, without its launcher.** The broker runs fine without systemd. A
+launcher's job is small: create the bus socket, start the broker, and tell it who may
+connect through a documented control channel (see `man dbus-broker`). The one thing we give
+up is activation, where the bus starts a service when an app first calls it. simplewm
+already relies on nothing being activated: it takes the portal name itself, and everything
+else (PipeWire, WirePlumber) is started at boot anyway. Apps that try activation for
+optional extras (GTK looking for the accessibility bus, for example) just carry on without
+it.
+
+The plan is for simplewm itself to be the launcher, in line with doing as much as possible
+in one process: simplewm already speaks D-Bus through zbus. Until then, the small
+`dbus-controllers` project can launch the broker without systemd. If dbus-broker gives
+trouble, dbus-daemon is the drop-in fallback.
+
+Still to check: that dbus-broker builds cleanly with musl.
+
 ## Open questions
 
-- Init and service supervision (what starts seatd, mdevd, the D-Bus session bus, PipeWire
-  and WirePlumber, then simplewm).
+- Init and service supervision (what starts seatd, mdevd, PipeWire and WirePlumber, then
+  simplewm).
+- Who creates `XDG_RUNTIME_DIR` (`/run/user/<uid>`, where the Wayland, D-Bus and PipeWire
+  sockets live). logind does this on a systemd system; seatd doesn't.
 - How much of that simplewm could take over itself, and what has to stay a separate
   root process (simplewm runs unprivileged, so loading drivers and changing `/dev`
   permissions can't move into it).
-- The D-Bus session bus for the portal: `dbus-daemon` or `dbus-broker`.
 - What replaces `systemctl --user` in the portal clean-up and the Desktop Portal checks.
 - A custom kernel with the machine's drivers built in.

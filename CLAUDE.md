@@ -43,7 +43,7 @@ still growing: the user is open to experiments and new features, within the rule
   nothing to systemd or D-Bus activation. Nested, it doesn't take the name, so nested apps
   get the host's file dialogs.
 - Long-term goal: boot simplewm in a minimal custom distro, doing as much as it can in one
-  process. `DISTRO.md` records the plan and decisions so far (musl, seatd); keep it
+  process. `DISTRO.md` records the plan and decisions so far (musl, seatd, libudev-zero + mdevd, dbus-broker); keep it
   current as they're made. The PipeWire tools and the `ip` script are staying.
 - simplewm runs with no special privileges. The Network applet sets a static IPv4 address,
   gateway and DNS server (no DHCP) only when the user presses Apply: the Password window
