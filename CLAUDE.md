@@ -27,7 +27,8 @@ still growing: the user is open to experiments and new features, within the rule
   so nobody is tempted to hand-edit it (SQLite was dropped as overkill). The backend is
   chosen automatically: TTY when there's no `WAYLAND_DISPLAY`, `WAYLAND_SOCKET` or
   `DISPLAY`, nested otherwise.
-- Wayland only (no Xwayland), one monitor (the first connected one, at its preferred mode),
+- Wayland only (no Xwayland), one monitor (the first connected one, at its preferred mode,
+  switching when that changes: a resized VM window, another monitor on the connector),
   US keyboard layout, one bundled font (DejaVu Sans).
 - Windows always float. Title bars are always drawn by simplewm (server-side decorations
   are forced). Size moves and resizes a window once (halves, quarters, full screen below
@@ -156,7 +157,8 @@ and end with `poweroff`. The outputs (`distro/root/`, `out/`, `cache/`) are git-
   the backend.
 - `handlers.rs`: the Smithay protocol handlers, including the extra protocols gamescope
   needs.
-- `udev.rs` (TTY: DRM/KMS, libinput, libseat) and `winit.rs` (nested). Both rebuild the
+- `udev.rs` (TTY: DRM/KMS, libinput, libseat, and a udev source that follows the
+  monitor's preferred mode) and `winit.rs` (nested). Both rebuild the
   whole scene every frame and let the damage tracker work out what changed, so state
   changes show up without asking for a redraw.
 - `input.rs`: all input. `handle_press` sends a click to the bar, a menu, a panel

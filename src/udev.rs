@@ -19,7 +19,7 @@ use smithay::{
         libinput::{LibinputInputBackend, LibinputSessionInterface},
         renderer::{ImportDma, gles::GlesRenderer},
         session::{Event as SessionEvent, Session, libseat::LibSeatSession},
-        udev::{all_gpus, primary_gpu},
+        udev::{UdevBackend, UdevEvent, all_gpus, primary_gpu},
     },
     desktop::utils::OutputPresentationFeedback,
     output::{Mode, Output, PhysicalProperties, Subpixel},
@@ -56,6 +56,8 @@ pub struct UdevData {
     compositor: GbmDrmCompositor,
     libinput: Libinput,
     output: Output,
+    /// The monitor's connector.
+    connector: connector::Handle,
     /// Event source for DRM vblanks. It holds a reference to the DRM device, so it
     /// must be removed before the device can be dropped (see [`shutdown`]).
     drm_token: RegistrationToken,
@@ -85,6 +87,7 @@ pub fn run(
         .or_else(|| all_gpus(&seat_name).ok()?.into_iter().next())
         .ok_or("no GPU found")?;
     tracing::info!(?gpu_path, "using GPU");
+    let gpu_dev = DrmNode::from_path(&gpu_path)?.dev_id();
 
     let fd = session.open(
         &gpu_path,
@@ -261,6 +264,8 @@ pub fn run(
                     tracing::warn!(?err, "failed to reset drm compositor state");
                 }
                 udev.frame_pending = false;
+                // The monitor may have changed while we were away.
+                state.udev_follow_preferred_mode();
                 state.udev_render();
             }
         }
@@ -306,6 +311,18 @@ pub fn run(
         DrmEvent::Error(err) => tracing::error!(?err, "drm error"),
     })?;
 
+    // The monitor's preferred mode can change while we run: a VM's window was resized (QEMU
+    // reports the new size), or another monitor was plugged into the connector. udev
+    // reports it as a change of the GPU device; follow it.
+    let udev_backend = UdevBackend::new(&seat_name)?;
+    handle.insert_source(udev_backend, move |event, _, state| {
+        if let UdevEvent::Changed { device_id } = event
+            && device_id == gpu_dev
+        {
+            state.udev_follow_preferred_mode();
+        }
+    })?;
+
     drm.activate(false).ok();
 
     state.backend = Some(Backend::Udev(UdevData {
@@ -315,6 +332,7 @@ pub fn run(
         compositor,
         libinput,
         output,
+        connector: connector.handle(),
         drm_token,
         frame_pending: false,
         timer_scheduled: false,
@@ -354,6 +372,43 @@ pub fn shutdown(state: &mut State) {
 }
 
 impl State {
+    /// Switch to the monitor's preferred mode if it changed (see the udev source in `run`).
+    fn udev_follow_preferred_mode(&mut self) {
+        let Some(Backend::Udev(udev)) = self.backend.as_mut() else {
+            return;
+        };
+        let Ok(info) = udev.drm.get_connector(udev.connector, true) else {
+            return;
+        };
+        if info.state() != connector::State::Connected {
+            return;
+        }
+        let Some(drm_mode) = info
+            .modes()
+            .iter()
+            .find(|m| m.mode_type().contains(ModeTypeFlags::PREFERRED))
+            .or_else(|| info.modes().first())
+            .copied()
+        else {
+            return;
+        };
+        if drm_mode == udev.compositor.pending_mode() {
+            return;
+        }
+        tracing::info!(mode = ?drm_mode, "monitor's preferred mode changed");
+        if let Err(err) = udev.compositor.use_mode(drm_mode) {
+            tracing::warn!(?err, "couldn't switch to the new mode");
+            return;
+        }
+        let mode = Mode::from(drm_mode);
+        udev.output
+            .change_current_state(Some(mode), None, None, None);
+        udev.output.set_preferred(mode);
+        // A menu placed for the old size could be off screen now.
+        self.ui.menu = None;
+        self.udev_render();
+    }
+
     fn udev_render(&mut self) {
         let Some(Backend::Udev(mut udev)) = self.backend.take() else {
             return;

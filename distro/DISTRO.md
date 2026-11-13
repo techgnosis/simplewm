@@ -271,7 +271,10 @@ headless (screenshots through QEMU's monitor).
   a screenshot). The screen is a plain virtio-vga card sized to fill what a window can use
   on the host's monitor (its preferred mode from `/sys/class/drm`, less simplewm's bar and
   a window's title bar and borders; 3832x2096 on the user's 4K monitor), shown pixel for
-  pixel with no GTK menu bar (Ctrl+Alt+M shows it) and no scaling, in a GTK window
+  pixel with no GTK menu bar (Ctrl+Alt+M shows it) and no scaling. QEMU's GTK window
+  passes its own size to the guest as the preferred mode, so the screen really follows the
+  window: it opens small, and simplewm switches mode when the window is resized or
+  maximized (it follows preferred-mode changes since this turned up). In a GTK window
   (`qemu-ui-gtk` and `qemu-hw-display-virtio-vga` on Arch; the user installed
   `qemu-desktop`), or with `run.sh headless` no window, for testing from a script. No
   OpenGL passthrough: Alpine's Mesa is built without virgl (its gallium driver list for
