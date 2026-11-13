@@ -11,7 +11,7 @@ use smithay::{
 
 use super::{
     BTN_H, BUTTON, BUTTON_HOT, FIELD_BG, FIELD_H, FIELD_TEXT_PAD, HEADER_H, PAD, PanelHit, PanelId,
-    Rect, bufs, db,
+    Rect, bufs,
 };
 use crate::{
     text::TextRenderer,
@@ -131,9 +131,7 @@ impl super::Panels {
 
     fn save_entries(&mut self) {
         let paths = self.launcher_paths();
-        if let Some(conn) = self.db.as_mut() {
-            db::save_entries(conn, &paths);
-        }
+        self.store.save_entries(&paths);
     }
 
     pub(super) fn render_launcher(

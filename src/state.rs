@@ -476,8 +476,8 @@ impl State {
         }
         rows.push(item("wl_seat", "seat0 (keyboard, pointer)".into()));
         rows.push(item(
-            "Settings database",
-            crate::panel::db_path()
+            "Settings file",
+            crate::panel::store_path()
                 .map(|p| p.display().to_string())
                 .unwrap_or_else(|| "(unavailable)".into()),
         ));

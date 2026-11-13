@@ -22,7 +22,8 @@ still growing: the user is open to experiments and new features, within the rule
 - No keyboard shortcuts. The one exception is Ctrl+Alt+F1… for switching virtual terminals
   on a TTY.
 - No config file, flags or environment variables. Every setting is changed in a Control
-  Panel applet and saved in `~/.config/simplewm/simplewm.db` (SQLite). The backend is
+  Panel applet and saved in `~/.config/simplewm/simplewm.dat`, a small binary file
+  so nobody is tempted to hand-edit it (SQLite was dropped as overkill). The backend is
   chosen automatically: TTY when there's no `WAYLAND_DISPLAY`, `WAYLAND_SOCKET` or
   `DISPLAY`, nested otherwise.
 - Wayland only (no Xwayland), one monitor (the first connected one, at its preferred mode),
@@ -61,7 +62,7 @@ still growing: the user is open to experiments and new features, within the rule
 
 - `cargo build`, `cargo clippy --all-targets` (keep it at zero warnings), `cargo test`. Run
   `cargo fmt` whenever you like.
-- Tests cover the logic that doesn't need a screen: the settings database, text fields, row
+- Tests cover the logic that doesn't need a screen: the settings file, text fields, row
   lists, File Picker listing and search, screenshot PNGs, portal globs and checks, network
   address and DNS parsing, resolv.conf contents and PipeWire output parsing. A few only do
   something on a machine that has the hardware or service.
@@ -87,7 +88,6 @@ still growing: the user is open to experiments and new features, within the rule
 - `make audit` (`audit.py`) checks `Cargo.lock` against the OSV/RustSec database. Its
   `ACCEPTED` list records advisories that don't affect us, and why. Run it after changing
   dependencies.
-- SQLite is the system library, not bundled, so SQLite fixes arrive with OS updates.
 - zbus 6 has no blocking API, and a connection only runs while some thread is inside
   `zbus::block_on`. The portal thread stays in it forever, and the Desktop Portal checks
   wrap their D-Bus calls in it on their worker thread. Never call `block_on` from inside a
@@ -101,8 +101,7 @@ linked libraries with `readelf -d target/release/simplewm | grep NEEDED`.
 
 - To start (TTY): libseat (talks to logind; seatd would also work), libudev, libinput,
   libgbm and `libEGL.so.1` (loaded at startup) from Mesa or another GL stack,
-  libxkbcommon plus xkeyboard-config data (startup panics without it), libsqlite3,
-  glibc. Nested also needs the host's Wayland or X11 client libraries, which winit loads.
+  libxkbcommon plus xkeyboard-config data (startup panics without it), glibc. Nested also needs the host's Wayland or X11 client libraries, which winit loads.
   The font is compiled in and the cursor is drawn by simplewm.
 - Per feature (simplewm starts without them):
   - Sound applet: `pw-dump` (PipeWire) and `wpctl` (WirePlumber).
@@ -163,8 +162,8 @@ blocks:
   `State::after_panel_action` opens and focuses it. A worker runs the job, and the result
   comes back as `SudoDone` to `job_finished`.
 
-Two shared files support them: `text_field.rs` (editable fields) and `db.rs` (settings;
-add a step to `migrate` to change the schema). Applet files usually go in this order:
+Two shared files support them: `text_field.rs` (editable fields) and `store.rs` (the settings
+file; bump `VERSION` and keep reading the old one to change the format). Applet files usually go in this order:
 layout constants, a `*Layout` struct of rects, `*_size`, `*_hit`, actions, `render_*`.
 
 Drawing rules:

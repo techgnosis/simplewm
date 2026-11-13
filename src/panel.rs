@@ -24,7 +24,7 @@
 //!   Launcher and Screenshot applets.
 //!
 //! Panels stack, focus and move like client windows. Settings are stored in
-//! SQLite at ~/.config/simplewm/simplewm.db (see `db`).
+//! a binary file at ~/.config/simplewm/simplewm.dat (see `store`).
 //!
 //! This file has what all panels share: window placement, the frame, hit
 //! testing and rendering dispatch, shared sizes and colors. Each window's
@@ -32,7 +32,6 @@
 //! (`control` also has Help; `rows` has Environment and Desktop Portal), as
 //! `impl Panels` blocks. Editable text fields are in `text_field`.
 
-use rusqlite::Connection;
 use smithay::{
     backend::renderer::{element::solid::SolidColorBuffer, gles::GlesRenderer},
     utils::{Logical, Point, Rectangle},
@@ -44,22 +43,22 @@ use crate::{
 };
 
 mod control;
-mod db;
 mod launcher;
 mod network;
 mod picker;
 mod rows;
 mod screenshot;
 mod sound;
+mod store;
 mod sudo;
 mod text_field;
 
-pub use db::db_path;
 pub use launcher::exe_name;
 pub use network::NetworkApplet;
 pub use picker::{FilePicker, PickHit};
 pub use rows::EnvRow;
 pub use sound::SoundApplet;
+pub use store::store_path;
 pub use sudo::{SudoDone, SudoPrompt};
 
 use rows::{ENV_H, ENV_ROW_H, ENV_W, PORTAL_H, PORTAL_W, RowList};
@@ -269,20 +268,14 @@ pub struct Panels {
     /// Field being edited and the caret position (in chars).
     pub editing: Option<Field>,
     pub cursor: usize,
-    db: Option<Connection>,
+    store: store::Store,
 }
 
 impl Panels {
     pub fn new() -> Self {
-        let db = db::open_db();
-        let entries = match &db {
-            Some(conn) => db::load_entries(conn),
-            None => vec![DEFAULT_LAUNCHER_ENTRY.to_string()],
-        };
-        let shot_dir = db
-            .as_ref()
-            .and_then(|c| db::load_setting(c, screenshot::SHOT_DIR_KEY))
-            .unwrap_or_default();
+        let store = store::Store::open();
+        let entries = store.entries().to_vec();
+        let shot_dir = store.setting(screenshot::SHOT_DIR_KEY).unwrap_or_default();
         let mut panels = Self {
             control: PanelWindow::default(),
             launcher: PanelWindow::default(),
@@ -307,7 +300,7 @@ impl Panels {
             shot_dir,
             editing: None,
             cursor: 0,
-            db,
+            store,
         };
         panels.load_network();
         panels

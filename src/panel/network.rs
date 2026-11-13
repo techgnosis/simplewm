@@ -206,11 +206,9 @@ fn status_rows(saved: Option<network::Ipv4Config>) -> Vec<EnvRow> {
 
 impl super::Panels {
     pub(super) fn load_network(&mut self) {
-        if let Some(conn) = &self.db {
-            self.net.address = super::db::load_setting(conn, KEY_ADDRESS).unwrap_or_default();
-            self.net.gateway = super::db::load_setting(conn, KEY_GATEWAY).unwrap_or_default();
-            self.net.dns = super::db::load_setting(conn, KEY_DNS).unwrap_or_default();
-        }
+        self.net.address = self.store.setting(KEY_ADDRESS).unwrap_or_default();
+        self.net.gateway = self.store.setting(KEY_GATEWAY).unwrap_or_default();
+        self.net.dns = self.store.setting(KEY_DNS).unwrap_or_default();
         self.net.saved = (
             self.net.address.clone(),
             self.net.gateway.clone(),

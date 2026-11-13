@@ -22,8 +22,6 @@ fontdue = "0.9.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
-# Uses the system SQLite, so its security fixes come with OS updates.
-rusqlite = "0.40"
 png = "0.18"
 futures-channel = "0.3.34"
 zbus = "6"
