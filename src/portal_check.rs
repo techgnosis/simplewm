@@ -11,7 +11,7 @@ use std::{
 };
 
 use smithay::reexports::calloop::channel::Sender;
-use zbus::{blocking::Connection, blocking::fdo::DBusProxy, names::BusName, zvariant::OwnedValue};
+use zbus::{Connection, OwnedVariant, fdo::DBusProxy, names::BusName};
 
 use crate::{panel::EnvRow, portal, session_env::DESKTOP};
 
@@ -68,7 +68,7 @@ fn run(ctx: &Context) -> Vec<EnvRow> {
     let mut problems = Problems::default();
     let mut rows = Vec::new();
     backend_rows(&mut rows, &mut problems);
-    let frontend_pid = bus_rows(&mut rows, &mut problems);
+    let frontend_pid = zbus::block_on(bus_rows(&mut rows, &mut problems));
     environment_rows(ctx, frontend_pid, &mut rows, &mut problems);
     file_rows(&mut rows, &mut problems);
     journal_rows(ctx, &mut rows);
@@ -126,11 +126,13 @@ fn backend_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
 // --- session bus -----------------------------------------------------------------
 
 /// Bus name owners. Returns the frontend's PID if it is running.
-fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
+/// Run on a worker thread, inside `zbus::block_on` (see `run`).
+async fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
     rows.push(EnvRow::Header("Session bus".into()));
-    let conn = zbus::blocking::connection::Builder::session()
-        .map(|b| b.method_timeout(Duration::from_secs(3)))
-        .and_then(|b| b.build());
+    let conn = zbus::connection::Builder::session()
+        .method_timeout(Duration::from_secs(3))
+        .build()
+        .await;
     let conn = match conn {
         Ok(c) => c,
         Err(err) => {
@@ -142,7 +144,7 @@ fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
             return None;
         }
     };
-    let dbus = match DBusProxy::new(&conn) {
+    let dbus = match DBusProxy::new(&conn).await {
         Ok(p) => p,
         Err(err) => {
             rows.push(item("org.freedesktop.DBus", format!("failed: {err}")));
@@ -150,7 +152,7 @@ fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
         }
     };
 
-    let ours = owner_pid(&dbus, portal::BUS_NAME);
+    let ours = owner_pid(&dbus, portal::BUS_NAME).await;
     let ours_text = match ours {
         Some(pid) if pid == std::process::id() => "owned by this simplewm".to_string(),
         Some(pid) => {
@@ -164,7 +166,7 @@ fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
     };
     rows.push(item("simplewm backend", ours_text));
 
-    let frontend = owner_pid(&dbus, FRONTEND);
+    let frontend = owner_pid(&dbus, FRONTEND).await;
     rows.push(item(
         "xdg-desktop-portal",
         match frontend {
@@ -173,7 +175,7 @@ fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
         },
     ));
     if frontend.is_some() {
-        let chooser = match frontend_file_chooser(&conn) {
+        let chooser = match frontend_file_chooser(&conn).await {
             Ok(version) => format!("available (version {version})"),
             Err(err) => {
                 problems.add(
@@ -191,16 +193,16 @@ fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
     frontend
 }
 
-fn owner_pid(dbus: &DBusProxy, name: &str) -> Option<u32> {
+async fn owner_pid(dbus: &DBusProxy<'_>, name: &str) -> Option<u32> {
     let name = BusName::try_from(name).ok()?;
-    if !dbus.name_has_owner(name.clone()).unwrap_or(false) {
+    if !dbus.name_has_owner(name.clone()).await.unwrap_or(false) {
         return None;
     }
-    dbus.get_connection_unix_process_id(name).ok()
+    dbus.get_connection_unix_process_id(name).await.ok()
 }
 
 /// The frontend's FileChooser interface version (fails if it did not export it).
-fn frontend_file_chooser(conn: &Connection) -> Result<u32, String> {
+async fn frontend_file_chooser(conn: &Connection) -> Result<u32, String> {
     let reply = conn
         .call_method(
             Some(FRONTEND),
@@ -209,8 +211,9 @@ fn frontend_file_chooser(conn: &Connection) -> Result<u32, String> {
             "Get",
             &(FILE_CHOOSER, "version"),
         )
+        .await
         .map_err(|e| e.to_string())?;
-    let value: OwnedValue = reply.body().deserialize().map_err(|e| e.to_string())?;
+    let value: OwnedVariant = reply.body().deserialize().map_err(|e| e.to_string())?;
     u32::try_from(value).map_err(|e| e.to_string())
 }
 
@@ -555,6 +558,29 @@ mod tests {
                     "simplewm".to_string()
                 ),
             ]
+        );
+    }
+
+    /// Needs a scratch session bus with nothing on it:
+    /// `dbus-run-session -- cargo test reads_an_empty_bus -- --ignored`.
+    #[test]
+    #[ignore]
+    fn reads_an_empty_bus() {
+        let mut rows = Vec::new();
+        let mut problems = Problems::default();
+        assert_eq!(zbus::block_on(bus_rows(&mut rows, &mut problems)), None);
+        assert!(problems.0.is_empty(), "{:?}", problems.0);
+        let value = |key: &str| {
+            rows.iter().find_map(|r| match r {
+                EnvRow::Item(k, v) if k == key => Some(v.clone()),
+                _ => None,
+            })
+        };
+        assert_eq!(value("simplewm backend").as_deref(), Some("no owner"));
+        assert!(
+            value("xdg-desktop-portal")
+                .unwrap()
+                .starts_with("not running")
         );
     }
 

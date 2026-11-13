@@ -47,8 +47,12 @@ feature complete, so expect bug fixes and UI polish, not new features.
 - Tests cover the logic that doesn't need a screen: the settings database, text fields, row
   lists, File Picker listing and search, screenshot PNGs, portal globs and checks, network
   address parsing and PipeWire output parsing. A few only do something on a machine that has
-  the hardware or service. `network::namespace_test` is `#[ignore]`d; its doc comment says
-  how to run it.
+  the hardware or service.
+- The `#[ignore]`d tests need a setup; each one's doc comment says how to run it. Two
+  exercise D-Bus on a scratch bus: `dbus-run-session -- cargo test bus -- --ignored` drives
+  the file dialog backend the way an app would and checks the Desktop Portal bus checks.
+  Run it after touching `portal.rs`, `portal_check.rs` or zbus. `network::namespace_test`
+  applies addresses to a dummy card.
 - `make` builds the release binary with `--locked`; `make install` puts it in `/usr/bin`
   and installs the portal files.
 
@@ -65,8 +69,10 @@ feature complete, so expect bug fixes and UI polish, not new features.
   `ACCEPTED` list records advisories that don't affect us, and why. Run it after changing
   dependencies.
 - SQLite is the system library, not bundled, so SQLite fixes arrive with OS updates.
-- zbus stays on 5: version 6 removed the blocking API that `portal.rs` and
-  `portal_check.rs` use.
+- zbus 6 has no blocking API, and a connection only runs while some thread is inside
+  `zbus::block_on`. The portal thread stays in it forever, and the Desktop Portal checks
+  wrap their D-Bus calls in it on their worker thread. Never call `block_on` from inside a
+  served D-Bus method.
 
 ## Code map (`src/`)
 
@@ -92,7 +98,7 @@ feature complete, so expect bug fixes and UI polish, not new features.
   - `network.rs`: rtnetlink.
   - `sound.rs`: PipeWire.
   - `screenshot.rs`: offscreen re-render, then the PNG is written on a worker thread.
-  - `portal.rs`: the zbus FileChooser backend, on its own thread.
+  - `portal.rs`: the zbus FileChooser backend, on its own thread inside `zbus::block_on`.
   - `portal_check.rs`: the Desktop Portal applet's checks, on a worker thread.
   - `session_env.rs`: exporting simplewm's display to systemd.
 

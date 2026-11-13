@@ -20,9 +20,6 @@ ACCEPTED = {
     "RUSTSEC-2026-0196": "cgmath unmaintained; used inside smithay",
     "RUSTSEC-2026-0197": "cgmath swap_columns; neither we nor smithay call it with equal indices",
     "RUSTSEC-2026-0192": "ttf-parser unmaintained; used by fontdue for our one bundled font",
-    "RUSTSEC-2026-0370": "zvariant merged into zbus 6, which drops the blocking API we use",
-    "RUSTSEC-2026-0371": "zbus_names merged into zbus 6 (as above)",
-    "RUSTSEC-2026-0372": "zvariant_derive merged into zbus 6 (as above)",
     "RUSTSEC-2026-0459": "about bundled SQLite; we link the system's (3.54+ has the fix)",
     "RUSTSEC-2026-0486": "rustix xattr calls, which nothing we build uses; 1.1.6 fixes it",
 }

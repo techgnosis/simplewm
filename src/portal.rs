@@ -5,9 +5,9 @@
 //! the frontend passes the request to us on `org.freedesktop.impl.portal.FileChooser`.
 //! We show the File Picker applet and reply once the user picks or cancels.
 //!
-//! D-Bus runs on zbus' own executor thread. Requests reach the compositor through a
-//! calloop channel; each carries a oneshot sender for the answer, which the D-Bus method
-//! awaits before replying.
+//! D-Bus runs on a "portal" thread that sits in `zbus::block_on` for good, which is what
+//! drives the connection. Requests reach the compositor through a calloop channel; each
+//! carries a oneshot sender for the answer, which the D-Bus method awaits before replying.
 
 use std::{
     collections::HashMap,
@@ -22,10 +22,9 @@ use std::{
 use futures_channel::oneshot;
 use smithay::reexports::calloop::channel::Sender;
 use zbus::{
-    ObjectServer,
+    ObjectServer, OwnedObjectPath, OwnedVariant, Variant,
     fdo::{RequestNameFlags, RequestNameReply},
     interface,
-    zvariant::{OwnedObjectPath, OwnedValue, Value},
 };
 
 pub const BUS_NAME: &str = "org.freedesktop.impl.portal.desktop.simplewm";
@@ -141,44 +140,9 @@ pub fn start(tx: Sender<PortalEvent>) {
                 tx,
                 next_id: AtomicU64::new(1),
             };
-            let result = zbus::blocking::connection::Builder::session()
-                .and_then(|b| b.serve_at(OBJECT_PATH, chooser))
-                .and_then(|b| b.build());
-            let conn = match result {
-                Ok(conn) => conn,
-                Err(err) => {
-                    tracing::warn!(?err, "portal: cannot connect to the session bus");
-                    set_problem(format!("cannot connect to the session bus: {err}"));
-                    return;
-                }
-            };
-            // Don't take the name from another running simplewm.
-            match conn.request_name_with_flags(BUS_NAME, RequestNameFlags::DoNotQueue.into()) {
-                Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
-                    tracing::info!(name = BUS_NAME, "portal: file chooser backend ready");
-                    update_status(|s| s.serving = true);
-                }
-                Ok(reply) => {
-                    tracing::warn!(
-                        ?reply,
-                        name = BUS_NAME,
-                        "portal: name already owned elsewhere"
-                    );
-                    set_problem(
-                        "the bus name is owned by another process (another simplewm?)".into(),
-                    );
-                    return;
-                }
-                Err(err) => {
-                    tracing::warn!(?err, name = BUS_NAME, "portal: cannot own bus name");
-                    set_problem(format!("cannot own the bus name: {err}"));
-                    return;
-                }
-            }
-            // zbus serves requests on its own executor thread; keep the connection alive.
-            loop {
-                std::thread::park();
-            }
+            // The connection only runs while this thread is inside block_on, so serve()
+            // never returns once the backend is up.
+            zbus::block_on(serve(chooser));
         });
     if let Err(err) = spawned {
         tracing::warn!(?err, "portal: cannot start thread");
@@ -186,12 +150,53 @@ pub fn start(tx: Sender<PortalEvent>) {
     }
 }
 
+/// Connect, take the bus name and serve requests forever (or return on failure).
+async fn serve(chooser: FileChooser) {
+    let conn = zbus::connection::Builder::session()
+        .serve_at(OBJECT_PATH, chooser)
+        .build()
+        .await;
+    let conn = match conn {
+        Ok(conn) => conn,
+        Err(err) => {
+            tracing::warn!(?err, "portal: cannot connect to the session bus");
+            set_problem(format!("cannot connect to the session bus: {err}"));
+            return;
+        }
+    };
+    // Don't take the name from another running simplewm.
+    match conn
+        .request_name_with_flags(BUS_NAME, RequestNameFlags::DO_NOT_QUEUE)
+        .await
+    {
+        Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
+            tracing::info!(name = BUS_NAME, "portal: file chooser backend ready");
+            update_status(|s| s.serving = true);
+        }
+        Ok(reply) => {
+            tracing::warn!(
+                ?reply,
+                name = BUS_NAME,
+                "portal: name already owned elsewhere"
+            );
+            set_problem("the bus name is owned by another process (another simplewm?)".into());
+            return;
+        }
+        Err(err) => {
+            tracing::warn!(?err, name = BUS_NAME, "portal: cannot own bus name");
+            set_problem(format!("cannot own the bus name: {err}"));
+            return;
+        }
+    }
+    std::future::pending::<()>().await;
+}
+
 struct FileChooser {
     tx: Sender<PortalEvent>,
     next_id: AtomicU64,
 }
 
-type Options = HashMap<String, OwnedValue>;
+type Options = HashMap<String, OwnedVariant>;
 
 #[interface(name = "org.freedesktop.impl.portal.FileChooser")]
 impl FileChooser {
@@ -305,7 +310,7 @@ impl FileChooser {
             PickResult::Chosen(paths) => {
                 let uris: Vec<String> = paths.iter().map(|p| file_uri(p)).collect();
                 let mut results = Options::new();
-                if let Ok(v) = Value::from(uris).try_into_owned() {
+                if let Ok(v) = Variant::from(uris).try_into_owned() {
                     results.insert("uris".into(), v);
                 }
                 (RESPONSE_OK, results)
@@ -516,5 +521,136 @@ mod tests {
             file_uri(Path::new("/tmp/a b/ü.txt")),
             "file:///tmp/a%20b/%C3%BC.txt"
         );
+    }
+}
+
+/// The backend over a real (private) session bus: requests reach the compositor side and
+/// answers reach the app. Run inside a scratch bus:
+/// `dbus-run-session -- cargo test portal_bus_test -- --ignored`.
+#[cfg(test)]
+mod portal_bus_test {
+    use std::time::{Duration, Instant};
+
+    use smithay::reexports::calloop::channel::{Channel, channel};
+    use zbus::{Connection, OwnedVariant, Variant};
+
+    use super::*;
+
+    const CHOOSER: &str = "org.freedesktop.impl.portal.FileChooser";
+
+    /// What an app's request comes back with: response code and results.
+    type Response = (u32, HashMap<String, OwnedVariant>);
+
+    /// Call `method` as an app would, on its own thread, and hand back the answer.
+    fn call(
+        method: &'static str,
+        handle: &'static str,
+        options: HashMap<&'static str, Variant<'static>>,
+    ) -> std::thread::JoinHandle<Response> {
+        std::thread::spawn(move || {
+            zbus::block_on(async move {
+                let conn = Connection::session().await.unwrap();
+                let handle = zbus::ObjectPath::try_from(handle).unwrap();
+                let reply = conn
+                    .call_method(
+                        Some(BUS_NAME),
+                        OBJECT_PATH,
+                        Some(CHOOSER),
+                        method,
+                        &(handle, "org.example.App", "", "Pick something", options),
+                    )
+                    .await
+                    .unwrap();
+                reply.body().deserialize::<Response>().unwrap()
+            })
+        })
+    }
+
+    fn next_pick(rx: &Channel<PortalEvent>) -> PickRequest {
+        match rx.recv().unwrap() {
+            PortalEvent::Pick(req) => req,
+            PortalEvent::Close(id) => panic!("expected a pick, got close of {id}"),
+        }
+    }
+
+    fn answer(req: PickRequest, result: PickResult) {
+        match req.reply {
+            PickReply::Portal(tx) => tx.send(result).ok().unwrap(),
+            _ => panic!("not a portal request"),
+        }
+    }
+
+    #[test]
+    #[ignore]
+    fn serves_file_dialogs() {
+        let (tx, rx) = channel();
+        start(tx);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while !status().serving {
+            assert!(status().problem.is_none(), "{:?}", status().problem);
+            assert!(Instant::now() < deadline, "backend did not start");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+
+        // Open, several files, with a filter: the chosen paths come back as file URIs.
+        let filters = vec![("Images", vec![(0u32, "*.PNG")])];
+        let app = call(
+            "OpenFile",
+            "/org/freedesktop/portal/desktop/request/1_1/t1",
+            HashMap::from([
+                ("multiple", Variant::from(true)),
+                ("filters", Variant::from(filters)),
+            ]),
+        );
+        let req = next_pick(&rx);
+        assert!(!req.save && req.multiple);
+        assert_eq!(req.title, "Pick something");
+        assert_eq!(req.filters.len(), 1);
+        assert!(req.filters[0].matches("a.png"));
+        answer(
+            req,
+            PickResult::Chosen(vec!["/tmp/a b.png".into(), "/tmp/c.png".into()]),
+        );
+        let (code, results) = app.join().unwrap();
+        assert_eq!(code, RESPONSE_OK);
+        let uris = Vec::<String>::try_from(results["uris"].try_clone().unwrap()).unwrap();
+        assert_eq!(uris, ["file:///tmp/a%20b.png", "file:///tmp/c.png"]);
+
+        // Save next to an existing file, then cancel.
+        let current_file = b"/home/u/notes.txt\0".to_vec();
+        let app = call(
+            "SaveFile",
+            "/org/freedesktop/portal/desktop/request/1_1/t2",
+            HashMap::from([("current_file", Variant::from(current_file))]),
+        );
+        let req = next_pick(&rx);
+        assert!(req.save);
+        assert_eq!(req.name, "notes.txt");
+        assert_eq!(req.folder, Some("/home/u".into()));
+        answer(req, PickResult::Cancelled);
+        assert_eq!(app.join().unwrap().0, RESPONSE_CANCELLED);
+
+        // The frontend closing a request reaches the compositor as Close.
+        let handle = "/org/freedesktop/portal/desktop/request/1_1/t3";
+        let app = call("OpenFile", handle, HashMap::new());
+        let req = next_pick(&rx);
+        zbus::block_on(async {
+            let conn = Connection::session().await.unwrap();
+            conn.call_method(
+                Some(BUS_NAME),
+                handle,
+                Some("org.freedesktop.impl.portal.Request"),
+                "Close",
+                &(),
+            )
+            .await
+            .unwrap();
+        });
+        match rx.recv().unwrap() {
+            PortalEvent::Close(id) => assert_eq!(id, req.id),
+            PortalEvent::Pick(_) => panic!("expected close"),
+        }
+        answer(req, PickResult::Cancelled);
+        assert_eq!(app.join().unwrap().0, RESPONSE_CANCELLED);
     }
 }
