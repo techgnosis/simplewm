@@ -1,4 +1,4 @@
-.PHONY: all simplewm run install clean
+.PHONY: all simplewm run install clean audit
 
 all: simplewm
 
@@ -7,7 +7,7 @@ all: simplewm
 # copied when it changed, and setcap (via sudo) runs only when needed.
 # Programs simplewm launches do not get the capability.
 simplewm:
-	cargo build --release
+	cargo build --release --locked
 	cmp -s target/release/simplewm ./simplewm || install -m755 target/release/simplewm ./simplewm
 	@getcap ./simplewm | grep -q cap_net_admin || { \
 		echo "Giving ./simplewm CAP_NET_ADMIN for the Network applet (sudo setcap)"; \
@@ -34,3 +34,7 @@ install: simplewm
 clean:
 	cargo clean
 	rm -f ./simplewm
+
+# Check Cargo.lock's crates against the OSV / RustSec vulnerability database.
+audit:
+	./audit.py

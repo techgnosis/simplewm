@@ -1,0 +1,8 @@
+# Supply-chain caution: only use crate versions published at least 21 days ago,
+# so a compromised release is likely to be caught and yanked before we pull it
+# in. Versions already in Cargo.lock are kept; this applies when Cargo resolves
+# new versions (cargo update, or a changed Cargo.toml). Needs Cargo 1.100+.
+# To take one urgent fix sooner:
+#   CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update <crate> --precise <version>
+[registry]
+global-min-publish-age = "21 days"

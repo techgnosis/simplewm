@@ -2,6 +2,8 @@
 name = "simplewm"
 version = "0.1.0"
 edition = "2024"
+# 1.100 is the first Cargo that honors .cargo/config.toml's min-publish-age.
+rust-version = "1.100"
 
 [dependencies]
 smithay = { version = "0.7.0", default-features = false, features = [
@@ -20,7 +22,8 @@ fontdue = "0.9.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
-rusqlite = { version = "0.42", features = ["bundled"] }
+# Uses the system SQLite, so its security fixes come with OS updates.
+rusqlite = "0.40"
 png = "0.18"
 futures-channel = "0.3.34"
 zbus = "5"
