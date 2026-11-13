@@ -137,6 +137,12 @@ linked libraries with `readelf -d target/release/simplewm | grep NEEDED`.
 
 Update this list when a change adds or drops one.
 
+## The distro (`distro/`)
+
+Scripts for building the custom distro from Alpine packages (see `DISTRO.md`).
+`distro/container.sh` runs a command in an Alpine container with the project at `/work`;
+the root filesystem is built in `distro/root/` (git-ignored).
+
 ## Code map (`src/`)
 
 - `main.rs`: picks the backend and runs the calloop event loop.

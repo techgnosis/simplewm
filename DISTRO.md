@@ -237,6 +237,16 @@ console, before simplewm is involved. Then add seatd, mdevd and simplewm.
 
 The host needs `podman` and `qemu` installed for this.
 
+**In the repo:** the `distro/` folder. `distro/container.sh [command…]` runs a command (a
+shell by default) in an Alpine 3.24 container with the project root mounted at `/work`.
+The root filesystem goes in `distro/root/` (git-ignored), filled with
+`apk --root /work/distro/root --initdb --keys-dir /etc/apk/keys --repositories-file
+/etc/apk/repositories add …`. Root in the container is the host user, so files owned by
+root come out as the host user's; anything owned by another user needs
+`podman unshare rm -rf` to delete. The script passes `--cgroup-manager=cgroupfs
+--events-backend=file`, because when simplewm runs the session bus on a TTY, systemd isn't
+on it and podman's default (asking systemd over D-Bus) fails.
+
 ## Open questions
 
 - The init's details: what it does when simplewm exits or crashes (restart it, drop to a
