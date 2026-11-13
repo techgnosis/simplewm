@@ -425,6 +425,14 @@ since there's no package manager.
     link C libraries need it), the `spirv-*`, `gi-*` and gdk-pixbuf developer tools,
     GObject typelibs (`/usr/lib/girepository-1.0`, for Python or JavaScript GTK
     programs), `/usr/share/pkgconfig` and `/usr/share/aclocal`.
+  - The accessibility bus (at-spi2-core's service side): the D-Bus service file
+    `org.a11y.Bus.service`, which made the session bus start `at-spi-bus-launcher` (and
+    with it a second dbus-daemon) whenever a GTK app such as Firefox started, the
+    launcher and `at-spi2-registryd`, `accessibility-services`, their settings
+    (`/usr/share/defaults/at-spi2`) and GNOME's `gtk-modules` file. Nothing else is
+    D-Bus-activated: `/usr/share/dbus-1/services` is in `REMOVE_DIRS`, so a package that
+    adds an auto-started service stops the build. The libraries (`libatspi`,
+    `libatk-bridge`) stay: GTK links them. Apps find no accessibility bus and carry on.
   - `font-terminus` isn't installed at all: the build unpacks the one console font
     simplewm-init loads (`ter-132n.psf.gz`) from its package. The rest
     was 238 more console fonts and Terminus fonts that apps would have listed.
@@ -434,7 +442,7 @@ since there's no package manager.
   `/etc/udev/rules.d`, the `modules-load.d` and `sysctl.d` folders, and `/var/mail`,
   `/var/opt`, `/var/local`, `/var/db`, `/var/empty`, `/var/lib/misc`, `/var/lib/dbus`,
   `/var/cache/misc`, `/var/lib/sudo/lectured`,
-  `/usr/share/dbus-1/session.d`, `/usr/lib/gio/modules`. (`make install` and the like
+  `/usr/share/dbus-1/session.d`, `/usr/share/dbus-1/services`, `/usr/lib/gio/modules`. (`make install` and the like
   make `/usr/local` again when they need it.) `/usr/share/misc` was on the list until the
   development tools brought libmagic's `magic.mgc` into it; the safety stop caught that.
 

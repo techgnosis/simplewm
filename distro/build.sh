@@ -133,6 +133,12 @@ REMOVE="
     /usr/share/dbus-1/system.conf
     /usr/share/dbus-1/system.d
     /usr/share/dbus-1/system-services
+    /usr/share/dbus-1/services/org.a11y.Bus.service
+    /usr/share/dbus-1/accessibility-services
+    /usr/libexec/at-spi-bus-launcher
+    /usr/libexec/at-spi2-registryd
+    /usr/share/defaults
+    /usr/lib/gnome-settings-daemon-3.0
     /usr/share/udhcpc
 
     /var/spool
@@ -167,6 +173,7 @@ REMOVE_DIRS="
     /var/cache/misc
     /var/lib/sudo/lectured
     /usr/share/dbus-1/session.d
+    /usr/share/dbus-1/services
     /usr/lib/gio/modules
 "
 
