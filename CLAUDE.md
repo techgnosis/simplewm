@@ -152,15 +152,16 @@ monitor (pipe Ctrl+A C, a command, Ctrl+A C into run.sh): `screendump distro/out
 for screenshots (convert PPM to PNG to view), `sendkey` to type (one key per command:
 `spc`, `dot`, `shift-4` for `$`…), and `quit` at the end. To test failures, boot a copy
 of `out/root.img` changed with `debugfs -w` in the container (e2fsprogs-extra), e.g. with
-a stub `/usr/bin/simplewm`; after 3 failures simplewm-init gives a user shell on tty1 to
+a stub `/usr/bin/simplewm`; when simplewm exits, simplewm-init gives a user shell on tty1 to
 type into. `build.sh` empties `out/`, so keep test images elsewhere or remake them. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
 
 ## Code map (`src/`)
 
 - `main.rs`: picks the backend and runs the calloop event loop.
 - `bin/simplewm-init/`: a second binary, PID 1 of the distro (see `distro/DISTRO.md`).
-  std + libc only: `main.rs` (the boot sequence and the supervisor that restarts
-  simplewm, waits for Enter on tty1 after repeated failures, and shuts down),
+  std + libc only: `main.rs` (the boot sequence, and the supervisor that runs
+  simplewm, gives the user a shell on tty1 whenever it exits and starts simplewm again
+  when that shell exits, and shuts down),
   `sys.rs` (system call wrappers), `account.rs` (the UID 1000 user from `/etc/passwd`).
 - `state.rs`: `State` holds everything: the Smithay protocol states, the window `Space`,
   `stack` (the stacking order of client windows and panels together), `Ui`, `Panels` and

@@ -6,9 +6,9 @@
 //!
 //! The screen has one VT, tty1, and only simplewm runs there. When simplewm exits, the
 //! kernel's text console comes back on tty1 and simplewm-init writes why there (and on
-//! the serial console, when the kernel uses one: QEMU's terminal). It starts simplewm
-//! again, but after three exits within a minute it starts a login shell as the user on
-//! tty1 instead, with exactly the environment simplewm gets, so running `simplewm` there
+//! the serial console, when the kernel uses one: QEMU's terminal). Whatever the reason,
+//! even quitting on purpose, it doesn't restart simplewm: it starts a login shell as the
+//! user on tty1, with exactly the environment simplewm gets, so running `simplewm` there
 //! shows what goes wrong. When that shell exits, simplewm is started again.
 //!
 //! Shutting down: busybox's `poweroff`, `reboot` and `halt` signal PID 1 with SIGUSR2,
@@ -40,10 +40,8 @@ use account::{Account, USER_UID};
 const PATH: &str = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 /// The screen's one VT.
 const SCREEN_TTY: &str = "/dev/tty1";
-/// Exits within `FAILURE_WINDOW` that make simplewm-init start a shell instead.
-const FAILURES: usize = 3;
-const FAILURE_WINDOW: Duration = Duration::from_secs(60);
-const SIMPLEWM_RESTART: Duration = Duration::from_secs(2);
+/// When even the shell can't start, how long until simplewm is tried again.
+const NO_SHELL_RETRY: Duration = Duration::from_secs(60);
 const STOP_GRACE: Duration = Duration::from_secs(5);
 /// The screen's console font (Terminus 16x32, from font-terminus), loaded with setfont.
 const CONSOLE_FONT: &str = "/usr/share/consolefonts/ter-132n.psf.gz";
@@ -130,7 +128,6 @@ fn run() -> Result<(), String> {
         runtime,
         simplewm: None,
         start_at: Some(Instant::now()),
-        exits: Vec::new(),
         shell: None,
     };
     sup.run(&signals);
@@ -314,8 +311,6 @@ struct Supervisor {
     simplewm: Option<i32>,
     /// When to start simplewm (again).
     start_at: Option<Instant>,
-    /// When simplewm last exited, within `FAILURE_WINDOW`.
-    exits: Vec<Instant>,
     /// The user's shell on tty1, after simplewm kept failing.
     shell: Option<i32>,
 }
@@ -363,7 +358,6 @@ impl Supervisor {
             } else if self.shell == Some(pid) {
                 self.shell = None;
                 let _ = std::os::unix::fs::chown(SCREEN_TTY, Some(0), None);
-                self.exits.clear();
                 self.console.say("the shell exited");
                 self.start_at = Some(Instant::now());
             }
@@ -371,36 +365,25 @@ impl Supervisor {
         }
     }
 
-    /// simplewm is gone (`how` follows "simplewm": "exited with status 1"): start it
-    /// again shortly, or after too many exits, give the user a shell on tty1.
+    /// simplewm is gone (`how` follows "simplewm": "exited with status 1"). Never
+    /// restart it here: give the user a shell on tty1 instead.
     fn simplewm_ended(&mut self, how: &str) {
-        let now = Instant::now();
-        self.exits
-            .retain(|t| now.duration_since(*t) < FAILURE_WINDOW);
-        self.exits.push(now);
-        if self.exits.len() < FAILURES {
-            self.console.say(&format!(
-                "simplewm {how}; starting it again in {} s",
-                SIMPLEWM_RESTART.as_secs()
-            ));
-            self.start_at = Some(now + SIMPLEWM_RESTART);
-            return;
-        }
         // Clear the screen so the explanation starts at the top.
         self.console.write("\x1b[H\x1b[2J");
         self.console.say(&format!(
-            "simplewm {how}. It stopped {FAILURES} times within a minute, so here's a shell \
-             as {} instead. Run simplewm there to see what goes wrong (earlier runs logged to \
-             ~/simplewm.log). Exit the shell to have simplewm started again.\n",
+            "simplewm {how}. Here's a shell as {}: run simplewm there to see what it says \
+             (when simplewm-init starts it, its output goes to ~/simplewm.log). Exit the \
+             shell to have simplewm started again.\n",
             self.user.name
         ));
         match spawn_shell(&self.user, &self.runtime) {
             Ok(pid) => self.shell = Some(pid),
             Err(e) => {
                 self.console.say(&format!(
-                    "can't start a shell ({e}); trying simplewm again in a minute"
+                    "can't start a shell ({e}); trying simplewm again in {} s",
+                    NO_SHELL_RETRY.as_secs()
                 ));
-                self.start_at = Some(now + FAILURE_WINDOW);
+                self.start_at = Some(Instant::now() + NO_SHELL_RETRY);
             }
         }
     }
