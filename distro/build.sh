@@ -134,6 +134,24 @@ echo "$USER_NAME:$USER_PASSWORD" | chroot "$ROOT" chpasswd >/dev/null
 echo "%wheel ALL=(ALL:ALL) ALL" > "$ROOT/etc/sudoers.d/wheel"
 chmod 440 "$ROOT/etc/sudoers.d/wheel"
 
+# Only the accounts the system uses: root and the user. Alpine's base layout adds ones for
+# services that don't run here (mail, news, cron, sshd, …), and dbus adds messagebus for
+# the system bus, which doesn't run either (simplewm runs the session bus). Its setuid
+# helper for starting system-bus services goes too. The tools' backup copies (passwd-,
+# shadow-, group-) go as well.
+KEEP_ACCOUNTS="root $USER_NAME"
+for file in passwd shadow; do
+    awk -F: -v keep=" $KEEP_ACCOUNTS " 'index(keep, " " $1 " ")' \
+        "$ROOT/etc/$file" > "$ROOT/etc/$file.new"
+    cat "$ROOT/etc/$file.new" > "$ROOT/etc/$file"
+    rm "$ROOT/etc/$file.new"
+done
+rm -f "$ROOT/etc/passwd-" "$ROOT/etc/shadow-" "$ROOT/etc/group-"
+# Alpine ships root with an empty password: anything running as the user could `su` to
+# root without one. Lock it; the user gets root through sudo, with their own password.
+sed -i 's/^root:[^:]*:/root:*:/' "$ROOT/etc/shadow"
+rm -f "$ROOT/usr/libexec/dbus-daemon-launch-helper"
+
 echo "== trimming"
 for dir in $REMOVE_DIRS; do
     [ -e "$ROOT$dir" ] || continue

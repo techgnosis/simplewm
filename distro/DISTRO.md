@@ -377,6 +377,17 @@ empty folders (or ones holding only empty folders) are removed; if a package eve
 files in one, the build stops and lists them. Nothing in the system can make them again,
 since there's no package manager; anyone who wants one back can make it.
 
+Accounts are trimmed the same way (`KEEP_ACCOUNTS` in `build.sh`): `/etc/passwd` and
+`/etc/shadow` hold only `root` and the user. Alpine's base layout adds accounts for
+services that don't run here (bin, daemon, lp, mail, news, uucp, cron, ftp, sshd, games,
+ntp, guest, nobody, …), and dbus adds `messagebus` for the system bus, which doesn't run
+(simplewm runs the session bus); its setuid helper `dbus-daemon-launch-helper` is removed
+with it. The tools' backup copies (`passwd-`, `shadow-`, `group-`) go too. `/etc/group` is
+untouched so far: eudev's rules hand devices to groups like tty, disk and kvm. Root's
+password is locked (`*`): Alpine ships it empty. busybox `su` isn't setuid, so it was never
+usable, but nothing should be able to log in as root without a password; the user gets
+root through sudo with their own password (checked).
+
 **The kernel** is Alpine's `linux-virt` for now (smaller, meant for VMs; `KERNEL` in
 `build.sh`), switched to `linux-lts` or our own for the real machine. It's unpacked from
 its package rather than installed, because Alpine's kernel packages insist on an
