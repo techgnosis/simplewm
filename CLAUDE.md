@@ -10,7 +10,7 @@ still growing: the user is open to experiments and new features, within the rule
   what they'll see and do, not in terms of code.
 - Claude can't see the screen. After a UI change, say exactly what to try. The user runs it with
   `make run`, nested or on a TTY (the release build, from `target/release`; nothing is copied
-  into the project folder), or `./debug.sh`, which runs a debug build that logs DRM
+  into the project folder), or `make debug`, which runs a debug build that logs DRM
   and session details to `simplewm-debug.log`. Their machine has one sound output (HDMI), one wired
   network card and one monitor.
 - Keep this file current when behavior or structure changes, and fix it whenever you find

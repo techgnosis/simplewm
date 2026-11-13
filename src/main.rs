@@ -55,7 +55,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 /// Log to stderr with a fixed filter (no RUST_LOG: simplewm reads no environment
-/// variables for settings). A debug build (`./debug.sh`) also logs simplewm's debug
+/// variables for settings). A debug build (`make debug`) also logs simplewm's debug
 /// messages and smithay's DRM and session details.
 fn init_logging() {
     use tracing::Level;
