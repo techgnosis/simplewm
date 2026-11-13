@@ -22,8 +22,9 @@ made.
 - **D-Bus: dbus-daemon, started by simplewm.** Why, below.
 - **simplewm runs the user services**, in place of `systemd --user`: the session bus,
   PipeWire, pipewire-pulse and WirePlumber. Done (see "User services" below).
-- **Boot: a custom init that starts simplewm as you, with no login.** It sets up the bare
-  minimum as root, then runs simplewm as a normal user. No logind, elogind, PAM or login
+- **Boot: a custom init that starts simplewm as you, with no login.** simplewm-init, a
+  Rust program built in this project. It sets up the bare minimum as root, then runs
+  simplewm as a normal user. No logind, elogind, PAM or login
   prompt. Details below.
 - **Packages: Alpine's binaries, installed by apk into a folder.** No compiling the
   system ourselves; Alpine's musl packages become the root filesystem. Tested in QEMU
@@ -291,15 +292,36 @@ headless (screenshots through QEMU's monitor).
 - `initramfs-init` is the initramfs's `/init` (static busybox): it loads the drivers
   listed in `INITRAMFS_MODULES` (virtio disk, ext4, in dependency order worked out by
   kmod at build time), mounts `root=` and switches to its `/sbin/init`.
-- `init` is the root filesystem's `/sbin/init` (a bash script for now): it mounts
-  `/proc`, `/sys`, `/dev/pts`, `/dev/shm`, `/run` and `/tmp`, starts udevd
-  (`--daemon`), replays the devices already there with `udevadm trigger` (subsystems,
-  then devices) so their drivers load, and `udevadm settle`s, starts seatd (`-g seat`), makes `/run/user/1000`, waits briefly for
-  `/dev/dri/card0`, and runs simplewm through `su -l` with `XDG_RUNTIME_DIR` set,
-  starting it again 2 s after it exits. Logs: `~user/simplewm.log`,
-  `/var/log/seatd.log` (udevd's output goes nowhere for now). Development root shells with no password
-  run on ttyS0 (the terminal) and tty2. busybox's `poweroff`, `reboot` and `halt` work
-  (they signal PID 1).
+- **simplewm-init** (`src/bin/simplewm-init/`, built with simplewm) is `/sbin/init`
+  (`/sbin/simplewm-init`, `/sbin/init` links to it). It refuses to run unless it's PID 1.
+  In order: it mounts `/proc`, `/sys`, `/dev` (unless the initramfs already moved it
+  there), `/dev/pts`, `/dev/shm`, `/run` and `/tmp`; starts udevd (`--daemon`), replays
+  the devices already there (`udevadm trigger`, subsystems then devices) and `udevadm
+  settle`s; loads the Terminus 16x32 console font on tty1 (`setfont`, only after udev:
+  the console may be VGA text mode before the GPU driver loads, which only takes fonts 8
+  or 9 pixels wide); sets the hostname and brings up `lo`; starts seatd (`-g seat`,
+  waiting for its ready line on fd 3); makes `/run/user/1000`; waits briefly for
+  `/dev/dri/card0`; then runs simplewm as the user. The user is the account with UID
+  1000 (there's no setting): their groups from `/etc/group`, a fresh login-like
+  environment (`HOME`, `USER`, `LOGNAME`, `SHELL`, `PATH`, `XDG_RUNTIME_DIR`), output
+  appended to `~/simplewm.log`. Every child starts with no signals blocked (simplewm-init
+  blocks the ones it reads from a signalfd; inherited, they made simplewm and its
+  services ignore SIGTERM).
+- **One VT.** Only simplewm runs on tty1, and simplewm has no Ctrl+Alt+F-keys. When
+  simplewm exits, the kernel's text console comes back on tty1 and simplewm-init writes
+  why there (and on the serial console when the kernel uses one). It starts simplewm
+  again after 2 s, but after 3 exits within a minute it clears the screen, shows the exit
+  and the last 20 lines of `~/simplewm.log`, and waits for Enter on tty1, as often as
+  needed (fix it from elsewhere, press Enter).
+- **Development shell:** a root `bash -l` with no password on the serial port (ttyS0),
+  restarted when it exits. In QEMU that's the terminal running it; on a PC with nothing
+  on the serial port it does nothing. No other consoles.
+- **Shutting down:** busybox's `poweroff`, `reboot` and `halt` signal PID 1 (SIGUSR2,
+  SIGTERM, SIGUSR1). simplewm-init SIGKILLs the serial shell's session (nothing to save,
+  and an interactive bash ignores SIGTERM), sends everything else SIGTERM, names and
+  SIGKILLs whatever is left after 5 s, syncs, remounts `/` read-only and powers off,
+  reboots or halts. Ctrl+Alt+Del is turned off. Logs: `~user/simplewm.log`,
+  `/var/log/seatd.log` (udevd's output goes nowhere for now).
 - Device rules are eudev's own (`/usr/lib/udev/rules.d`): drivers load by modalias
   through its built-in kmod, `/dev/dri` goes to video (render nodes 0666), `/dev/snd` to
   audio and input devices to input, and sound cards get `SOUND_INITIALIZED`. kmod is also
@@ -327,9 +349,8 @@ filesystem drivers are modules in both flavors, hence our own initramfs.
 
 ## Open questions
 
-- The init's details: what it does when simplewm exits or crashes (restart it, drop to a
-  text console, or shut down), shutting down cleanly, and whether it supervises seatd and
-  udevd.
+- Whether simplewm-init should supervise seatd and udevd (restart them if they die).
+  What it does when simplewm exits and how it shuts down are settled (see "In the repo").
 - What `systemd --user` still does on this host that the distro won't have, if anything.
 - How much of that simplewm could take over itself, and what has to stay a separate
   root process (simplewm runs unprivileged, so loading drivers and changing `/dev`

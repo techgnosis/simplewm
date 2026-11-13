@@ -19,8 +19,9 @@ still growing: the user is open to experiments and new features, within the rule
 
 ## Rules simplewm keeps
 
-- No keyboard shortcuts. The one exception is Ctrl+Alt+F1… for switching virtual terminals
-  on a TTY.
+- No keyboard shortcuts, not even Ctrl+Alt+F1… for switching virtual terminals (dropped:
+  the user wants one VT that only runs simplewm). Escape cancels a screenshot, which is
+  part of that tool, not a shortcut.
 - No config file, flags or environment variables (not even `RUST_LOG`: the log filter
   is fixed in `main::init_logging`, more verbose in debug builds). Every setting is changed in a Control
   Panel applet and saved in `~/.config/simplewm/simplewm.dat`, a small binary file
@@ -82,8 +83,8 @@ still growing: the user is open to experiments and new features, within the rule
   `cargo fmt` whenever you like.
 - Tests cover the logic that doesn't need a screen: the settings file, text fields, row
   lists, File Picker listing and search, screenshot PNGs, portal globs and checks, network
-  address and DNS parsing, resolv.conf contents, PipeWire output parsing, and the service
-  manager's process handling (exit descriptions, PID handling, output cleaning). A few only do
+  address and DNS parsing, resolv.conf contents, PipeWire output parsing, simplewm-init's
+  account lookup, and the service manager's process handling (exit descriptions, PID handling, output cleaning). A few only do
   something on a machine that has the hardware or service.
 - The `#[ignore]`d tests need a setup; each one's doc comment says how to run it. Two
   exercise D-Bus on a scratch bus: `dbus-run-session -- cargo test bus -- --ignored` drives
@@ -144,7 +145,7 @@ Scripts for building the custom distro from Alpine packages; `distro/DISTRO.md` 
 plan and describes each script. `distro/build.sh` builds simplewm for musl
 (`build-simplewm.sh`, into `target/alpine/`), the root filesystem, kernel, initramfs and
 disk image (inside an Alpine container, `distro/container.sh`), and `distro/run.sh` boots
-them in QEMU, which starts straight into simplewm. Claude can test a boot itself with
+them in QEMU, which starts straight into simplewm (`/sbin/init` is simplewm-init). Claude can test a boot itself with
 `distro/run.sh headless` (no window): pipe commands into the serial root shell, take
 screenshots with Ctrl+A C then `screendump distro/out/x.ppm` (convert PPM to PNG to view),
 and end with `poweroff`. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
@@ -152,6 +153,10 @@ and end with `poweroff`. The outputs (`distro/root/`, `out/`, `cache/`) are git-
 ## Code map (`src/`)
 
 - `main.rs`: picks the backend and runs the calloop event loop.
+- `bin/simplewm-init/`: a second binary, PID 1 of the distro (see `distro/DISTRO.md`).
+  std + libc only: `main.rs` (the boot sequence and the supervisor that restarts
+  simplewm, waits for Enter on tty1 after repeated failures, and shuts down),
+  `sys.rs` (system call wrappers), `account.rs` (the UID 1000 user from `/etc/passwd`).
 - `state.rs`: `State` holds everything: the Smithay protocol states, the window `Space`,
   `stack` (the stacking order of client windows and panels together), `Ui`, `Panels` and
   the backend.
@@ -162,7 +167,7 @@ and end with `poweroff`. The outputs (`distro/root/`, `out/`, `cache/`) are git-
   whole scene every frame and let the damage tracker work out what changed, so state
   changes show up without asking for a redraw.
 - `input.rs`: all input. `handle_press` sends a click to the bar, a menu, a panel
-  (`PanelHit` → its action) or a client. Keys are filtered in this order: VT switch, Esc
+  (`PanelHit` → its action) or a client. Keys are filtered in this order: Esc
   during a screenshot, the focused File Picker, the text field being edited, and otherwise
   the focused client.
 - `grabs.rs`: moving and resizing windows and panels.

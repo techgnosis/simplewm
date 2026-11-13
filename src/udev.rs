@@ -67,14 +67,6 @@ pub struct UdevData {
     timer_scheduled: bool,
 }
 
-impl UdevData {
-    pub fn change_vt(&mut self, vt: i32) {
-        if let Err(err) = self.session.change_vt(vt) {
-            tracing::error!(?err, vt, "failed to switch VT");
-        }
-    }
-}
-
 pub fn run(
     event_loop: &mut EventLoop<'static, State>,
     state: &mut State,

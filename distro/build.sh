@@ -1,7 +1,7 @@
 #!/bin/sh
 # Build the distro from Alpine packages:
 #
-#   target/alpine/release/simplewm  simplewm for musl (build-simplewm.sh)
+#   target/alpine/release/          simplewm and simplewm-init for musl (build-simplewm.sh)
 #   distro/root/                  the root filesystem (apk installs into it)
 #   distro/out/vmlinuz            the kernel
 #   distro/out/initramfs.cpio.gz  loads the disk and filesystem drivers, mounts the root
@@ -29,6 +29,8 @@ PACKAGES="
     bash
     musl-utils
     procps-ng
+    kbd
+    font-terminus
     kmod
 
     eudev
@@ -60,8 +62,9 @@ PACKAGES="
     wayland-utils
 "
 
-# The user simplewm runs as, and their password (for sudo, which the Network applet
-# uses). Development values; the password is the same in every build.
+# The user simplewm runs as (UID 1000, which is how simplewm-init finds them), and their
+# password (for sudo, which the Network applet uses). Development values; the password
+# is the same in every build.
 USER_NAME=user
 USER_PASSWORD=simplewm
 USER_GROUPS="seat audio video input wheel"
@@ -96,9 +99,9 @@ tar -xzf "$(ls -t "$CACHE"/linux-"$KERNEL"-*.apk | head -n 1)" -C "$ROOT" \
 
 echo "== our pieces"
 install -m 755 /work/target/alpine/release/simplewm "$ROOT/usr/bin/simplewm"
-rm -f "$ROOT/sbin/init"
-install -m 755 init "$ROOT/sbin/init"
-sed -i "s/^USER_NAME=.*/USER_NAME=$USER_NAME/" "$ROOT/sbin/init"
+# simplewm-init is PID 1; it runs simplewm as the account with UID 1000 (made below).
+install -m 755 /work/target/alpine/release/simplewm-init "$ROOT/sbin/simplewm-init"
+ln -sf simplewm-init "$ROOT/sbin/init"
 echo simplewm > "$ROOT/etc/hostname"
 # udevd reads the hardware database from this compiled file.
 chroot "$ROOT" udevadm hwdb --update

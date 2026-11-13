@@ -21,7 +21,7 @@ use std::time::Duration;
 use crate::{
     grabs::{Edges, MoveGrab, PanelMoveGrab, ResizeGrab},
     panel::{APPLETS, PanelHit, PanelId},
-    state::{Backend, State},
+    state::State,
     ui::{self, BarButton, Frame, Hit, MenuKind, bar_buttons},
 };
 
@@ -44,7 +44,6 @@ fn repeats(sym: u32) -> bool {
 
 #[derive(Clone, Copy)]
 enum KeyAction {
-    Vt(i32),
     Panel(u32, Option<char>, bool),
     Picker(u32, Option<char>, bool),
     CancelScreenshot,
@@ -59,11 +58,6 @@ enum Press {
 impl State {
     fn run_key_action(&mut self, action: Option<KeyAction>) {
         match action {
-            Some(KeyAction::Vt(vt)) => {
-                if let Some(Backend::Udev(udev)) = self.backend.as_mut() {
-                    udev.change_vt(vt);
-                }
-            }
             Some(KeyAction::Panel(sym, ch, ctrl)) => {
                 self.panels.key(sym, ch, ctrl);
                 self.after_panel_action();
@@ -118,8 +112,8 @@ impl State {
                 let time = Event::time_msec(&event);
                 let key_state = event.state();
                 let keyboard = self.seat.get_keyboard().unwrap();
-                // Intercepted keys: VT switches on a TTY, and typing into the
-                // Control Panel while one of its text fields is being edited.
+                // Intercepted keys: Escape during a screenshot, and typing into the
+                // File Picker or a Control Panel text field being edited.
                 let action = keyboard.input::<KeyAction, _>(
                     self,
                     event.key_code(),
@@ -129,14 +123,6 @@ impl State {
                     |state, mods, keysym| {
                         let sym = keysym.modified_sym().raw();
                         let pressed = key_state == KeyState::Pressed;
-                        if pressed
-                            && (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12)
-                                .contains(&sym)
-                        {
-                            return FilterResult::Intercept(KeyAction::Vt(
-                                (sym - keysyms::KEY_XF86Switch_VT_1 + 1) as i32,
-                            ));
-                        }
                         if state.ui.shot.is_some() && sym == keysyms::KEY_Escape {
                             return FilterResult::Intercept(if pressed {
                                 KeyAction::CancelScreenshot

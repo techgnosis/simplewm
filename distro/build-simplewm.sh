@@ -1,5 +1,6 @@
 #!/bin/sh
-# Build simplewm for musl, linking Alpine's C libraries, into target/alpine/release/.
+# Build simplewm and simplewm-init for musl, linking Alpine's C libraries, into
+# target/alpine/release/.
 # Run on the host; it re-runs itself in the Alpine container. build.sh calls it.
 #
 # Rust comes from rustup (Alpine's rust package is older than simplewm's rust-version),
