@@ -23,6 +23,9 @@ made.
 - **Boot: a custom init that starts simplewm as you, with no login.** It sets up the bare
   minimum as root, then runs simplewm as a normal user. No logind, elogind, PAM or login
   prompt. Details below.
+- **Packages: Alpine's binaries, installed by apk into a folder.** No compiling the
+  system ourselves; Alpine's musl packages become the root filesystem. Tested in QEMU
+  first. Details below.
 
 ## Devices: the jobs involved
 
@@ -181,6 +184,58 @@ Trade-offs accepted:
 
 If a login prompt is ever wanted, the usual fallback is `getty` with autologin on tty1 and
 `exec simplewm` in the shell profile, which goes through the normal login and PAM path.
+
+## Building the root filesystem from Alpine packages
+
+Alpine is a musl distro and already packages everything chosen above: seatd, mdevd,
+libudev-zero, dbus-daemon, PipeWire, pipewire-pulse, WirePlumber, Mesa, libinput,
+libxkbcommon, iproute2 and sudo. So instead of building the system from source, we take
+Alpine's binaries.
+
+Alpine's package manager, `apk`, can install into any empty folder instead of the running
+system (`apk --root <folder> --initdb add …`, with Alpine's repositories and signing keys).
+It pulls in every library each package needs, which is why we don't copy files out by
+hand: one missed shared library and a program won't start. The distro is then a short
+package list plus our own files, rebuilt with one command and updated by running apk again.
+
+The steps, all inside an Alpine container (rootless podman, on the Arch host):
+
+1. Build simplewm for musl. Use Rust from rustup in the container rather than Alpine's
+   `rust` package, which may be older than simplewm's `rust-version`. The binary links
+   Alpine's C libraries dynamically, so it only runs on Alpine or this distro, not on the
+   Arch host.
+2. Run apk to fill the root folder from the package list.
+3. Add our own pieces: the simplewm binary, the custom init, the user account
+   (`/etc/passwd`, `/etc/group`, including the `seat` and `audio` groups) and a few other
+   config files.
+4. Make the disk image from the folder, still in the container (`mkfs.ext4 -d <folder>`
+   needs no root). Rootless podman maps the container's root to the host user's sub-IDs,
+   so files owned by root inside the folder look odd from the host; building the image in
+   there keeps ownership right.
+5. Boot it: a kernel (Alpine's `linux-lts` package to start with, our own later, see Open
+   questions) that runs our init as PID 1.
+
+Things to keep in mind:
+
+- **Ask for `libudev-zero` by name.** libinput, Mesa and PipeWire need a libudev, and
+  Alpine fills that slot with eudev's library unless told otherwise.
+- **No OpenRC.** Alpine's own boot system only comes in with `alpine-base` or `openrc`;
+  leave them out and our init is the only thing that runs.
+- **Busybox comes along anyway** and provides `/bin/sh`, `mktemp`, `chmod`, `mv` and `rm`,
+  which the Network applet's Apply script needs; `ip` comes from iproute2.
+- **Package install scripts** run when apk installs into the folder. They expect Alpine's
+  usual layout; usually harmless, but the most likely source of surprises.
+- **Licensing is fine**: it's all open source and meant to be reused.
+
+**Testing: QEMU first.** QEMU boots the disk image with a virtual graphics card (virtio-gpu)
+that simplewm drives through DRM like a real one, so the whole boot can be tried over and
+over without touching the real disk. Only once it boots cleanly does it go on a USB stick or
+spare partition.
+
+**First step:** a script that builds the root folder and boots it in QEMU as far as a text
+console, before simplewm is involved. Then add seatd, mdevd and simplewm.
+
+The host needs `podman` and `qemu` installed for this.
 
 ## Open questions
 

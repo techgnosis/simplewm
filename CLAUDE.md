@@ -57,8 +57,9 @@ still growing: the user is open to experiments and new features, within the rule
   pipewire-pulse.socket pipewire-pulse.service wireplumber.service dbus.socket`.
 - Long-term goal: boot simplewm in a minimal custom distro, doing as much as it can in one
   process. `DISTRO.md` records the plan and decisions so far (musl, seatd, libudev-zero +
-  mdevd, dbus-daemon started by simplewm, a custom init that runs simplewm as the user with no login); keep it
-  current as they're made. The PipeWire tools and the `ip` script are staying.
+  mdevd, dbus-daemon started by simplewm, a custom init that runs simplewm as the user with no login, the system
+  built from Alpine's binary packages installed by apk into a folder and tested in QEMU);
+  keep it current as they're made. The PipeWire tools and the `ip` script are staying.
 - simplewm runs with no special privileges. The Network applet sets a static IPv4 address,
   gateway and DNS server (no DHCP) only when the user presses Apply: the Password window
   asks for their password and runs one fixed `ip` script through `sudo -k -S` on a worker
