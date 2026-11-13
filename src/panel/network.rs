@@ -199,8 +199,8 @@ pub(super) fn apply_saved(address: &str, gateway: &str) {
 impl super::Panels {
     pub(super) fn load_network(&mut self) {
         if let Some(conn) = &self.db {
-            self.net.address = super::load_setting(conn, KEY_ADDRESS).unwrap_or_default();
-            self.net.gateway = super::load_setting(conn, KEY_GATEWAY).unwrap_or_default();
+            self.net.address = super::db::load_setting(conn, KEY_ADDRESS).unwrap_or_default();
+            self.net.gateway = super::db::load_setting(conn, KEY_GATEWAY).unwrap_or_default();
         }
         apply_saved(&self.net.address, &self.net.gateway);
     }
