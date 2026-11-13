@@ -1,11 +1,9 @@
 #!/bin/sh
 # Boot what distro/build.sh made in QEMU.
 #
-#   distro/run.sh            the screen in a window, with OpenGL passed through to the
-#                            host's GPU (needs qemu-ui-gtk, qemu-ui-opengl and
-#                            qemu-hw-display-virtio-vga-gl on Arch)
-#   distro/run.sh headless   no window; QEMU's standard VGA card (software rendering in the
-#                            guest), for testing boots from a script
+#   distro/run.sh            the screen in a window (needs qemu-ui-gtk and
+#                            qemu-hw-display-virtio-vga on Arch; qemu-desktop has both)
+#   distro/run.sh headless   no window, for testing boots from a script
 #
 # Either way the serial console is this terminal: kernel messages and a root shell.
 # Ctrl+A then X quits QEMU.
@@ -20,14 +18,15 @@ for f in vmlinuz initramfs.cpio.gz root.img; do
     [ -e "$out/$f" ] || { echo "no $out/$f; run distro/build.sh first" >&2; exit 1; }
 done
 
+# A plain virtio GPU, no OpenGL passthrough: Alpine's Mesa has no virgl driver, so the
+# guest draws in software either way (see DISTRO.md).
 if [ "${1:-}" = headless ]; then
-    screen="-display none -device VGA"
-elif qemu-system-x86_64 -display help 2>/dev/null | grep -qx gtk &&
-    qemu-system-x86_64 -device help 2>/dev/null | grep -q '"virtio-vga-gl"'; then
-    screen="-device virtio-vga-gl -display gtk,gl=on"
+    screen="-device virtio-vga -display none"
+elif qemu-system-x86_64 -display help 2>/dev/null | grep -qx gtk; then
+    screen="-device virtio-vga -display gtk"
 else
-    echo "QEMU has no GTK window or virtio-vga-gl; running headless" >&2
-    screen="-display none -device VGA"
+    echo "QEMU has no GTK window; running headless" >&2
+    screen="-device virtio-vga -display none"
 fi
 
 sound=

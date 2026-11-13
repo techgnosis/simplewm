@@ -236,7 +236,7 @@ spare partition.
 Done so far: the system builds and boots in QEMU straight into simplewm, running as the
 user under seatd, with mdevd handling devices, simplewm's own session bus, PipeWire and
 WirePlumber, and alacritty opening from the launcher. Tested headless (screenshots through
-QEMU's monitor); the GTK window with OpenGL passed through is for the user to try.
+QEMU's monitor). Sound doesn't work yet (see "Open problem" below).
 
 - `container.sh [command…]` runs a command (a shell by default) in an Alpine 3.24
   container with the project root mounted at `/work`. Root in the container is the host
@@ -261,14 +261,15 @@ QEMU's monitor); the GTK window with OpenGL passed through is for the user to tr
   git-ignored. busybox's install script warns it can't create device nodes; harmless.
 - `run.sh` boots `out/` in QEMU with KVM: the serial console is the terminal (Ctrl+A
   then X quits; Ctrl+A then C switches to QEMU's monitor, where `screendump file.ppm` takes
-  a screenshot). The screen opens in a GTK window with virtio-vga-gl (OpenGL passed
-  through to the host GPU, virgl in the guest). On Arch that needs `qemu-ui-gtk
-  qemu-ui-opengl qemu-hw-display-virtio-vga-gl` plus the modules it loads but doesn't
-  depend on: `qemu-hw-display-virtio-gpu qemu-hw-display-virtio-gpu-gl
-  qemu-hw-display-virtio-vga`. `run.sh headless` has no window and uses QEMU's standard VGA
-  card (the kernel's bochs driver, Mesa's software renderer), for testing from a script.
-  A virtio network card on QEMU's user network (address 10.0.2.15/24, gateway 10.0.2.2,
-  DNS 10.0.2.3), and a sound card only if QEMU has its PipeWire driver
+  a screenshot). The screen is a plain virtio-vga card, in a GTK window
+  (`qemu-ui-gtk` and `qemu-hw-display-virtio-vga` on Arch; the user installed
+  `qemu-desktop`), or with `run.sh headless` no window, for testing from a script. No
+  OpenGL passthrough: Alpine's Mesa is built without virgl (its gallium driver list for
+  x86_64 has no `virgl`; Mesa says "virtio_gpu: driver missing"), so everything in the
+  guest draws with llvmpipe whatever QEMU offers. (virtio-vga-gl with `egl-headless` also
+  crashed QEMU on exit and couldn't take screenshots: "no surface".) A virtio network card
+  on QEMU's user network (address 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3), and an
+  Intel HDA sound card played through the host's PipeWire if QEMU has that driver
   (`qemu-audio-pipewire`).
 - `initramfs-init` is the initramfs's `/init` (static busybox): it loads the drivers
   listed in `INITRAMFS_MODULES` (virtio disk, ext4, in dependency order worked out by
@@ -287,12 +288,22 @@ QEMU's monitor); the GTK window with OpenGL passed through is for the user to tr
   `modprobe` is installed because busybox's first hands the kernel the compressed module,
   which logs "Invalid ELF header magic" for every driver before busybox falls back.
 
-**Known problem: software rendering shows black tiles.** In `run.sh headless` (and on any
-machine where Mesa draws in software), parts of the screen come out as black 64×64 blocks
-that change from frame to frame: llvmpipe renders in tiles on worker threads, and the frame
-is shown before it finishes (smithay can't make a sync object there: "failed to create
-signaled syncobj"). Not seen on real GPUs; a fix would be to wait for rendering to finish
-before queueing the frame when there's no fence.
+**Fixed: software rendering showed black tiles.** With llvmpipe, parts of the screen came
+out as black 64×64 blocks: frames were queued before the renderer's worker threads
+finished. simplewm now waits for rendering when smithay says the frame `needs_sync()`
+(no fence the kernel can wait on).
+
+**Fixed: apps couldn't find the GPU.** Under virtio-gpu, EGL can't name a render node
+(no `EGL_EXT_device_drm`), so simplewm offered no default dmabuf feedback and Mesa in
+alacritty found no device ("failed to get driver name for fd -1"). simplewm now falls back
+to the render node of the GPU it opened.
+
+**Open problem: no sound with libudev-zero.** PipeWire's ALSA monitor only takes a sound
+card once udev has set `SOUND_INITIALIZED` on it (systemd's and eudev's
+`78-sound-card.rules` do). libudev-zero only reports what's in the kernel's `uevent` file
+plus the `ID_INPUT_*` guesses it makes for input devices, so PipeWire finds no cards: only
+"Dummy Output", although `/dev/snd` is there with the right group. This is the case the
+eudev fallback was kept for; it affects the real machine too.
 
 **The kernel** is Alpine's `linux-virt` for now (smaller, meant for VMs; `KERNEL` in
 `build.sh`), switched to `linux-lts` or our own for the real machine. It's unpacked from

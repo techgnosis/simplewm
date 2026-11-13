@@ -10,8 +10,8 @@ use smithay::{
             gbm::{GbmAllocator, GbmBufferFlags, GbmDevice},
         },
         drm::{
-            DrmDevice, DrmDeviceFd, DrmEvent, DrmEventMetadata, DrmEventTime,
-            compositor::{DrmCompositor, FrameFlags},
+            DrmDevice, DrmDeviceFd, DrmEvent, DrmEventMetadata, DrmEventTime, DrmNode, NodeType,
+            compositor::{DrmCompositor, FrameFlags, PrimaryPlaneElement},
             exporter::gbm::GbmFramebufferExporter,
         },
         egl::{EGLContext, EGLDevice, EGLDisplay},
@@ -171,10 +171,23 @@ pub fn run(
 
     // --- dmabuf ------------------------------------------------------------
     let formats = renderer.dmabuf_formats();
-    let render_node =
-        EGLDevice::device_for_display(&egl_display).and_then(|d| d.try_get_render_node());
+    // The render node clients should draw on. EGL usually says; when it can't (Mesa's
+    // virgl driver in a VM, for one), take the render node of the GPU we opened. Without
+    // one, clients get no default feedback and Mesa can't find a GPU to draw on.
+    let render_node = EGLDevice::device_for_display(&egl_display)
+        .and_then(|d| d.try_get_render_node())
+        .inspect_err(|err| tracing::info!(?err, "EGL doesn't name a render node"))
+        .ok()
+        .flatten()
+        .or_else(|| {
+            DrmNode::from_file(&fd)
+                .ok()?
+                .node_with_type(NodeType::Render)?
+                .ok()
+        });
+    tracing::info!(?render_node, "render node for clients");
     let global = match render_node {
-        Ok(Some(node)) => {
+        Some(node) => {
             let feedback = DmabufFeedbackBuilder::new(node.dev_id(), formats).build()?;
             state
                 .dmabuf_state
@@ -196,7 +209,7 @@ pub fn run(
     state
         .startup_info
         .push(("GPU device".into(), gpu_path.display().to_string()));
-    if let Ok(Some(node)) = &render_node {
+    if let Some(node) = &render_node {
         let path = node
             .dev_path()
             .map(|p| p.display().to_string())
@@ -360,6 +373,15 @@ impl State {
             FrameFlags::DEFAULT,
         ) {
             Ok(result) => {
+                // Without a fence the kernel can wait on (software rendering, virgl-less
+                // VMs, some drivers), wait here for drawing to finish, or the frame is
+                // shown half drawn: black tiles from Mesa's software renderer.
+                if !result.is_empty
+                    && result.needs_sync()
+                    && let PrimaryPlaneElement::Swapchain(element) = &result.primary_element
+                {
+                    let _ = element.sync.wait();
+                }
                 if !result.is_empty {
                     let feedback = self.take_presentation_feedback(&output);
                     match udev.compositor.queue_frame(Some(feedback)) {

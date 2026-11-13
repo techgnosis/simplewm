@@ -21,7 +21,8 @@ cd /work/distro
 # The kernel flavor: "virt" is Alpine's smaller kernel for virtual machines.
 KERNEL=virt
 
-# What goes into the root filesystem.
+# What goes into the root filesystem. wayland-utils (wayland-info) is for checking what
+# simplewm offers apps.
 PACKAGES="
     alpine-baselayout
     busybox
@@ -55,6 +56,7 @@ PACKAGES="
 
     alacritty
     font-dejavu
+    wayland-utils
 "
 
 # The user simplewm runs as, and their password (for sudo, which the Network applet
