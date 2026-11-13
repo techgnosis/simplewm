@@ -92,15 +92,12 @@ const TOAST_TIME: Duration = Duration::from_millis(2500);
 /// Outline drawn on top for windows hidden entirely behind others.
 const HIDDEN_OUTLINE: [f32; 4] = [0.90, 0.15, 0.15, 1.0];
 
-// Window tabs on the bar, and the red highlight of a hovered tab's window.
+// Window tabs on the bar.
 const TAB_MAX_W: i32 = 170;
 const TAB_MIN_W: i32 = 44;
 const TAB_PAD: i32 = 8;
 const TAB_FOCUSED: [f32; 4] = TITLE_FOCUSED;
 const TAB_FOCUSED_HOT: [f32; 4] = [0.30, 0.44, 0.66, 1.0];
-const MARK_EDGE: [f32; 4] = [1.0, 0.12, 0.12, 1.0];
-const MARK_FILL: [f32; 4] = [0.35 * 1.0, 0.35 * 0.10, 0.35 * 0.10, 0.35];
-const MARK_THICK: i32 = 4;
 
 pub const CLEAR_COLOR: [f32; 4] = BG_COLOR;
 
@@ -623,9 +620,8 @@ pub struct Ui {
     icon_fills: Vec<SolidColorBuffer>,
     /// Edge buffers for hidden-window outlines, four per hidden window.
     hidden_outlines: Vec<SolidColorBuffer>,
-    /// Red highlight of the window whose bar tab is hovered: four edges, then
-    /// the tint over the whole frame.
-    mark: [SolidColorBuffer; 5],
+    /// Red outline (four edges) of the window whose bar tab is hovered.
+    mark: [SolidColorBuffer; 4],
     cursor: MemoryRenderBuffer,
 }
 
@@ -994,20 +990,10 @@ impl State {
         if let Hit::WindowTab(w) = &hovered
             && let Some(content) = self.space.element_geometry(w)
         {
-            let frame = frame_rect(content);
-            let (x, y, fw, fh) = (frame.loc.x, frame.loc.y, frame.size.w, frame.size.h);
-            let t = MARK_THICK;
-            let edges = [
-                Rectangle::new((x - t, y - t).into(), (fw + 2 * t, t).into()),
-                Rectangle::new((x - t, y + fh).into(), (fw + 2 * t, t).into()),
-                Rectangle::new((x - t, y).into(), (t, fh).into()),
-                Rectangle::new((x + fw, y).into(), (t, fh).into()),
-            ];
-            let (edge_bufs, fill) = ui.mark.split_at_mut(4);
-            for (buf, edge) in edge_bufs.iter_mut().zip(edges) {
-                elems.push(solid(buf, edge, MARK_EDGE));
+            // The same outline a fully hidden window gets.
+            for (buf, edge) in ui.mark.iter_mut().zip(outline(frame_rect(content))) {
+                elems.push(solid(buf, edge, HIDDEN_OUTLINE));
             }
-            elems.push(solid(&mut fill[0], frame, MARK_FILL));
         }
 
         // --- top bar --------------------------------------------------------
