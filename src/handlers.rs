@@ -2,9 +2,10 @@ use std::cell::RefCell;
 
 use smithay::{
     backend::{allocator::dmabuf::Dmabuf, renderer::ImportDma},
-    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_output, delegate_seat,
-    delegate_pointer_constraints, delegate_presentation, delegate_relative_pointer, delegate_shm,
-    delegate_single_pixel_buffer, delegate_viewporter, delegate_xdg_decoration, delegate_xdg_shell,
+    delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_output,
+    delegate_pointer_constraints, delegate_presentation, delegate_relative_pointer, delegate_seat,
+    delegate_shm, delegate_single_pixel_buffer, delegate_viewporter, delegate_xdg_decoration,
+    delegate_xdg_shell,
     desktop::{PopupKind, Window, find_popup_root_surface, get_popup_toplevel_coords},
     input::{
         Seat, SeatHandler, SeatState,
@@ -132,7 +133,12 @@ impl DmabufHandler for State {
         &mut self.dmabuf_state
     }
 
-    fn dmabuf_imported(&mut self, _global: &DmabufGlobal, dmabuf: Dmabuf, notifier: ImportNotifier) {
+    fn dmabuf_imported(
+        &mut self,
+        _global: &DmabufGlobal,
+        dmabuf: Dmabuf,
+        notifier: ImportNotifier,
+    ) {
         let ok = self
             .renderer()
             .map(|r| r.import_dmabuf(&dmabuf, None).is_ok())
@@ -234,7 +240,12 @@ impl XdgShellHandler for State {
         }
     }
 
-    fn reposition_request(&mut self, surface: PopupSurface, positioner: PositionerState, token: u32) {
+    fn reposition_request(
+        &mut self,
+        surface: PopupSurface,
+        positioner: PositionerState,
+        token: u32,
+    ) {
         surface.with_pending_state(|state| {
             state.geometry = positioner.get_geometry();
             state.positioner = positioner;
@@ -291,7 +302,11 @@ impl XdgShellHandler for State {
 }
 delegate_xdg_shell!(State);
 
-fn check_grab(seat: &Seat<State>, surface: &WlSurface, serial: Serial) -> Option<GrabStartData<State>> {
+fn check_grab(
+    seat: &Seat<State>,
+    surface: &WlSurface,
+    serial: Serial,
+) -> Option<GrabStartData<State>> {
     let pointer = seat.get_pointer()?;
     if !pointer.has_grab(serial) {
         return None;
@@ -368,8 +383,14 @@ impl PointerConstraintsHandler for State {
         }
     }
 
-    fn cursor_position_hint(&mut self, surface: &WlSurface, pointer: &PointerHandle<Self>, location: Point<f64, Logical>) {
-        let active = with_pointer_constraint(surface, pointer, |c| c.is_some_and(|c| c.is_active()));
+    fn cursor_position_hint(
+        &mut self,
+        surface: &WlSurface,
+        pointer: &PointerHandle<Self>,
+        location: Point<f64, Logical>,
+    ) {
+        let active =
+            with_pointer_constraint(surface, pointer, |c| c.is_some_and(|c| c.is_active()));
         if !active {
             return;
         }

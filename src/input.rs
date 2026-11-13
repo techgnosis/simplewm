@@ -7,14 +7,14 @@ use smithay::{
     input::{
         keyboard::{FilterResult, keysyms},
         pointer::{
-            AxisFrame, ButtonEvent, CursorImageStatus, Focus, GrabStartData, MotionEvent, PointerHandle,
-            RelativeMotionEvent,
+            AxisFrame, ButtonEvent, CursorImageStatus, Focus, GrabStartData, MotionEvent,
+            PointerHandle, RelativeMotionEvent,
         },
     },
-    reexports::wayland_server::protocol::wl_surface::WlSurface,
-    wayland::pointer_constraints::{PointerConstraint, with_pointer_constraint},
     reexports::calloop::timer::{TimeoutAction, Timer},
+    reexports::wayland_server::protocol::wl_surface::WlSurface,
     utils::{Logical, Point, SERIAL_COUNTER, Serial},
+    wayland::pointer_constraints::{PointerConstraint, with_pointer_constraint},
 };
 use std::time::Duration;
 
@@ -32,7 +32,14 @@ const REPEAT_RATE: u64 = 25;
 
 /// Whether holding `sym` repeats it. Keys that act once (accept, cancel) don't.
 fn repeats(sym: u32) -> bool {
-    !matches!(sym, keysyms::KEY_Return | keysyms::KEY_KP_Enter | keysyms::KEY_Escape | keysyms::KEY_Tab | keysyms::KEY_ISO_Left_Tab)
+    !matches!(
+        sym,
+        keysyms::KEY_Return
+            | keysyms::KEY_KP_Enter
+            | keysyms::KEY_Escape
+            | keysyms::KEY_Tab
+            | keysyms::KEY_ISO_Left_Tab
+    )
 }
 
 #[derive(Clone, Copy)]
@@ -107,7 +114,10 @@ impl State {
                     |state, mods, keysym| {
                         let sym = keysym.modified_sym().raw();
                         let pressed = key_state == KeyState::Pressed;
-                        if pressed && (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12).contains(&sym) {
+                        if pressed
+                            && (keysyms::KEY_XF86Switch_VT_1..=keysyms::KEY_XF86Switch_VT_12)
+                                .contains(&sym)
+                        {
                             return FilterResult::Intercept(KeyAction::Vt(
                                 (sym - keysyms::KEY_XF86Switch_VT_1 + 1) as i32,
                             ));
@@ -123,7 +133,9 @@ impl State {
                         if state.panels.active == Some(PanelId::FilePicker) {
                             if pressed {
                                 let ch = keysym.modified_sym().key_char();
-                                return FilterResult::Intercept(KeyAction::Picker(sym, ch, mods.ctrl));
+                                return FilterResult::Intercept(KeyAction::Picker(
+                                    sym, ch, mods.ctrl,
+                                ));
                             }
                             return FilterResult::Intercept(KeyAction::Swallow);
                         }
@@ -131,7 +143,9 @@ impl State {
                         if editing_panel.is_some() && editing_panel == state.panels.active {
                             if pressed {
                                 let ch = keysym.modified_sym().key_char();
-                                return FilterResult::Intercept(KeyAction::Panel(sym, ch, mods.ctrl));
+                                return FilterResult::Intercept(KeyAction::Panel(
+                                    sym, ch, mods.ctrl,
+                                ));
                             }
                             return FilterResult::Intercept(KeyAction::Swallow);
                         }
@@ -140,11 +154,13 @@ impl State {
                 );
                 // simplewm's own windows get key repeat here; clients do their own.
                 let code = event.key_code().raw();
-                if key_state == KeyState::Pressed || self.key_repeat.is_some_and(|(c, _)| c == code) {
+                if key_state == KeyState::Pressed || self.key_repeat.is_some_and(|(c, _)| c == code)
+                {
                     self.stop_key_repeat();
                 }
                 if key_state == KeyState::Pressed
-                    && let Some(a @ (KeyAction::Panel(sym, ..) | KeyAction::Picker(sym, ..))) = action
+                    && let Some(a @ (KeyAction::Panel(sym, ..) | KeyAction::Picker(sym, ..))) =
+                        action
                     && repeats(sym)
                 {
                     self.start_key_repeat(code, a);
@@ -154,7 +170,9 @@ impl State {
             InputEvent::PointerMotion { event } => {
                 let serial = SERIAL_COUNTER.next_serial();
                 let pointer = self.seat.get_pointer().unwrap();
-                let under = self.content_under(self.pointer_location).map(|(_, s, loc)| (s, loc));
+                let under = self
+                    .content_under(self.pointer_location)
+                    .map(|(_, s, loc)| (s, loc));
                 // Relative motion reaches the surface under the pointer even when
                 // a pointer lock keeps the cursor still (games, gamescope).
                 pointer.relative_motion(
@@ -213,15 +231,24 @@ impl State {
             InputEvent::PointerAxis { event } => {
                 // Scrolling over the Environment, Desktop Portal, Network or File Picker window
                 // scrolls its list.
-                if let Hit::Panel(id @ (PanelId::Environment | PanelId::Portal | PanelId::Network | PanelId::FilePicker), _) =
-                    self.hit_test(self.pointer_location)
+                if let Hit::Panel(
+                    id @ (PanelId::Environment
+                    | PanelId::Portal
+                    | PanelId::Network
+                    | PanelId::FilePicker),
+                    _,
+                ) = self.hit_test(self.pointer_location)
                 {
-                    let amount = event
-                        .amount(Axis::Vertical)
-                        .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0);
+                    let amount = event.amount(Axis::Vertical).unwrap_or_else(|| {
+                        event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0
+                    });
                     if id == PanelId::FilePicker {
                         // A wheel notch (15) moves three rows; touchpads scroll by pixels.
-                        let scale = if event.source() == AxisSource::Wheel { 3.0 * 22.0 / 15.0 } else { 1.0 };
+                        let scale = if event.source() == AxisSource::Wheel {
+                            3.0 * 22.0 / 15.0
+                        } else {
+                            1.0
+                        };
                         self.panels.picker.scroll_by(amount * scale);
                     } else {
                         self.panels.scroll_rows(id, amount);
@@ -229,12 +256,12 @@ impl State {
                     return;
                 }
                 let source = event.source();
-                let h_amount = event
-                    .amount(Axis::Horizontal)
-                    .unwrap_or_else(|| event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.0);
-                let v_amount = event
-                    .amount(Axis::Vertical)
-                    .unwrap_or_else(|| event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0);
+                let h_amount = event.amount(Axis::Horizontal).unwrap_or_else(|| {
+                    event.amount_v120(Axis::Horizontal).unwrap_or(0.0) * 15.0 / 120.0
+                });
+                let v_amount = event.amount(Axis::Vertical).unwrap_or_else(|| {
+                    event.amount_v120(Axis::Vertical).unwrap_or(0.0) * 15.0 / 120.0
+                });
                 let mut frame = AxisFrame::new(event.time_msec()).source(source);
                 if h_amount != 0.0 {
                     frame = frame.value(Axis::Horizontal, h_amount);
@@ -282,7 +309,15 @@ impl State {
             self.cursor_status = CursorImageStatus::default_named();
         }
         let entered = focus.as_ref().map(|(s, _)| s.clone());
-        pointer.motion(self, focus, &MotionEvent { location: pos, serial, time });
+        pointer.motion(
+            self,
+            focus,
+            &MotionEvent {
+                location: pos,
+                serial,
+                time,
+            },
+        );
         pointer.frame(self);
         if let Some(surface) = entered {
             self.maybe_activate_constraint(&surface, &pointer);
@@ -290,9 +325,14 @@ impl State {
     }
 
     /// The client surface under `pos`, with its window and global origin.
-    fn content_under(&self, pos: Point<f64, Logical>) -> Option<(Window, WlSurface, Point<f64, Logical>)> {
+    fn content_under(
+        &self,
+        pos: Point<f64, Logical>,
+    ) -> Option<(Window, WlSurface, Point<f64, Logical>)> {
         match self.hit_test(pos) {
-            Hit::Content(window, surface, loc) if self.ui.shot.is_none() => Some((window, surface, loc)),
+            Hit::Content(window, surface, loc) if self.ui.shot.is_none() => {
+                Some((window, surface, loc))
+            }
             _ => None,
         }
     }
@@ -330,7 +370,12 @@ impl State {
 
     /// Whether an active constraint on `surface` lets the pointer move to `pos`:
     /// a lock never does, a confinement only within its region of the surface.
-    fn constraint_allows(&self, surface: &WlSurface, pointer: &PointerHandle<State>, pos: Point<f64, Logical>) -> bool {
+    fn constraint_allows(
+        &self,
+        surface: &WlSurface,
+        pointer: &PointerHandle<State>,
+        pos: Point<f64, Logical>,
+    ) -> bool {
         let confined = with_pointer_constraint(surface, pointer, |c| match c {
             Some(c) if c.is_active() => match &*c {
                 PointerConstraint::Locked(_) => Some(None),
@@ -360,7 +405,8 @@ impl State {
                 Hit::Menu(Some(i)) if button == BTN_LEFT => self.menu_action(menu.kind, i),
                 Hit::BarButton(b) if button == BTN_LEFT => {
                     // Clicking the button of the open menu just closes it.
-                    let same = b == BarButton::Launcher && matches!(menu.kind, MenuKind::Launcher(_));
+                    let same =
+                        b == BarButton::Launcher && matches!(menu.kind, MenuKind::Launcher(_));
                     if !same {
                         self.bar_button(b);
                     }
@@ -434,7 +480,9 @@ impl State {
                     PanelHit::NetApply => self.panels.network_apply(),
                     PanelHit::NetRefresh => self.panels.refresh_network(),
                     PanelHit::SoundCard(i) => self.panels.sound_choose(i),
-                    PanelHit::SoundBar(percent) => self.panels.sound_set_volume(percent as f64 / 100.0),
+                    PanelHit::SoundBar(percent) => {
+                        self.panels.sound_set_volume(percent as f64 / 100.0)
+                    }
                     PanelHit::SoundDown => self.panels.sound_step(-1.0),
                     PanelHit::SoundUp => self.panels.sound_step(1.0),
                     PanelHit::ChooseShotDir => {
@@ -456,7 +504,8 @@ impl State {
                 self.focus_window(Some(&w));
                 if let Some(content) = self.space.element_geometry(&w) {
                     let frame = Frame::new(content, &self.ui.text);
-                    let anchor = (frame.size.loc.x, frame.size.loc.y + frame.size.size.h + 2).into();
+                    let anchor =
+                        (frame.size.loc.x, frame.size.loc.y + frame.size.size.h + 2).into();
                     let out = self.output_geometry();
                     self.ui.open_menu(MenuKind::Size(w), anchor, out);
                 }
@@ -523,7 +572,16 @@ impl State {
             button,
             location: self.pointer_location,
         };
-        pointer.set_grab(self, PanelMoveGrab { start_data, id, initial_loc }, serial, Focus::Clear);
+        pointer.set_grab(
+            self,
+            PanelMoveGrab {
+                start_data,
+                id,
+                initial_loc,
+            },
+            serial,
+            Focus::Clear,
+        );
     }
 
     fn bar_button(&mut self, b: BarButton) {
@@ -535,7 +593,10 @@ impl State {
             }
             BarButton::Screenshot => self.start_screenshot(),
             BarButton::Launcher => {
-                let Some((_, rect)) = bar_buttons(&self.ui.text, out).into_iter().find(|(x, _)| *x == b) else {
+                let Some((_, rect)) = bar_buttons(&self.ui.text, out)
+                    .into_iter()
+                    .find(|(x, _)| *x == b)
+                else {
                     return;
                 };
                 let anchor = (rect.loc.x, out.loc.y + ui::BAR_HEIGHT).into();
@@ -567,7 +628,11 @@ impl State {
 
         // Usable area below the top bar, split at the middle in each direction.
         let out = self.output_geometry();
-        let area_x = [out.loc.x, out.loc.x + out.size.w / 2, out.loc.x + out.size.w];
+        let area_x = [
+            out.loc.x,
+            out.loc.x + out.size.w / 2,
+            out.loc.x + out.size.w,
+        ];
         let area_top = out.loc.y + ui::BAR_HEIGHT;
         let area_h = out.size.h - ui::BAR_HEIGHT;
         let area_y = [area_top, area_top + area_h / 2, area_top + area_h];

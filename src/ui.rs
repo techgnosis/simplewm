@@ -155,7 +155,10 @@ impl Frame {
         let close_x = title.loc.x + title.size.w - BORDER - 2 - CLOSE_W;
         let close = Rectangle::new((close_x, by).into(), (CLOSE_W, BUTTON_H).into());
         let sw = size_button_width(text);
-        let size = Rectangle::new((close_x - BUTTON_GAP - sw, by).into(), (sw, BUTTON_H).into());
+        let size = Rectangle::new(
+            (close_x - BUTTON_GAP - sw, by).into(),
+            (sw, BUTTON_H).into(),
+        );
         let title_text_x = title.loc.x + BORDER + 8;
         let title_text_max = size.loc.x - BUTTON_GAP - title_text_x;
         Self {
@@ -242,7 +245,11 @@ fn clock_slot_width(text: &TextRenderer) -> i32 {
         .unwrap()
 }
 
-const BAR_BUTTONS: [BarButton; 3] = [BarButton::ControlPanel, BarButton::Launcher, BarButton::Screenshot];
+const BAR_BUTTONS: [BarButton; 3] = [
+    BarButton::ControlPanel,
+    BarButton::Launcher,
+    BarButton::Screenshot,
+];
 type BarRects = [(BarButton, Rectangle<i32, Logical>); BAR_BUTTONS.len()];
 
 /// The bar items (Control Panel, Launcher, Screenshot, clock) are laid out as
@@ -302,7 +309,9 @@ pub enum MenuKind {
 impl MenuKind {
     pub fn items(&self) -> Vec<String> {
         match self {
-            MenuKind::Launcher(paths) if paths.is_empty() => vec!["Add apps in Control Panel".into()],
+            MenuKind::Launcher(paths) if paths.is_empty() => {
+                vec!["Add apps in Control Panel".into()]
+            }
             MenuKind::Launcher(paths) => paths.iter().map(|p| crate::panel::exe_name(p)).collect(),
             MenuKind::Size(_) => SIZE_LABELS.iter().map(|s| s.to_string()).collect(),
         }
@@ -318,12 +327,20 @@ impl OpenMenu {
     pub fn item_rect(&self, i: usize) -> Rectangle<i32, Logical> {
         if let MenuKind::Size(_) = self.kind {
             return Rectangle::new(
-                (self.rect.loc.x + MENU_PAD + i as i32 * ICON_CELL_W, self.rect.loc.y + MENU_PAD).into(),
+                (
+                    self.rect.loc.x + MENU_PAD + i as i32 * ICON_CELL_W,
+                    self.rect.loc.y + MENU_PAD,
+                )
+                    .into(),
                 (ICON_CELL_W, ICON_CELL_H).into(),
             );
         }
         Rectangle::new(
-            (self.rect.loc.x + MENU_PAD, self.rect.loc.y + MENU_PAD + i as i32 * MENU_ITEM_H).into(),
+            (
+                self.rect.loc.x + MENU_PAD,
+                self.rect.loc.y + MENU_PAD + i as i32 * MENU_ITEM_H,
+            )
+                .into(),
             (self.rect.size.w - 2 * MENU_PAD, MENU_ITEM_H).into(),
         )
     }
@@ -335,22 +352,37 @@ impl OpenMenu {
     /// Row under the icons of the Size menu that names the hovered option.
     pub fn label_rect(&self) -> Rectangle<i32, Logical> {
         Rectangle::new(
-            (self.rect.loc.x + MENU_PAD, self.rect.loc.y + MENU_PAD + ICON_CELL_H).into(),
+            (
+                self.rect.loc.x + MENU_PAD,
+                self.rect.loc.y + MENU_PAD + ICON_CELL_H,
+            )
+                .into(),
             (self.rect.size.w - 2 * MENU_PAD, MENU_ITEM_H).into(),
         )
     }
 }
 
 /// The small screen drawn for a Size option, and the filled target region.
-fn size_icon(cell: Rectangle<i32, Logical>, region: [i32; 4]) -> (Rectangle<i32, Logical>, Rectangle<i32, Logical>) {
+fn size_icon(
+    cell: Rectangle<i32, Logical>,
+    region: [i32; 4],
+) -> (Rectangle<i32, Logical>, Rectangle<i32, Logical>) {
     let screen = Rectangle::new(
         (cell.loc.x + ICON_PAD, cell.loc.y + ICON_PAD).into(),
         (ICON_W, ICON_H).into(),
     );
     // Inner area, inset so the screen shows as a frame; regions get a 1px gap.
     let inset = 2;
-    let ix = [screen.loc.x + inset, screen.loc.x + ICON_W / 2, screen.loc.x + ICON_W - inset];
-    let iy = [screen.loc.y + inset, screen.loc.y + ICON_H / 2, screen.loc.y + ICON_H - inset];
+    let ix = [
+        screen.loc.x + inset,
+        screen.loc.x + ICON_W / 2,
+        screen.loc.x + ICON_W - inset,
+    ];
+    let iy = [
+        screen.loc.y + inset,
+        screen.loc.y + ICON_H / 2,
+        screen.loc.y + ICON_H - inset,
+    ];
     let [x0, y0, x1, y1] = region.map(|v| v as usize);
     let gap = |v: usize| if v == 1 { 1 } else { 0 };
     let left = ix[x0] + gap(x0);
@@ -509,7 +541,12 @@ impl Ui {
         }
     }
 
-    pub fn open_menu(&mut self, kind: MenuKind, anchor: Point<i32, Logical>, out: Rectangle<i32, Logical>) {
+    pub fn open_menu(
+        &mut self,
+        kind: MenuKind,
+        anchor: Point<i32, Logical>,
+        out: Rectangle<i32, Logical>,
+    ) {
         let items = kind.items();
         let (w, h) = if let MenuKind::Size(_) = kind {
             (
@@ -551,10 +588,20 @@ impl Ui {
     }
 }
 
-pub(crate) fn solid(buf: &mut SolidColorBuffer, rect: Rectangle<i32, Logical>, color: [f32; 4]) -> CustomElement {
+pub(crate) fn solid(
+    buf: &mut SolidColorBuffer,
+    rect: Rectangle<i32, Logical>,
+    color: [f32; 4],
+) -> CustomElement {
     buf.update(rect.size, color);
-    SolidColorRenderElement::from_buffer(buf, rect.loc.to_physical(1), Scale::from(1.0), 1.0, Kind::Unspecified)
-        .into()
+    SolidColorRenderElement::from_buffer(
+        buf,
+        rect.loc.to_physical(1),
+        Scale::from(1.0),
+        1.0,
+        Kind::Unspecified,
+    )
+    .into()
 }
 
 fn text_elem(
@@ -671,13 +718,21 @@ impl State {
 
     /// Render elements, front-most first. For a screenshot `capture` leaves
     /// out the cursor, hover highlights, the selection overlay and the toast.
-    pub fn build_elements(&mut self, renderer: &mut GlesRenderer, capture: bool) -> Vec<CustomElement> {
+    pub fn build_elements(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        capture: bool,
+    ) -> Vec<CustomElement> {
         let mut elems: Vec<CustomElement> = Vec::new();
         let ptr = self.pointer_location;
         let ptr_i = ptr.to_i32_round::<i32>();
         let out = self.output_geometry();
         let selecting = self.ui.shot.is_some();
-        let hovered = if capture || selecting { Hit::Background } else { self.hit_test(ptr) };
+        let hovered = if capture || selecting {
+            Hit::Background
+        } else {
+            self.hit_test(ptr)
+        };
         let focused = self.focused_window();
         let hidden = self.hidden_frames();
 
@@ -693,7 +748,11 @@ impl State {
                 if since.elapsed() < TOAST_TIME {
                     let w = ui.text.measure(msg) + 2 * TOAST_PAD;
                     let r = Rectangle::new(
-                        (out.loc.x + (out.size.w - w) / 2, out.loc.y + BAR_HEIGHT + 12).into(),
+                        (
+                            out.loc.x + (out.size.w - w) / 2,
+                            out.loc.y + BAR_HEIGHT + 12,
+                        )
+                            .into(),
                         (w, TOAST_H).into(),
                     );
                     let msg = msg.clone();
@@ -711,7 +770,12 @@ impl State {
         elems
     }
 
-    fn cursor_elements(&mut self, renderer: &mut GlesRenderer, ptr_i: Point<i32, Logical>, elems: &mut Vec<CustomElement>) {
+    fn cursor_elements(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        ptr_i: Point<i32, Logical>,
+        elems: &mut Vec<CustomElement>,
+    ) {
         let cursor_status = self.cursor_status.clone();
         match cursor_status {
             CursorImageStatus::Hidden => {}
@@ -770,11 +834,20 @@ impl State {
             if let MenuKind::Size(_) = menu.kind {
                 if let Some(i) = hl {
                     let label = SIZE_OPTIONS[i].0;
-                    elems.extend(text_centered(&mut ui.text, renderer, label, menu.label_rect()));
+                    elems.extend(text_centered(
+                        &mut ui.text,
+                        renderer,
+                        label,
+                        menu.label_rect(),
+                    ));
                 }
                 for (i, (_, region)) in SIZE_OPTIONS.iter().enumerate() {
                     let (screen, fill) = size_icon(menu.item_rect(i), *region);
-                    let fill_color = if hl == Some(i) { ICON_FILL_HOT } else { ICON_FILL };
+                    let fill_color = if hl == Some(i) {
+                        ICON_FILL_HOT
+                    } else {
+                        ICON_FILL
+                    };
                     elems.push(solid(&mut ui.icon_fills[i], fill, fill_color));
                     elems.push(solid(&mut ui.icon_screens[i], screen, ICON_SCREEN));
                 }
@@ -783,7 +856,14 @@ impl State {
                 let alpha = if empty { 0.5 } else { 1.0 };
                 for (i, label) in menu.kind.items().iter().enumerate() {
                     let r = menu.item_rect(i);
-                    elems.extend(text_in_alpha(&mut ui.text, renderer, label, r.loc.x + BAR_BUTTON_PAD, r, alpha));
+                    elems.extend(text_in_alpha(
+                        &mut ui.text,
+                        renderer,
+                        label,
+                        r.loc.x + BAR_BUTTON_PAD,
+                        r,
+                        alpha,
+                    ));
                 }
             }
             let empty = matches!(&menu.kind, MenuKind::Launcher(p) if p.is_empty());
@@ -794,7 +874,8 @@ impl State {
         }
 
         // --- outlines of fully hidden windows, above all windows ------------
-        ui.hidden_outlines.resize_with(hidden.len() * 4, solid_buffer);
+        ui.hidden_outlines
+            .resize_with(hidden.len() * 4, solid_buffer);
         let edges = hidden.into_iter().flat_map(outline);
         for (buf, edge) in ui.hidden_outlines.iter_mut().zip(edges) {
             elems.push(solid(buf, edge, HIDDEN_OUTLINE));
@@ -827,7 +908,8 @@ impl State {
                         Hit::Panel(hid, h) if hid == id => Some(h),
                         _ => None,
                     };
-                    self.panels.render(id, &mut self.ui.text, renderer, hover, elems);
+                    self.panels
+                        .render(id, &mut self.ui.text, renderer, hover, elems);
                     continue;
                 }
                 StackEntry::Window(w) => w,
@@ -847,19 +929,43 @@ impl State {
             let frame = Frame::new(content, &ui.text);
             let title = window_title(&window);
             let title = ui.text.fit(&title, frame.title_text_max);
-            elems.extend(text_in(&mut ui.text, renderer, &title, frame.title_text_x, frame.title));
+            elems.extend(text_in(
+                &mut ui.text,
+                renderer,
+                &title,
+                frame.title_text_x,
+                frame.title,
+            ));
             elems.extend(text_centered(&mut ui.text, renderer, "Size", frame.size));
             elems.extend(text_centered(&mut ui.text, renderer, "×", frame.close));
 
             let is_focused = focused.as_ref() == Some(&window);
-            let title_color = if is_focused { TITLE_FOCUSED } else { TITLE_UNFOCUSED };
+            let title_color = if is_focused {
+                TITLE_FOCUSED
+            } else {
+                TITLE_UNFOCUSED
+            };
             let close_hot = matches!(&hovered, Hit::Close(w) if *w == window);
             let size_hot = matches!(&hovered, Hit::SizeButton(w) if *w == window);
 
-            window.user_data().insert_if_missing(|| RefCell::new(DecoBuffers::default()));
-            let mut deco = window.user_data().get::<RefCell<DecoBuffers>>().unwrap().borrow_mut();
-            elems.push(solid(&mut deco.close, frame.close, if close_hot { CLOSE_HOT } else { CLOSE_COLOR }));
-            elems.push(solid(&mut deco.size, frame.size, if size_hot { SIZE_HOT } else { SIZE_COLOR }));
+            window
+                .user_data()
+                .insert_if_missing(|| RefCell::new(DecoBuffers::default()));
+            let mut deco = window
+                .user_data()
+                .get::<RefCell<DecoBuffers>>()
+                .unwrap()
+                .borrow_mut();
+            elems.push(solid(
+                &mut deco.close,
+                frame.close,
+                if close_hot { CLOSE_HOT } else { CLOSE_COLOR },
+            ));
+            elems.push(solid(
+                &mut deco.size,
+                frame.size,
+                if size_hot { SIZE_HOT } else { SIZE_COLOR },
+            ));
             elems.push(solid(&mut deco.title, frame.title, title_color));
             elems.push(solid(&mut deco.left, frame.left, title_color));
             elems.push(solid(&mut deco.right, frame.right, title_color));
@@ -877,15 +983,32 @@ fn screenshot_overlay(
     sel: Option<Rectangle<i32, Logical>>,
     elems: &mut Vec<CustomElement>,
 ) {
-    let rect = |x: i32, y: i32, w: i32, h: i32| Rectangle::new((x, y).into(), (w.max(0), h.max(0)).into());
+    let rect =
+        |x: i32, y: i32, w: i32, h: i32| Rectangle::new((x, y).into(), (w.max(0), h.max(0)).into());
     let (cross, rest) = bufs.split_at_mut(4);
     let (dim, edges) = rest.split_at_mut(4);
 
     let (px, py, a) = (ptr.x, ptr.y, CROSS_ARM);
-    elems.push(solid(&mut cross[0], rect(px - a, py, 2 * a + 1, 1), SHOT_EDGE));
-    elems.push(solid(&mut cross[1], rect(px, py - a, 1, 2 * a + 1), SHOT_EDGE));
-    elems.push(solid(&mut cross[2], rect(px - a - 1, py - 1, 2 * a + 3, 3), CROSS_DARK));
-    elems.push(solid(&mut cross[3], rect(px - 1, py - a - 1, 3, 2 * a + 3), CROSS_DARK));
+    elems.push(solid(
+        &mut cross[0],
+        rect(px - a, py, 2 * a + 1, 1),
+        SHOT_EDGE,
+    ));
+    elems.push(solid(
+        &mut cross[1],
+        rect(px, py - a, 1, 2 * a + 1),
+        SHOT_EDGE,
+    ));
+    elems.push(solid(
+        &mut cross[2],
+        rect(px - a - 1, py - 1, 2 * a + 3, 3),
+        CROSS_DARK,
+    ));
+    elems.push(solid(
+        &mut cross[3],
+        rect(px - 1, py - a - 1, 3, 2 * a + 3),
+        CROSS_DARK,
+    ));
 
     let Some(s) = sel else {
         elems.push(solid(&mut dim[0], out, SHOT_DIM));
@@ -893,14 +1016,30 @@ fn screenshot_overlay(
     };
     let (sx, sy, sw, sh) = (s.loc.x, s.loc.y, s.size.w, s.size.h);
     // 1px edges just outside the selection, so it shows exactly what's saved.
-    elems.push(solid(&mut edges[0], rect(sx - 1, sy - 1, sw + 2, 1), SHOT_EDGE));
-    elems.push(solid(&mut edges[1], rect(sx - 1, sy + sh, sw + 2, 1), SHOT_EDGE));
+    elems.push(solid(
+        &mut edges[0],
+        rect(sx - 1, sy - 1, sw + 2, 1),
+        SHOT_EDGE,
+    ));
+    elems.push(solid(
+        &mut edges[1],
+        rect(sx - 1, sy + sh, sw + 2, 1),
+        SHOT_EDGE,
+    ));
     elems.push(solid(&mut edges[2], rect(sx - 1, sy, 1, sh), SHOT_EDGE));
     elems.push(solid(&mut edges[3], rect(sx + sw, sy, 1, sh), SHOT_EDGE));
 
     let (ox, oy, ow, oh) = (out.loc.x, out.loc.y, out.size.w, out.size.h);
     elems.push(solid(&mut dim[0], rect(ox, oy, ow, sy - oy), SHOT_DIM));
-    elems.push(solid(&mut dim[1], rect(ox, sy + sh, ow, oy + oh - (sy + sh)), SHOT_DIM));
+    elems.push(solid(
+        &mut dim[1],
+        rect(ox, sy + sh, ow, oy + oh - (sy + sh)),
+        SHOT_DIM,
+    ));
     elems.push(solid(&mut dim[2], rect(ox, sy, sx - ox, sh), SHOT_DIM));
-    elems.push(solid(&mut dim[3], rect(sx + sw, sy, ox + ow - (sx + sw), sh), SHOT_DIM));
+    elems.push(solid(
+        &mut dim[3],
+        rect(sx + sw, sy, ox + ow - (sx + sw), sh),
+        SHOT_DIM,
+    ));
 }

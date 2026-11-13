@@ -15,8 +15,8 @@ use smithay::{
 };
 
 use super::{
-    BUTTON, BUTTON_HOT, FIELD_BG, FIELD_H, FIELD_TEXT_PAD, Field, NOTE_H, PAD, PanelHit, PanelId, Rect,
-    SCROLL_THUMB, SCROLL_TRACK, SCROLLBAR_W, bufs, field_char_at, render_field,
+    BUTTON, BUTTON_HOT, FIELD_BG, FIELD_H, FIELD_TEXT_PAD, Field, NOTE_H, PAD, PanelHit, PanelId,
+    Rect, SCROLL_THUMB, SCROLL_TRACK, SCROLLBAR_W, bufs, field_char_at, render_field,
 };
 use crate::{
     portal::{PickReply, PickRequest, PickResult, PortalEvent},
@@ -129,7 +129,10 @@ impl FilePicker {
         let req = self.request.as_ref();
         if let Some(label) = req.and_then(|r| r.accept_label.as_deref()) {
             // GTK-style mnemonic underscores ("_Open").
-            return label.replace("__", "\u{0}").replace('_', "").replace('\u{0}', "_");
+            return label
+                .replace("__", "\u{0}")
+                .replace('_', "")
+                .replace('\u{0}', "_");
         }
         if self.save_mode() {
             "Save"
@@ -142,7 +145,9 @@ impl FilePicker {
     }
 
     fn filter_label(&self) -> String {
-        let filter = self.filter.and_then(|i| self.request.as_ref()?.filters.get(i));
+        let filter = self
+            .filter
+            .and_then(|i| self.request.as_ref()?.filters.get(i));
         match filter {
             Some(f) => format!("Type: {}", f.name),
             None => "Type: All files".into(),
@@ -159,7 +164,11 @@ impl FilePicker {
             req.title.clone()
         };
         self.name = req.name.clone();
-        self.filter = req.current_filter.or(if req.filters.is_empty() { None } else { Some(0) });
+        self.filter = req.current_filter.or(if req.filters.is_empty() {
+            None
+        } else {
+            Some(0)
+        });
         self.request = Some(req);
         self.enter(dir);
     }
@@ -188,7 +197,9 @@ impl FilePicker {
                 return;
             }
         };
-        let filter = self.filter.and_then(|i| self.request.as_ref()?.filters.get(i).cloned());
+        let filter = self
+            .filter
+            .and_then(|i| self.request.as_ref()?.filters.get(i).cloned());
         let dirs_only = self.directory_mode();
         for entry in read.flatten() {
             let name = entry.file_name().to_string_lossy().into_owned();
@@ -202,7 +213,8 @@ impl FilePicker {
             }
             self.all.push(Entry { name, is_dir });
         }
-        self.all.sort_by_cached_key(|e| (!e.is_dir, e.name.to_lowercase()));
+        self.all
+            .sort_by_cached_key(|e| (!e.is_dir, e.name.to_lowercase()));
         self.apply_search();
     }
 
@@ -229,7 +241,8 @@ impl FilePicker {
             .iter()
             .filter_map(|e| {
                 let name = e.name.to_lowercase();
-                name.contains(&needle).then(|| (!name.starts_with(&needle), e))
+                name.contains(&needle)
+                    .then(|| (!name.starts_with(&needle), e))
             })
             .collect();
         // Stable: keeps folders-first, alphabetical order within each group.
@@ -251,7 +264,10 @@ impl FilePicker {
 
     fn up(&mut self) {
         if let Some(parent) = self.dir.parent() {
-            let child = self.dir.file_name().map(|n| n.to_string_lossy().into_owned());
+            let child = self
+                .dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned());
             self.enter(parent.to_path_buf());
             // Keep the folder we came from selected.
             if let Some(i) = child.and_then(|c| self.entries.iter().position(|e| e.name == c)) {
@@ -274,7 +290,10 @@ impl FilePicker {
 
     fn content_size(&self) -> (i32, i32) {
         let name = if self.save_mode() { FIELD_H + GAP } else { 0 };
-        (PICK_W, PAD + BTN_H + GAP + LIST_H + GAP + name + NOTE_H + BTN_H + PAD)
+        (
+            PICK_W,
+            PAD + BTN_H + GAP + LIST_H + GAP + name + NOTE_H + BTN_H + PAD,
+        )
     }
 
     fn layout(&self, c: Rect) -> PickLayout {
@@ -289,22 +308,41 @@ impl FilePicker {
         let list = r(x, y, w, LIST_H);
         y += LIST_H + GAP;
         let name_label = r(x, y, NAME_LABEL_W, FIELD_H);
-        let name = self.save_mode().then(|| r(x + NAME_LABEL_W, y, w - NAME_LABEL_W, FIELD_H));
+        let name = self
+            .save_mode()
+            .then(|| r(x + NAME_LABEL_W, y, w - NAME_LABEL_W, FIELD_H));
         if name.is_some() {
             y += FIELD_H + GAP;
         }
         let note = r(x, y, w, NOTE_H);
         y += NOTE_H;
         let hidden = r(x, y, HIDDEN_W, BTN_H);
-        let filter = self.has_filters().then(|| r(x + HIDDEN_W + GAP, y, FILTER_W, BTN_H));
+        let filter = self
+            .has_filters()
+            .then(|| r(x + HIDDEN_W + GAP, y, FILTER_W, BTN_H));
         let accept = r(x + w - ACTION_W, y, ACTION_W, BTN_H);
         let cancel = r(accept.loc.x - GAP - ACTION_W, y, ACTION_W, BTN_H);
-        PickLayout { home, path, list, name_label, name, note, hidden, filter, cancel, accept }
+        PickLayout {
+            home,
+            path,
+            list,
+            name_label,
+            name,
+            note,
+            hidden,
+            filter,
+            cancel,
+            accept,
+        }
     }
 
     fn track(&self, list: Rect) -> Rect {
         Rectangle::new(
-            (list.loc.x + list.size.w - LIST_INSET - SCROLLBAR_W, list.loc.y + LIST_INSET).into(),
+            (
+                list.loc.x + list.size.w - LIST_INSET - SCROLLBAR_W,
+                list.loc.y + LIST_INSET,
+            )
+                .into(),
             (SCROLLBAR_W, list.size.h - 2 * LIST_INSET).into(),
         )
     }
@@ -339,12 +377,22 @@ impl FilePicker {
 
     fn row_rect(&self, list: Rect, slot: usize, width: i32) -> Rect {
         Rectangle::new(
-            (list.loc.x + LIST_INSET, list.loc.y + LIST_INSET + slot as i32 * ROW_H).into(),
+            (
+                list.loc.x + LIST_INSET,
+                list.loc.y + LIST_INSET + slot as i32 * ROW_H,
+            )
+                .into(),
             (width, ROW_H).into(),
         )
     }
 
-    fn hit(&self, c: Rect, text: &TextRenderer, cursor: Option<usize>, p: Point<f64, Logical>) -> Option<PanelHit> {
+    fn hit(
+        &self,
+        c: Rect,
+        text: &TextRenderer,
+        cursor: Option<usize>,
+        p: Point<f64, Logical>,
+    ) -> Option<PanelHit> {
         let l = self.layout(c);
         let inside = |r: Rect| r.to_f64().contains(p);
         let pick = |h| Some(PanelHit::Pick(h));
@@ -421,12 +469,33 @@ impl FilePicker {
         let scrollable = total > visible;
         let row_w = l.list.size.w - 2 * LIST_INSET - if scrollable { SCROLLBAR_W + 4 } else { 0 };
         let mut backs = Vec::new();
-        for (slot, entry) in self.entries.iter().enumerate().skip(self.scroll).take(visible) {
+        for (slot, entry) in self
+            .entries
+            .iter()
+            .enumerate()
+            .skip(self.scroll)
+            .take(visible)
+        {
             let row = self.row_rect(l.list, slot - self.scroll, row_w);
-            let label = if entry.is_dir { format!("{}/", entry.name) } else { entry.name.clone() };
+            let label = if entry.is_dir {
+                format!("{}/", entry.name)
+            } else {
+                entry.name.clone()
+            };
             let label = text.fit(&label, row.size.w - 2 * FIELD_TEXT_PAD);
-            let alpha = if entry.is_dir || !self.directory_mode() { 1.0 } else { 0.5 };
-            elems.extend(ui::text_in_alpha(text, renderer, &label, row.loc.x + FIELD_TEXT_PAD, row, alpha));
+            let alpha = if entry.is_dir || !self.directory_mode() {
+                1.0
+            } else {
+                0.5
+            };
+            elems.extend(ui::text_in_alpha(
+                text,
+                renderer,
+                &label,
+                row.loc.x + FIELD_TEXT_PAD,
+                row,
+                alpha,
+            ));
             if self.selected.contains(&slot) {
                 backs.push((slot - self.scroll, row, ROW_SELECTED));
             } else if hovered == Some(PanelHit::Pick(PickHit::Row(slot))) {
@@ -442,7 +511,14 @@ impl FilePicker {
             } else {
                 "Nothing here"
             };
-            elems.extend(ui::text_in_alpha(text, renderer, empty, row.loc.x + FIELD_TEXT_PAD, row, 0.5));
+            elems.extend(ui::text_in_alpha(
+                text,
+                renderer,
+                empty,
+                row.loc.x + FIELD_TEXT_PAD,
+                row,
+                0.5,
+            ));
         }
         for (slot, row, color) in backs {
             elems.push(ui::solid(&mut s[slot], row, color));
@@ -452,7 +528,8 @@ impl FilePicker {
             let thumb_h = ((visible as f64 / total as f64) * track.size.h as f64).max(20.0) as i32;
             let frac = self.scroll as f64 / self.max_scroll().max(1) as f64;
             let thumb_y = track.loc.y + (frac * (track.size.h - thumb_h) as f64) as i32;
-            let thumb = Rectangle::new((track.loc.x, thumb_y).into(), (SCROLLBAR_W, thumb_h).into());
+            let thumb =
+                Rectangle::new((track.loc.x, thumb_y).into(), (SCROLLBAR_W, thumb_h).into());
             elems.push(ui::solid(&mut s[thumb_i], thumb, SCROLL_THUMB));
             elems.push(ui::solid(&mut s[track_i], track, SCROLL_TRACK));
         }
@@ -460,20 +537,52 @@ impl FilePicker {
 
         // File name (Save).
         if let Some(name) = l.name {
-            elems.extend(ui::text_in(text, renderer, "Name", l.name_label.loc.x, l.name_label));
+            elems.extend(ui::text_in(
+                text,
+                renderer,
+                "Name",
+                l.name_label.loc.x,
+                l.name_label,
+            ));
             let field = &mut s[name_i..name_i + 3];
-            render_field(text, renderer, field, name, &self.name, "", editing.then_some(cursor), elems);
+            render_field(
+                text,
+                renderer,
+                field,
+                name,
+                &self.name,
+                "",
+                editing.then_some(cursor),
+                elems,
+            );
         }
 
         if let Some(note) = &self.note {
             let note = text.fit(note, l.note.size.w);
-            elems.extend(ui::text_in_alpha(text, renderer, &note, l.note.loc.x, l.note, 0.8));
+            elems.extend(ui::text_in_alpha(
+                text,
+                renderer,
+                &note,
+                l.note.loc.x,
+                l.note,
+                0.8,
+            ));
         } else if !self.search.is_empty() {
             let n = self.entries.len();
             let s = if n == 1 { "" } else { "es" };
-            let line = format!("Search: {}  ({n} match{s}; Backspace edits, Esc clears)", self.search);
+            let line = format!(
+                "Search: {}  ({n} match{s}; Backspace edits, Esc clears)",
+                self.search
+            );
             let line = text.fit(&line, l.note.size.w);
-            elems.extend(ui::text_in_alpha(text, renderer, &line, l.note.loc.x, l.note, 0.8));
+            elems.extend(ui::text_in_alpha(
+                text,
+                renderer,
+                &line,
+                l.note.loc.x,
+                l.note,
+                0.8,
+            ));
         } else {
             let hint = if self.save_mode() {
                 "Enter opens a folder · Backspace in an empty Name goes up a folder"
@@ -481,14 +590,30 @@ impl FilePicker {
                 "Type to search · Enter opens · Backspace goes up a folder"
             };
             let hint = text.fit(hint, l.note.size.w);
-            elems.extend(ui::text_in_alpha(text, renderer, &hint, l.note.loc.x, l.note, 0.45));
+            elems.extend(ui::text_in_alpha(
+                text,
+                renderer,
+                &hint,
+                l.note.loc.x,
+                l.note,
+                0.45,
+            ));
         }
 
         // Buttons.
-        let hidden_label = if self.show_hidden { "Hidden files: on" } else { "Hidden files: off" };
+        let hidden_label = if self.show_hidden {
+            "Hidden files: on"
+        } else {
+            "Hidden files: off"
+        };
         let mut buttons = vec![
             (l.home, "Home".to_string(), hot(PickHit::Home), false),
-            (l.hidden, hidden_label.to_string(), hot(PickHit::Hidden), false),
+            (
+                l.hidden,
+                hidden_label.to_string(),
+                hot(PickHit::Hidden),
+                false,
+            ),
         ];
         if let Some(filter) = l.filter {
             let label = text.fit(&self.filter_label(), filter.size.w - 12);
@@ -519,7 +644,9 @@ fn fit_tail(text: &TextRenderer, s: &str, width: i32) -> String {
     }
     let chars: Vec<char> = s.chars().collect();
     for start in 1..chars.len() {
-        let candidate: String = std::iter::once('…').chain(chars[start..].iter().copied()).collect();
+        let candidate: String = std::iter::once('…')
+            .chain(chars[start..].iter().copied())
+            .collect();
         if text.measure(&candidate) <= width {
             return candidate;
         }
@@ -528,7 +655,9 @@ fn fit_tail(text: &TextRenderer, s: &str, width: i32) -> String {
 }
 
 fn home_dir() -> PathBuf {
-    std::env::var_os("HOME").map(PathBuf::from).unwrap_or_else(|| PathBuf::from("/"))
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/"))
 }
 
 /// Expand a leading `~` in a typed path.
@@ -549,9 +678,14 @@ impl super::Panels {
         self.picker.content_size()
     }
 
-    pub(super) fn picker_hit(&self, text: &TextRenderer, p: Point<f64, Logical>) -> Option<PanelHit> {
+    pub(super) fn picker_hit(
+        &self,
+        text: &TextRenderer,
+        p: Point<f64, Logical>,
+    ) -> Option<PanelHit> {
         let cursor = (self.editing == Some(Field::PickName)).then_some(self.cursor);
-        self.picker.hit(self.content_rect(PanelId::FilePicker), text, cursor, p)
+        self.picker
+            .hit(self.content_rect(PanelId::FilePicker), text, cursor, p)
     }
 
     pub(super) fn render_picker(
@@ -563,8 +697,16 @@ impl super::Panels {
     ) {
         let c = self.content_rect(PanelId::FilePicker);
         let editing = self.editing == Some(Field::PickName);
-        self.picker
-            .render(c, &mut self.file_picker.solids, editing, self.cursor, text, renderer, hovered, elems);
+        self.picker.render(
+            c,
+            &mut self.file_picker.solids,
+            editing,
+            self.cursor,
+            text,
+            renderer,
+            hovered,
+            elems,
+        );
     }
 }
 
@@ -575,11 +717,19 @@ impl State {
         match event {
             PortalEvent::Pick(req) => self.request_pick(req),
             PortalEvent::Close(id) => {
-                if self.panels.picker.request.as_ref().is_some_and(|r| r.id == id) {
+                if self
+                    .panels
+                    .picker
+                    .request
+                    .as_ref()
+                    .is_some_and(|r| r.id == id)
+                {
                     self.finish_pick(PickResult::Failed);
                 } else if let Some(i) = self.panels.picker.queue.iter().position(|r| r.id == id) {
-                    if let Some(PickRequest { reply: PickReply::Portal(tx), .. }) =
-                        self.panels.picker.queue.remove(i)
+                    if let Some(PickRequest {
+                        reply: PickReply::Portal(tx),
+                        ..
+                    }) = self.panels.picker.queue.remove(i)
                     {
                         let _ = tx.send(PickResult::Failed);
                     }
@@ -610,7 +760,14 @@ impl State {
 
     /// A File Picker request from one of simplewm's own applets (id 0: the portal
     /// never closes it).
-    fn applet_pick(&mut self, title: &str, directory: bool, multiple: bool, folder: Option<PathBuf>, reply: PickReply) {
+    fn applet_pick(
+        &mut self,
+        title: &str,
+        directory: bool,
+        multiple: bool,
+        folder: Option<PathBuf>,
+        reply: PickReply,
+    ) {
         self.request_pick(PickRequest {
             id: 0,
             save: false,
@@ -632,23 +789,43 @@ impl State {
             return;
         }
         let folder = self.panels.screenshot_dir();
-        self.applet_pick("Choose Screenshot Folder", true, false, folder, PickReply::ScreenshotDir);
+        self.applet_pick(
+            "Choose Screenshot Folder",
+            true,
+            false,
+            folder,
+            PickReply::ScreenshotDir,
+        );
     }
 
     /// The Launcher applet's Add (`None`) or Change (`Some(i)`) button: pick
     /// executables. Only one of these is open or queued at a time.
     pub fn choose_launcher_entry(&mut self, change: Option<usize>) {
-        if self.applet_pick_pending(|r| matches!(r, PickReply::LauncherAdd | PickReply::LauncherChange(_))) {
+        if self.applet_pick_pending(|r| {
+            matches!(r, PickReply::LauncherAdd | PickReply::LauncherChange(_))
+        }) {
             return;
         }
         match change.and_then(|i| self.panels.entries.get(i).cloned()) {
             Some(old) => {
                 let folder = Path::new(&old).parent().map(Path::to_path_buf);
-                self.applet_pick("Change Launcher Entry", false, false, folder, PickReply::LauncherChange(old));
+                self.applet_pick(
+                    "Change Launcher Entry",
+                    false,
+                    false,
+                    folder,
+                    PickReply::LauncherChange(old),
+                );
             }
             None => {
                 let folder = Some(PathBuf::from("/usr/bin"));
-                self.applet_pick("Add to Launcher", false, true, folder, PickReply::LauncherAdd);
+                self.applet_pick(
+                    "Add to Launcher",
+                    false,
+                    true,
+                    folder,
+                    PickReply::LauncherAdd,
+                );
             }
         }
     }
@@ -700,7 +877,10 @@ impl State {
     }
 
     pub fn picker_click(&mut self, hit: PickHit) {
-        let ctrl = self.seat.get_keyboard().is_some_and(|k| k.modifier_state().ctrl);
+        let ctrl = self
+            .seat
+            .get_keyboard()
+            .is_some_and(|k| k.modifier_state().ctrl);
         let p = &mut self.panels.picker;
         match hit {
             PickHit::Home => p.enter(home_dir()),
@@ -722,7 +902,9 @@ impl State {
             PickHit::Accept => self.picker_accept(),
             PickHit::Row(i) => {
                 let now = Instant::now();
-                let double = p.last_click.is_some_and(|(j, t)| j == i && now - t < DOUBLE_CLICK);
+                let double = p
+                    .last_click
+                    .is_some_and(|(j, t)| j == i && now - t < DOUBLE_CLICK);
                 p.last_click = if double { None } else { Some((i, now)) };
                 if double {
                     self.picker_activate(i);
@@ -792,7 +974,9 @@ impl State {
             }
             if path.exists() && p.confirm_replace.as_ref() != Some(&path) {
                 let label = p.accept_label();
-                p.note = Some(format!("A file with this name already exists. {label} again to replace it."));
+                p.note = Some(format!(
+                    "A file with this name already exists. {label} again to replace it."
+                ));
                 p.confirm_replace = Some(path);
                 return;
             }
@@ -817,8 +1001,11 @@ impl State {
                 p.enter(path);
             }
             _ => {
-                let files: Vec<PathBuf> =
-                    chosen.iter().filter(|&&i| !p.entries[i].is_dir).map(|&i| p.path_of(i)).collect();
+                let files: Vec<PathBuf> = chosen
+                    .iter()
+                    .filter(|&&i| !p.entries[i].is_dir)
+                    .map(|&i| p.path_of(i))
+                    .collect();
                 if !files.is_empty() {
                     self.finish_pick(PickResult::Chosen(files));
                 }
@@ -848,8 +1035,12 @@ impl State {
             }
             keysyms::KEY_Up | keysyms::KEY_KP_Up => p.move_to(current.map_or(0, |i| i - 1)),
             keysyms::KEY_Down | keysyms::KEY_KP_Down => p.move_to(current.map_or(0, |i| i + 1)),
-            keysyms::KEY_Page_Up | keysyms::KEY_KP_Page_Up => p.move_to(current.map_or(0, |i| i - page)),
-            keysyms::KEY_Page_Down | keysyms::KEY_KP_Page_Down => p.move_to(current.map_or(0, |i| i + page)),
+            keysyms::KEY_Page_Up | keysyms::KEY_KP_Page_Up => {
+                p.move_to(current.map_or(0, |i| i - page))
+            }
+            keysyms::KEY_Page_Down | keysyms::KEY_KP_Page_Down => {
+                p.move_to(current.map_or(0, |i| i + page))
+            }
             // Backspace in an empty save name goes up a folder.
             keysyms::KEY_BackSpace if editing && p.name.is_empty() => p.up(),
             _ if editing => self.panels.key(sym, ch, ctrl),

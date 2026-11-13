@@ -60,7 +60,6 @@ pub enum PanelId {
 }
 
 impl PanelId {
-
     pub fn title(self) -> &'static str {
         match self {
             PanelId::ControlPanel => "Control Panel",
@@ -378,8 +377,10 @@ impl RowList {
                 (SCROLLBAR_W, vp.size.h).into(),
             );
             let thumb_h = ((visible as f64 / total as f64) * track.size.h as f64).max(20.0) as i32;
-            let thumb_y = track.loc.y + ((self.scroll as f64 / max_scroll) * (track.size.h - thumb_h) as f64) as i32;
-            let thumb = Rectangle::new((track.loc.x, thumb_y).into(), (SCROLLBAR_W, thumb_h).into());
+            let thumb_y = track.loc.y
+                + ((self.scroll as f64 / max_scroll) * (track.size.h - thumb_h) as f64) as i32;
+            let thumb =
+                Rectangle::new((track.loc.x, thumb_y).into(), (SCROLLBAR_W, thumb_h).into());
             elems.push(ui::solid(&mut s[visible + 1], thumb, SCROLL_THUMB));
             elems.push(ui::solid(&mut s[visible], track, SCROLL_TRACK));
         }
@@ -400,7 +401,11 @@ fn applet_glyph(id: PanelId, tile: Rect) -> ([f32; 4], Vec<Rect>) {
                 .map(|k| {
                     let (gx, gy) = (k % 3, k / 3);
                     Rectangle::new(
-                        (tile.loc.x + off + gx * (sq + gap), tile.loc.y + off + gy * (sq + gap)).into(),
+                        (
+                            tile.loc.x + off + gx * (sq + gap),
+                            tile.loc.y + off + gy * (sq + gap),
+                        )
+                            .into(),
                         (sq, sq).into(),
                     )
                 })
@@ -413,7 +418,10 @@ fn applet_glyph(id: PanelId, tile: Rect) -> ([f32; 4], Vec<Rect>) {
             for (row, value_w) in [(0, 18), (1, 12), (2, 22), (3, 15)] {
                 let y = tile.loc.y + 10 + row * 8;
                 rects.push(Rectangle::new((tile.loc.x + 8, y).into(), (8, 4).into()));
-                rects.push(Rectangle::new((tile.loc.x + 20, y).into(), (value_w, 4).into()));
+                rects.push(Rectangle::new(
+                    (tile.loc.x + 20, y).into(),
+                    (value_w, 4).into(),
+                ));
             }
             (TILE_ENVIRONMENT, rects)
         }
@@ -531,7 +539,10 @@ impl Panels {
             Some(conn) => load_entries(conn),
             None => vec![DEFAULT_LAUNCHER_ENTRY.to_string()],
         };
-        let shot_dir = db.as_ref().and_then(|c| load_setting(c, "screenshot_dir")).unwrap_or_default();
+        let shot_dir = db
+            .as_ref()
+            .and_then(|c| load_setting(c, "screenshot_dir"))
+            .unwrap_or_default();
         let mut panels = Self {
             control: PanelWindow::default(),
             launcher: PanelWindow::default(),
@@ -683,7 +694,10 @@ impl Panels {
     }
 
     pub fn content_rect(&self, id: PanelId) -> Rect {
-        Rectangle::new(self.win(id).loc.unwrap_or_default(), self.content_size(id).into())
+        Rectangle::new(
+            self.win(id).loc.unwrap_or_default(),
+            self.content_size(id).into(),
+        )
     }
 
     fn frame(&self, id: PanelId, text: &TextRenderer) -> Frame {
@@ -706,7 +720,11 @@ impl Panels {
         let y = c.loc.y + PAD + rows * CELL_H + PAD;
         let separator = Rectangle::new((c.loc.x + PAD, y).into(), (c.size.w - 2 * PAD, 1).into());
         let quit = Rectangle::new((c.loc.x + PAD, y + 1 + PAD).into(), (QUIT_W, BTN_H).into());
-        ControlLayout { cells, separator, quit }
+        ControlLayout {
+            cells,
+            separator,
+            quit,
+        }
     }
 
     fn launcher_layout(&self) -> LauncherLayout {
@@ -723,7 +741,10 @@ impl Panels {
             rows.push(LauncherRow {
                 path: Rectangle::new((x, y).into(), (path_w, FIELD_H).into()),
                 change: Rectangle::new((change_x, y).into(), (CHANGE_W, FIELD_H).into()),
-                remove: Rectangle::new((change_x + CHANGE_W + 8, y).into(), (REMOVE_W, FIELD_H).into()),
+                remove: Rectangle::new(
+                    (change_x + CHANGE_W + 8, y).into(),
+                    (REMOVE_W, FIELD_H).into(),
+                ),
             });
             y += ROW_H;
         }
@@ -740,7 +761,10 @@ impl Panels {
         ScreenshotLayout {
             header: Rectangle::new((x, y).into(), (w, HEADER_H).into()),
             path: Rectangle::new((x, y + HEADER_H).into(), (path_w, FIELD_H).into()),
-            choose: Rectangle::new((x + path_w + 8, y + HEADER_H).into(), (CHOOSE_W, FIELD_H).into()),
+            choose: Rectangle::new(
+                (x + path_w + 8, y + HEADER_H).into(),
+                (CHOOSE_W, FIELD_H).into(),
+            ),
             note: Rectangle::new((x, y + HEADER_H + FIELD_H).into(), (w, NOTE_H).into()),
         }
     }
@@ -773,7 +797,12 @@ impl Panels {
         }
     }
 
-    pub fn hit(&self, id: PanelId, text: &TextRenderer, p: Point<f64, Logical>) -> Option<PanelHit> {
+    pub fn hit(
+        &self,
+        id: PanelId,
+        text: &TextRenderer,
+        p: Point<f64, Logical>,
+    ) -> Option<PanelHit> {
         if !self.win(id).open {
             return None;
         }
@@ -913,8 +942,12 @@ impl Panels {
                     self.begin_edit(next, end);
                 }
             }
-            keysyms::KEY_Return | keysyms::KEY_KP_Enter if f.panel() == PanelId::Network => self.network_apply(),
-            keysyms::KEY_Return | keysyms::KEY_KP_Enter | keysyms::KEY_Escape => self.stop_editing(),
+            keysyms::KEY_Return | keysyms::KEY_KP_Enter if f.panel() == PanelId::Network => {
+                self.network_apply()
+            }
+            keysyms::KEY_Return | keysyms::KEY_KP_Enter | keysyms::KEY_Escape => {
+                self.stop_editing()
+            }
             _ => {
                 if let Some(c) = ch
                     && !ctrl
@@ -943,7 +976,10 @@ impl Panels {
             let tx = conn.transaction()?;
             tx.execute("DELETE FROM launcher", [])?;
             for (i, p) in paths.iter().enumerate() {
-                tx.execute("INSERT INTO launcher (position, path) VALUES (?1, ?2)", (i as i64, p))?;
+                tx.execute(
+                    "INSERT INTO launcher (position, path) VALUES (?1, ?2)",
+                    (i as i64, p),
+                )?;
             }
             tx.execute(
                 "INSERT OR REPLACE INTO settings (key, value) VALUES ('screenshot_dir', ?1)",
@@ -964,7 +1000,10 @@ impl Panels {
         let result = (|| -> rusqlite::Result<()> {
             let tx = conn.transaction()?;
             for (key, value) in pairs {
-                tx.execute("INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)", [key, value])?;
+                tx.execute(
+                    "INSERT OR REPLACE INTO settings (key, value) VALUES (?1, ?2)",
+                    [key, value],
+                )?;
             }
             tx.commit()
         })();
@@ -1007,8 +1046,16 @@ impl Panels {
         elems.push(ui::solid(buf(&mut fb.bg), f.content, BG));
         elems.extend(ui::text_in(text, renderer, &title, f.title_text_x, f.title));
         elems.extend(ui::text_centered(text, renderer, "×", f.close));
-        let title_color = if active { ui::TITLE_FOCUSED } else { ui::TITLE_UNFOCUSED };
-        let cc = if hovered == Some(PanelHit::Close) { ui::CLOSE_HOT } else { ui::CLOSE_COLOR };
+        let title_color = if active {
+            ui::TITLE_FOCUSED
+        } else {
+            ui::TITLE_UNFOCUSED
+        };
+        let cc = if hovered == Some(PanelHit::Close) {
+            ui::CLOSE_HOT
+        } else {
+            ui::CLOSE_COLOR
+        };
         elems.push(ui::solid(buf(&mut fb.close), f.close, cc));
         elems.push(ui::solid(buf(&mut fb.title), f.title, title_color));
         elems.push(ui::solid(buf(&mut fb.left), f.left, title_color));
@@ -1031,8 +1078,14 @@ impl Panels {
         let mut back: Vec<CustomElement> = Vec::new();
         for (i, ((name, applet), cell)) in APPLETS.iter().zip(&l.cells).enumerate() {
             let b = &mut s[i * per..(i + 1) * per];
-            let tile = Rectangle::new((cell.loc.x + (CELL_W - TILE) / 2, cell.loc.y + 8).into(), (TILE, TILE).into());
-            let label = Rectangle::new((cell.loc.x, tile.loc.y + TILE + 6).into(), (CELL_W, 20).into());
+            let tile = Rectangle::new(
+                (cell.loc.x + (CELL_W - TILE) / 2, cell.loc.y + 8).into(),
+                (TILE, TILE).into(),
+            );
+            let label = Rectangle::new(
+                (cell.loc.x, tile.loc.y + TILE + 6).into(),
+                (CELL_W, 20).into(),
+            );
             elems.extend(ui::text_centered(text, renderer, name, label));
             let (tile_color, glyph) = applet_glyph(*applet, tile);
             for (k, r) in glyph.into_iter().take(GLYPH_MAX).enumerate() {
@@ -1047,7 +1100,11 @@ impl Panels {
 
         let n = APPLETS.len() * per;
         elems.extend(ui::text_centered(text, renderer, "Quit simplewm", l.quit));
-        let qc = if hovered == Some(PanelHit::Quit) { QUIT_HOT } else { QUIT };
+        let qc = if hovered == Some(PanelHit::Quit) {
+            QUIT_HOT
+        } else {
+            QUIT
+        };
         elems.push(ui::solid(&mut s[n], l.quit, qc));
         elems.push(ui::solid(&mut s[n + 1], l.separator, SEPARATOR));
     }
@@ -1108,9 +1165,15 @@ impl Panels {
         }
     }
 
-    fn render_environment(&mut self, text: &mut TextRenderer, renderer: &mut GlesRenderer, elems: &mut Vec<CustomElement>) {
+    fn render_environment(
+        &mut self,
+        text: &mut TextRenderer,
+        renderer: &mut GlesRenderer,
+        elems: &mut Vec<CustomElement>,
+    ) {
         let vp = self.env_viewport();
-        self.env.render(vp, &mut self.environment.solids, text, renderer, elems);
+        self.env
+            .render(vp, &mut self.environment.solids, text, renderer, elems);
     }
 
     fn render_portal(
@@ -1122,13 +1185,23 @@ impl Panels {
     ) {
         let vp = self.portal_viewport();
         let refresh = self.portal_refresh();
-        self.portal_rows.render(vp, &mut self.portal.solids, text, renderer, elems);
+        self.portal_rows
+            .render(vp, &mut self.portal.solids, text, renderer, elems);
         elems.extend(ui::text_centered(text, renderer, "Refresh", refresh));
-        let rc = if hovered == Some(PanelHit::Refresh) { BUTTON_HOT } else { BUTTON };
+        let rc = if hovered == Some(PanelHit::Refresh) {
+            BUTTON_HOT
+        } else {
+            BUTTON
+        };
         elems.push(ui::solid(buf(&mut self.portal_refresh_buf), refresh, rc));
     }
 
-    fn render_help(&self, text: &mut TextRenderer, renderer: &mut GlesRenderer, elems: &mut Vec<CustomElement>) {
+    fn render_help(
+        &self,
+        text: &mut TextRenderer,
+        renderer: &mut GlesRenderer,
+        elems: &mut Vec<CustomElement>,
+    ) {
         let c = self.content_rect(PanelId::Help);
         for (i, line) in HELP_LINES.iter().enumerate() {
             let r = Rectangle::new(
@@ -1150,21 +1223,45 @@ impl Panels {
         // Buffers: path box, Choose button.
         let s = bufs(&mut self.screenshot.solids, 2);
 
-        elems.extend(ui::text_in(text, renderer, "Folder where screenshots are saved", l.header.loc.x, l.header));
+        elems.extend(ui::text_in(
+            text,
+            renderer,
+            "Folder where screenshots are saved",
+            l.header.loc.x,
+            l.header,
+        ));
         let tx = l.path.loc.x + FIELD_TEXT_PAD;
         let max = l.path.size.w - 2 * FIELD_TEXT_PAD;
         if self.shot_dir.trim().is_empty() {
-            elems.extend(ui::text_in_alpha(text, renderer, "No folder chosen", tx, l.path, 0.35));
+            elems.extend(ui::text_in_alpha(
+                text,
+                renderer,
+                "No folder chosen",
+                tx,
+                l.path,
+                0.35,
+            ));
         } else {
             let shown = text.fit(&self.shot_dir, max);
             elems.extend(ui::text_in(text, renderer, &shown, tx, l.path));
         }
         elems.extend(ui::text_centered(text, renderer, "Choose…", l.choose));
         let note = "Files are named simplewm-screenshot-<date>-<time>.png";
-        elems.extend(ui::text_in_alpha(text, renderer, note, l.note.loc.x, l.note, 0.6));
+        elems.extend(ui::text_in_alpha(
+            text,
+            renderer,
+            note,
+            l.note.loc.x,
+            l.note,
+            0.6,
+        ));
 
         elems.push(ui::solid(&mut s[0], l.path, FIELD_BG));
-        let cc = if hovered == Some(PanelHit::ChooseShotDir) { BUTTON_HOT } else { BUTTON };
+        let cc = if hovered == Some(PanelHit::ChooseShotDir) {
+            BUTTON_HOT
+        } else {
+            BUTTON
+        };
         elems.push(ui::solid(&mut s[1], l.choose, cc));
     }
 
@@ -1180,7 +1277,13 @@ impl Panels {
         // Buffers: [path, change, remove] per entry, then add.
         let s = bufs(&mut self.launcher.solids, 3 * n + 1);
 
-        elems.extend(ui::text_in(text, renderer, "Executables shown in the Launcher menu", l.header.loc.x, l.header));
+        elems.extend(ui::text_in(
+            text,
+            renderer,
+            "Executables shown in the Launcher menu",
+            l.header.loc.x,
+            l.header,
+        ));
         for (i, row) in l.rows.iter().enumerate() {
             let tx = row.path.loc.x + FIELD_TEXT_PAD;
             let shown = text.fit(&self.entries[i], row.path.size.w - 2 * FIELD_TEXT_PAD);
@@ -1190,11 +1293,25 @@ impl Panels {
         }
         elems.extend(ui::text_centered(text, renderer, "Add…", l.add));
 
-        let button = |hit: PanelHit| if hovered == Some(hit) { BUTTON_HOT } else { BUTTON };
+        let button = |hit: PanelHit| {
+            if hovered == Some(hit) {
+                BUTTON_HOT
+            } else {
+                BUTTON
+            }
+        };
         for (i, row) in l.rows.iter().enumerate() {
             elems.push(ui::solid(&mut s[3 * i], row.path, FIELD_BG));
-            elems.push(ui::solid(&mut s[3 * i + 1], row.change, button(PanelHit::Change(i))));
-            elems.push(ui::solid(&mut s[3 * i + 2], row.remove, button(PanelHit::Remove(i))));
+            elems.push(ui::solid(
+                &mut s[3 * i + 1],
+                row.change,
+                button(PanelHit::Change(i)),
+            ));
+            elems.push(ui::solid(
+                &mut s[3 * i + 2],
+                row.remove,
+                button(PanelHit::Remove(i)),
+            ));
         }
         elems.push(ui::solid(&mut s[3 * n], l.add, button(PanelHit::Add)));
     }
@@ -1251,7 +1368,13 @@ fn field_view(text: &TextRenderer, s: &str, cursor: Option<usize>, width: i32) -
 }
 
 /// Char index in field `rect` (showing `value`) nearest to pointer x `x`.
-fn field_char_at(text: &TextRenderer, value: &str, cursor: Option<usize>, rect: Rect, x: f64) -> usize {
+fn field_char_at(
+    text: &TextRenderer,
+    value: &str,
+    cursor: Option<usize>,
+    rect: Rect,
+    x: f64,
+) -> usize {
     let view = field_view(text, value, cursor, rect.size.w - 2 * FIELD_TEXT_PAD);
     let mut pos = (rect.loc.x + FIELD_TEXT_PAD) as f64;
     let mut idx = view.start;
@@ -1282,23 +1405,40 @@ fn render_field(
     let tx = rect.loc.x + FIELD_TEXT_PAD;
     let view = field_view(text, value, cursor, rect.size.w - 2 * FIELD_TEXT_PAD);
     if value.is_empty() && !placeholder.is_empty() {
-        elems.extend(ui::text_in_alpha(text, renderer, placeholder, tx, rect, 0.35));
+        elems.extend(ui::text_in_alpha(
+            text,
+            renderer,
+            placeholder,
+            tx,
+            rect,
+            0.35,
+        ));
     } else {
         elems.extend(ui::text_in(text, renderer, &view.visible, tx, rect));
     }
     if let Some(cx) = view.caret_x {
-        let caret = Rectangle::new((tx + cx, rect.loc.y + 4).into(), (1, rect.size.h - 8).into());
+        let caret = Rectangle::new(
+            (tx + cx, rect.loc.y + 4).into(),
+            (1, rect.size.h - 8).into(),
+        );
         elems.push(ui::solid(&mut s[0], caret, CARET));
     }
     let editing = cursor.is_some();
-    elems.push(ui::solid(&mut s[1], rect, if editing { FIELD_BG_EDIT } else { FIELD_BG }));
+    elems.push(ui::solid(
+        &mut s[1],
+        rect,
+        if editing { FIELD_BG_EDIT } else { FIELD_BG },
+    ));
     if editing {
         elems.push(ui::solid(&mut s[2], edit_ring(rect), FIELD_EDIT_RING));
     }
 }
 
 fn byte_index(s: &str, char_idx: usize) -> usize {
-    s.char_indices().nth(char_idx).map(|(b, _)| b).unwrap_or(s.len())
+    s.char_indices()
+        .nth(char_idx)
+        .map(|(b, _)| b)
+        .unwrap_or(s.len())
 }
 
 fn insert_char(s: &mut String, char_idx: usize, c: char) {
@@ -1343,7 +1483,9 @@ fn open_db() -> Option<Connection> {
             return None;
         }
     };
-    let version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0)).unwrap_or(0);
+    let version: i64 = conn
+        .query_row("PRAGMA user_version", [], |r| r.get(0))
+        .unwrap_or(0);
     if version < 1 {
         // First run: create the schema and the default launcher entry. After
         // this the entry can be deleted and stays deleted.
@@ -1386,11 +1528,13 @@ fn load_entries(conn: &Connection) -> Vec<String> {
 }
 
 fn load_setting(conn: &Connection, key: &str) -> Option<String> {
-    conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| r.get(0))
-        .map_err(|err| {
-            if !matches!(err, rusqlite::Error::QueryReturnedNoRows) {
-                tracing::error!(?err, key, "failed to load setting");
-            }
-        })
-        .ok()
+    conn.query_row("SELECT value FROM settings WHERE key = ?1", [key], |r| {
+        r.get(0)
+    })
+    .map_err(|err| {
+        if !matches!(err, rusqlite::Error::QueryReturnedNoRows) {
+            tracing::error!(?err, key, "failed to load setting");
+        }
+    })
+    .ok()
 }

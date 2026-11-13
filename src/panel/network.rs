@@ -8,8 +8,8 @@ use smithay::{
 };
 
 use super::{
-    BTN_H, BUTTON, BUTTON_HOT, ENV_ROW_H, EnvRow, FIELD_H, Field, NOTE_H, PAD, PanelHit, PanelId, Rect, RowList,
-    SEPARATOR, bufs, field_char_at, render_field,
+    BTN_H, BUTTON, BUTTON_HOT, ENV_ROW_H, EnvRow, FIELD_H, Field, NOTE_H, PAD, PanelHit, PanelId,
+    Rect, RowList, SEPARATOR, bufs, field_char_at, render_field,
 };
 use crate::{
     network,
@@ -76,21 +76,45 @@ fn layout(c: Rect) -> NetLayout {
     y += NOTE_H + 4;
     let apply = Rectangle::new((x, y).into(), (APPLY_W, BTN_H).into());
     let refresh = Rectangle::new((x + APPLY_W + 8, y).into(), (REFRESH_W, BTN_H).into());
-    NetLayout { status, separator, address_label, address, gateway_label, gateway, note, apply, refresh }
+    NetLayout {
+        status,
+        separator,
+        address_label,
+        address,
+        gateway_label,
+        gateway,
+        note,
+        apply,
+        refresh,
+    }
 }
 
 fn content_height() -> i32 {
-    PAD + STATUS_ROWS * ENV_ROW_H + PAD + 1 + PAD + 2 * FIELD_H + FIELD_GAP + 4 + NOTE_H + 4 + BTN_H + PAD
+    PAD + STATUS_ROWS * ENV_ROW_H
+        + PAD
+        + 1
+        + PAD
+        + 2 * FIELD_H
+        + FIELD_GAP
+        + 4
+        + NOTE_H
+        + 4
+        + BTN_H
+        + PAD
 }
 
 /// Rows describing the card's current state.
 fn status_rows() -> Vec<EnvRow> {
     let mut rows = Vec::new();
     if !network::has_net_admin() {
-        rows.push(EnvRow::Line("simplewm is missing CAP_NET_ADMIN, so Apply will fail. Run make to set it.".into()));
+        rows.push(EnvRow::Line(
+            "simplewm is missing CAP_NET_ADMIN, so Apply will fail. Run make to set it.".into(),
+        ));
     }
     if network::network_manager_running() {
-        rows.push(EnvRow::Line("NetworkManager is running and may undo these settings.".into()));
+        rows.push(EnvRow::Line(
+            "NetworkManager is running and may undo these settings.".into(),
+        ));
     }
     let Some(dev) = network::ethernet_device() else {
         rows.push(EnvRow::Line("No wired network card found.".into()));
@@ -101,7 +125,11 @@ fn status_rows() -> Vec<EnvRow> {
     match network::status(&dev) {
         Ok(s) => {
             rows.push(item("Hardware address", s.mac));
-            let state = if s.up { format!("on ({})", s.operstate) } else { "off".into() };
+            let state = if s.up {
+                format!("on ({})", s.operstate)
+            } else {
+                "off".into()
+            };
             rows.push(item("Interface", state));
             let cable = match (s.up, s.carrier) {
                 (false, _) | (_, None) => "unknown while the interface is off",
@@ -113,11 +141,28 @@ fn status_rows() -> Vec<EnvRow> {
                 rows.push(item("Speed", format!("{speed} Mb/s")));
             }
             let addrs: Vec<String> = s.addrs.iter().map(|(a, p)| format!("{a}/{p}")).collect();
-            rows.push(item("IPv4 address", if addrs.is_empty() { "none".into() } else { addrs.join(", ") }));
+            rows.push(item(
+                "IPv4 address",
+                if addrs.is_empty() {
+                    "none".into()
+                } else {
+                    addrs.join(", ")
+                },
+            ));
             let gws: Vec<String> = s.gateways.iter().map(|g| g.to_string()).collect();
-            rows.push(item("Default gateway", if gws.is_empty() { "none".into() } else { gws.join(", ") }));
+            rows.push(item(
+                "Default gateway",
+                if gws.is_empty() {
+                    "none".into()
+                } else {
+                    gws.join(", ")
+                },
+            ));
         }
-        Err(err) => rows.push(EnvRow::Line(format!("Could not read the card: {}", network::describe(&err)))),
+        Err(err) => rows.push(EnvRow::Line(format!(
+            "Could not read the card: {}",
+            network::describe(&err)
+        ))),
     }
     rows
 }
@@ -140,7 +185,12 @@ pub(super) fn apply_saved(address: &str, gateway: &str) {
     };
     match network::apply(&dev, &cfg) {
         Ok(()) => tracing::info!(dev, ?cfg, "applied network settings"),
-        Err(err) => tracing::warn!(dev, ?cfg, err = network::describe(&err), "failed to apply network settings"),
+        Err(err) => tracing::warn!(
+            dev,
+            ?cfg,
+            err = network::describe(&err),
+            "failed to apply network settings"
+        ),
     }
 }
 
@@ -174,13 +224,23 @@ impl super::Panels {
         self.net.status.scroll_by(amount, vp);
     }
 
-    pub(super) fn network_hit(&self, text: &TextRenderer, p: Point<f64, Logical>) -> Option<PanelHit> {
+    pub(super) fn network_hit(
+        &self,
+        text: &TextRenderer,
+        p: Point<f64, Logical>,
+    ) -> Option<PanelHit> {
         let l = self.net_layout();
         let inside = |r: Rect| r.to_f64().contains(p);
-        for (f, rect) in [(Field::NetAddress, l.address), (Field::NetGateway, l.gateway)] {
+        for (f, rect) in [
+            (Field::NetAddress, l.address),
+            (Field::NetGateway, l.gateway),
+        ] {
             if inside(rect) {
                 let cursor = (self.editing == Some(f)).then_some(self.cursor);
-                return Some(PanelHit::Field(f, field_char_at(text, self.field_text(f), cursor, rect, p.x)));
+                return Some(PanelHit::Field(
+                    f,
+                    field_char_at(text, self.field_text(f), cursor, rect, p.x),
+                ));
             }
         }
         if inside(l.apply) {
@@ -196,10 +256,16 @@ impl super::Panels {
     /// the card.
     pub fn network_apply(&mut self) {
         self.stop_editing();
-        let (address, gateway) = (self.net.address.trim().to_string(), self.net.gateway.trim().to_string());
+        let (address, gateway) = (
+            self.net.address.trim().to_string(),
+            self.net.gateway.trim().to_string(),
+        );
         if address.is_empty() && gateway.is_empty() {
             self.save_settings(&[(KEY_ADDRESS, ""), (KEY_GATEWAY, "")]);
-            self.net.note = Some(("Cleared: nothing will be set when simplewm starts.".into(), false));
+            self.net.note = Some((
+                "Cleared: nothing will be set when simplewm starts.".into(),
+                false,
+            ));
             return;
         }
         let cfg = match network::parse(&address, &gateway) {
@@ -213,10 +279,19 @@ impl super::Panels {
         self.net.gateway = gateway.clone();
         self.save_settings(&[(KEY_ADDRESS, &address), (KEY_GATEWAY, &gateway)]);
         self.net.note = Some(match network::ethernet_device() {
-            None => ("Saved, but there is no wired network card to set it on.".into(), true),
+            None => (
+                "Saved, but there is no wired network card to set it on.".into(),
+                true,
+            ),
             Some(dev) => match network::apply(&dev, &cfg) {
-                Ok(()) => (format!("Set on {dev} and saved; it is set again each time simplewm starts."), false),
-                Err(err) => (format!("Saved, but not set: {}", network::describe(&err)), true),
+                Ok(()) => (
+                    format!("Set on {dev} and saved; it is set again each time simplewm starts."),
+                    false,
+                ),
+                Err(err) => (
+                    format!("Saved, but not set: {}", network::describe(&err)),
+                    true,
+                ),
             },
         });
         self.refresh_network();
@@ -230,37 +305,86 @@ impl super::Panels {
         elems: &mut Vec<CustomElement>,
     ) {
         let l = self.net_layout();
-        self.net.status.render(l.status, &mut self.network.solids, text, renderer, elems);
+        self.net
+            .status
+            .render(l.status, &mut self.network.solids, text, renderer, elems);
 
         // Buffers: 3 per field, separator, Apply, Refresh.
         let s = bufs(&mut self.net.solids, 9);
         let fields = [
-            (Field::NetAddress, "Address", l.address_label, l.address, "192.168.1.50/24"),
-            (Field::NetGateway, "Gateway", l.gateway_label, l.gateway, "192.168.1.1 (or empty for none)"),
+            (
+                Field::NetAddress,
+                "Address",
+                l.address_label,
+                l.address,
+                "192.168.1.50/24",
+            ),
+            (
+                Field::NetGateway,
+                "Gateway",
+                l.gateway_label,
+                l.gateway,
+                "192.168.1.1 (or empty for none)",
+            ),
         ];
         for (k, (f, label, label_rect, rect, placeholder)) in fields.into_iter().enumerate() {
-            elems.extend(ui::text_in(text, renderer, label, label_rect.loc.x, label_rect));
+            elems.extend(ui::text_in(
+                text,
+                renderer,
+                label,
+                label_rect.loc.x,
+                label_rect,
+            ));
             let cursor = (self.editing == Some(f)).then_some(self.cursor);
             let value = match f {
                 Field::NetAddress => &self.net.address,
                 _ => &self.net.gateway,
             };
-            render_field(text, renderer, &mut s[3 * k..3 * k + 3], rect, value, placeholder, cursor, elems);
+            render_field(
+                text,
+                renderer,
+                &mut s[3 * k..3 * k + 3],
+                rect,
+                value,
+                placeholder,
+                cursor,
+                elems,
+            );
         }
 
         let (note, alpha) = match &self.net.note {
             Some((msg, true)) => (msg.as_str(), 1.0),
             Some((msg, false)) => (msg.as_str(), 0.8),
-            None => ("Saved and set again each time simplewm starts · Tab switches fields", 0.45),
+            None => (
+                "Saved and set again each time simplewm starts · Tab switches fields",
+                0.45,
+            ),
         };
         let note = text.fit(note, l.note.size.w);
-        elems.extend(ui::text_in_alpha(text, renderer, &note, l.note.loc.x, l.note, alpha));
+        elems.extend(ui::text_in_alpha(
+            text,
+            renderer,
+            &note,
+            l.note.loc.x,
+            l.note,
+            alpha,
+        ));
 
         elems.extend(ui::text_centered(text, renderer, "Apply", l.apply));
         elems.extend(ui::text_centered(text, renderer, "Refresh", l.refresh));
-        let button = |hit: PanelHit| if hovered == Some(hit) { BUTTON_HOT } else { BUTTON };
+        let button = |hit: PanelHit| {
+            if hovered == Some(hit) {
+                BUTTON_HOT
+            } else {
+                BUTTON
+            }
+        };
         elems.push(ui::solid(&mut s[6], l.separator, SEPARATOR));
         elems.push(ui::solid(&mut s[7], l.apply, button(PanelHit::NetApply)));
-        elems.push(ui::solid(&mut s[8], l.refresh, button(PanelHit::NetRefresh)));
+        elems.push(ui::solid(
+            &mut s[8],
+            l.refresh,
+            button(PanelHit::NetRefresh),
+        ));
     }
 }

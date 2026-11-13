@@ -41,8 +41,14 @@ impl Selecting {
     /// the anchor and the pointer).
     pub fn rect(&self, ptr: Point<f64, Logical>) -> Option<Rectangle<i32, Logical>> {
         let a = self.anchor?;
-        let (x0, x1) = (a.x.min(ptr.x).floor() as i32, a.x.max(ptr.x).floor() as i32 + 1);
-        let (y0, y1) = (a.y.min(ptr.y).floor() as i32, a.y.max(ptr.y).floor() as i32 + 1);
+        let (x0, x1) = (
+            a.x.min(ptr.x).floor() as i32,
+            a.x.max(ptr.x).floor() as i32 + 1,
+        );
+        let (y0, y1) = (
+            a.y.min(ptr.y).floor() as i32,
+            a.y.max(ptr.y).floor() as i32 + 1,
+        );
         Some(Rectangle::new((x0, y0).into(), (x1 - x0, y1 - y0).into()))
     }
 }
@@ -125,7 +131,10 @@ impl State {
         match result {
             Ok(path) => {
                 tracing::info!(?path, "saved screenshot");
-                let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+                let name = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 self.ui.show_toast(&format!("Saved {name}"));
             }
             Err(err) => {
@@ -146,11 +155,20 @@ impl State {
         result
     }
 
-    fn capture_with(&mut self, renderer: &mut GlesRenderer, rect: Rectangle<i32, Logical>) -> Result<Image, String> {
+    fn capture_with(
+        &mut self,
+        renderer: &mut GlesRenderer,
+        rect: Rectangle<i32, Logical>,
+    ) -> Result<Image, String> {
         let out = self.output_geometry();
         let rect = rect.intersection(out).ok_or("selection is off screen")?;
         // Output-relative; logical == physical (scale 1) everywhere in simplewm.
-        let (x, y, w, h) = (rect.loc.x - out.loc.x, rect.loc.y - out.loc.y, rect.size.w, rect.size.h);
+        let (x, y, w, h) = (
+            rect.loc.x - out.loc.x,
+            rect.loc.y - out.loc.y,
+            rect.size.w,
+            rect.size.h,
+        );
         let size: Size<i32, Physical> = (out.size.w, out.size.h).into();
 
         let elements = self.build_elements(renderer, true);
@@ -167,7 +185,11 @@ impl State {
             // Offscreen textures are stored top row first (smithay's
             // projection already accounts for GL's bottom-up rows).
             renderer
-                .copy_framebuffer(&fb, Rectangle::new((x, y).into(), (w, h).into()), Fourcc::Abgr8888)
+                .copy_framebuffer(
+                    &fb,
+                    Rectangle::new((x, y).into(), (w, h).into()),
+                    Fourcc::Abgr8888,
+                )
                 .map_err(|e| err(&e))?
         };
         let rgba = renderer.map_texture(&mapping).map_err(|e| err(&e))?;
@@ -180,7 +202,11 @@ impl State {
                 rgb.extend_from_slice(&px[..3]);
             }
         }
-        Ok(Image { width: w as u32, height: h as u32, rgb })
+        Ok(Image {
+            width: w as u32,
+            height: h as u32,
+            rgb,
+        })
     }
 }
 
@@ -196,7 +222,8 @@ fn save_png(dir: &Path, image: &Image) -> SaveResult {
         n += 1;
     }
 
-    let file = std::fs::File::create(&path).map_err(|e| format!("can't write {}: {e}", path.display()))?;
+    let file =
+        std::fs::File::create(&path).map_err(|e| format!("can't write {}: {e}", path.display()))?;
     let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), image.width, image.height);
     encoder.set_color(png::ColorType::Rgb);
     encoder.set_depth(png::BitDepth::Eight);

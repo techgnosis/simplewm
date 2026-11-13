@@ -31,9 +31,11 @@ pub struct Context {
 
 /// Run the checks on a worker thread and send the rows to `tx`.
 pub fn spawn(ctx: Context, tx: Sender<Vec<EnvRow>>) {
-    let spawned = std::thread::Builder::new().name("portal-check".into()).spawn(move || {
-        let _ = tx.send(run(&ctx));
-    });
+    let spawned = std::thread::Builder::new()
+        .name("portal-check".into())
+        .spawn(move || {
+            let _ = tx.send(run(&ctx));
+        });
     if let Err(err) = spawned {
         tracing::warn!(?err, "portal check: cannot start thread");
     }
@@ -74,10 +76,14 @@ fn run(ctx: &Context) -> Vec<EnvRow> {
     let checked = chrono::Local::now().format("%H:%M:%S");
     let mut out = vec![EnvRow::Header("Summary".into())];
     match problems.0.len() {
-        0 => out.push(EnvRow::Line(format!("No problems found (checked {checked})."))),
+        0 => out.push(EnvRow::Line(format!(
+            "No problems found (checked {checked})."
+        ))),
         n => {
             let s = if n == 1 { "" } else { "s" };
-            out.push(EnvRow::Line(format!("{n} problem{s} found (checked {checked}):")));
+            out.push(EnvRow::Line(format!(
+                "{n} problem{s} found (checked {checked}):"
+            )));
             for (what, fix) in problems.0 {
                 out.push(EnvRow::Line(format!("• {what}")));
                 out.push(EnvRow::Line(format!("    {fix}")));
@@ -96,7 +102,10 @@ fn backend_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
     rows.push(item("Bus name", portal::BUS_NAME));
     let state = match (&status.problem, status.serving) {
         (Some(p), _) => {
-            problems.add("simplewm's file dialog service is not running", "See State below for why");
+            problems.add(
+                "simplewm's file dialog service is not running",
+                "See State below for why",
+            );
             format!("not serving: {p}")
         }
         (None, true) => "serving".into(),
@@ -104,7 +113,10 @@ fn backend_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
     };
     rows.push(item("State", state));
     rows.push(item("Requests received", status.requests.to_string()));
-    rows.push(item("Last request", status.last_request.unwrap_or_else(|| "(none yet)".into())));
+    rows.push(item(
+        "Last request",
+        status.last_request.unwrap_or_else(|| "(none yet)".into()),
+    ));
     rows.push(item(
         "DBUS_SESSION_BUS_ADDRESS",
         std::env::var("DBUS_SESSION_BUS_ADDRESS").unwrap_or_else(|_| "(not set)".into()),
@@ -122,7 +134,10 @@ fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
     let conn = match conn {
         Ok(c) => c,
         Err(err) => {
-            problems.add("Cannot connect to the session D-Bus", "Check DBUS_SESSION_BUS_ADDRESS below");
+            problems.add(
+                "Cannot connect to the session D-Bus",
+                "Check DBUS_SESSION_BUS_ADDRESS below",
+            );
             rows.push(item("Connection", format!("failed: {err}")));
             return None;
         }
@@ -163,7 +178,10 @@ fn bus_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) -> Option<u32> {
             Err(err) => {
                 problems.add(
                     "xdg-desktop-portal is running without file dialogs",
-                    format!("Fix any other problems here, then {}", RESTART_PORTAL.to_lowercase()),
+                    format!(
+                        "Fix any other problems here, then {}",
+                        RESTART_PORTAL.to_lowercase()
+                    ),
                 );
                 format!("missing: {err}")
             }
@@ -200,7 +218,11 @@ fn frontend_file_chooser(conn: &Connection) -> Result<u32, String> {
 fn describe_pid(pid: u32) -> String {
     let cmd = std::fs::read(format!("/proc/{pid}/cmdline"))
         .ok()
-        .and_then(|b| b.split(|&c| c == 0).next().map(|a| String::from_utf8_lossy(a).into_owned()))
+        .and_then(|b| {
+            b.split(|&c| c == 0)
+                .next()
+                .map(|a| String::from_utf8_lossy(a).into_owned())
+        })
         .filter(|s| !s.is_empty());
     match cmd {
         Some(cmd) => format!("PID {pid} ({cmd})"),
@@ -210,8 +232,15 @@ fn describe_pid(pid: u32) -> String {
 
 // --- environment -------------------------------------------------------------------
 
-fn environment_rows(ctx: &Context, frontend_pid: Option<u32>, rows: &mut Vec<EnvRow>, problems: &mut Problems) {
-    rows.push(EnvRow::Header("Environment seen by D-Bus-started services".into()));
+fn environment_rows(
+    ctx: &Context,
+    frontend_pid: Option<u32>,
+    rows: &mut Vec<EnvRow>,
+    problems: &mut Problems,
+) {
+    rows.push(EnvRow::Header(
+        "Environment seen by D-Bus-started services".into(),
+    ));
     rows.push(item("Ours: WAYLAND_DISPLAY", ctx.wayland_display.clone()));
     rows.push(item(
         "Ours: XDG_CURRENT_DESKTOP",
@@ -221,20 +250,34 @@ fn environment_rows(ctx: &Context, frontend_pid: Option<u32>, rows: &mut Vec<Env
     match command_output(Command::new("systemctl").args(["--user", "show-environment"])) {
         Ok(out) => {
             let get = |key: &str| {
-                out.lines().find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('='))).map(str::to_string)
+                out.lines()
+                    .find_map(|l| l.strip_prefix(key).and_then(|r| r.strip_prefix('=')))
+                    .map(str::to_string)
             };
             let desktop = get("XDG_CURRENT_DESKTOP");
             let wayland = get("WAYLAND_DISPLAY");
             if !desktop_matches(desktop.as_deref()) {
                 problems.add(
-                    format!("systemd has XDG_CURRENT_DESKTOP={}", desktop.as_deref().unwrap_or("(unset)")),
+                    format!(
+                        "systemd has XDG_CURRENT_DESKTOP={}",
+                        desktop.as_deref().unwrap_or("(unset)")
+                    ),
                     format!("Restart simplewm so it sets {DESKTOP} again"),
                 );
             }
-            rows.push(item("systemd: XDG_CURRENT_DESKTOP", desktop.unwrap_or_else(|| "(not set)".into())));
-            rows.push(item("systemd: WAYLAND_DISPLAY", wayland.unwrap_or_else(|| "(not set)".into())));
+            rows.push(item(
+                "systemd: XDG_CURRENT_DESKTOP",
+                desktop.unwrap_or_else(|| "(not set)".into()),
+            ));
+            rows.push(item(
+                "systemd: WAYLAND_DISPLAY",
+                wayland.unwrap_or_else(|| "(not set)".into()),
+            ));
         }
-        Err(err) => rows.push(item("systemctl --user show-environment", format!("failed: {err}"))),
+        Err(err) => rows.push(item(
+            "systemctl --user show-environment",
+            format!("failed: {err}"),
+        )),
     }
 
     // The frontend picks backends by the XDG_CURRENT_DESKTOP it was started with.
@@ -255,7 +298,10 @@ fn environment_rows(ctx: &Context, frontend_pid: Option<u32>, rows: &mut Vec<Env
                     desktop.unwrap_or_else(|| "(not set)".into()),
                 ));
             }
-            Err(err) => rows.push(item("Running portal: XDG_CURRENT_DESKTOP", format!("cannot read: {err}"))),
+            Err(err) => rows.push(item(
+                "Running portal: XDG_CURRENT_DESKTOP",
+                format!("cannot read: {err}"),
+            )),
         }
     }
 }
@@ -282,9 +328,14 @@ fn file_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
         Ok(text) => {
             let ok = text.contains(portal::BUS_NAME)
                 && text.contains("org.freedesktop.impl.portal.FileChooser")
-                && text.lines().any(|l| l.starts_with("UseIn=") && l.contains(DESKTOP));
+                && text
+                    .lines()
+                    .any(|l| l.starts_with("UseIn=") && l.contains(DESKTOP));
             if !ok {
-                problems.add("The installed simplewm.portal is out of date", INSTALL_PORTAL);
+                problems.add(
+                    "The installed simplewm.portal is out of date",
+                    INSTALL_PORTAL,
+                );
             }
             rows.push(item("System", PORTAL_FILE));
         }
@@ -304,17 +355,26 @@ fn file_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
         rows.push(item("Portal config", "none found"));
     }
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let short_path = |path: &std::path::Path| match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
-        Some(rest) => format!("~/{}", rest.display()),
-        None => path.display().to_string(),
-    };
+    let short_path =
+        |path: &std::path::Path| match home.as_deref().and_then(|h| path.strip_prefix(h).ok()) {
+            Some(rest) => format!("~/{}", rest.display()),
+            None => path.display().to_string(),
+        };
     for (i, (path, text)) in found.iter().enumerate() {
         let settings = config_values(text);
-        let default = settings.iter().find(|(k, _)| k == "default").map(|(_, v)| v.as_str());
+        let default = settings
+            .iter()
+            .find(|(k, _)| k == "default")
+            .map(|(_, v)| v.as_str());
         let others: Vec<String> = settings
             .iter()
             .filter(|(k, v)| k != "default" && v != DESKTOP)
-            .map(|(k, v)| format!("{}={v}", k.trim_start_matches("org.freedesktop.impl.portal.")))
+            .map(|(k, v)| {
+                format!(
+                    "{}={v}",
+                    k.trim_start_matches("org.freedesktop.impl.portal.")
+                )
+            })
             .collect();
         if i == 0 && default != Some(DESKTOP) {
             problems.add(
@@ -332,14 +392,22 @@ fn file_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
             Some(rest) => ("User", format!("~/{}", rest.display())),
             None => ("System", path.display().to_string()),
         };
-        let label = if i == 0 { label.to_string() } else { format!("{label} (ignored)") };
+        let label = if i == 0 {
+            label.to_string()
+        } else {
+            format!("{label} (ignored)")
+        };
         rows.push(item(&label, shown));
         rows.push(item(
             "    settings",
             if settings.is_empty() {
                 "(none)".to_string()
             } else {
-                settings.iter().map(|(k, v)| format!("{k}={v}")).collect::<Vec<_>>().join(", ")
+                settings
+                    .iter()
+                    .map(|(k, v)| format!("{k}={v}"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
             },
         ));
     }
@@ -348,7 +416,9 @@ fn file_rows(rows: &mut Vec<EnvRow>, problems: &mut Problems) {
 /// `<desktop>-portals.conf` then `portals.conf`, in each config and data directory.
 fn config_candidates() -> Vec<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from);
-    let env_dir = |var: &str, fallback: Option<PathBuf>| std::env::var_os(var).map(PathBuf::from).or(fallback);
+    let env_dir = |var: &str, fallback: Option<PathBuf>| {
+        std::env::var_os(var).map(PathBuf::from).or(fallback)
+    };
     let env_dirs = |var: &str, fallback: &str| {
         std::env::var(var)
             .ok()
@@ -360,17 +430,26 @@ fn config_candidates() -> Vec<PathBuf> {
     };
 
     let mut dirs: Vec<PathBuf> = Vec::new();
-    dirs.extend(env_dir("XDG_CONFIG_HOME", home.as_ref().map(|h| h.join(".config"))));
+    dirs.extend(env_dir(
+        "XDG_CONFIG_HOME",
+        home.as_ref().map(|h| h.join(".config")),
+    ));
     dirs.extend(env_dirs("XDG_CONFIG_DIRS", "/etc/xdg"));
     dirs.push(PathBuf::from("/etc"));
-    dirs.extend(env_dir("XDG_DATA_HOME", home.as_ref().map(|h| h.join(".local/share"))));
+    dirs.extend(env_dir(
+        "XDG_DATA_HOME",
+        home.as_ref().map(|h| h.join(".local/share")),
+    ));
     dirs.extend(env_dirs("XDG_DATA_DIRS", "/usr/local/share:/usr/share"));
     dirs.push(PathBuf::from("/usr/share"));
 
     let mut out: Vec<PathBuf> = Vec::new();
     for dir in dirs {
         let dir = dir.join("xdg-desktop-portal");
-        for name in [format!("{DESKTOP}-portals.conf"), "portals.conf".to_string()] {
+        for name in [
+            format!("{DESKTOP}-portals.conf"),
+            "portals.conf".to_string(),
+        ] {
             let p = dir.join(name);
             if !out.contains(&p) {
                 out.push(p);
@@ -395,8 +474,14 @@ fn config_values(text: &str) -> Vec<(String, String)> {
 // --- journal ----------------------------------------------------------------------
 
 fn journal_rows(ctx: &Context, rows: &mut Vec<EnvRow>) {
-    rows.push(EnvRow::Header("xdg-desktop-portal log since simplewm started".into()));
-    let since = ctx.started.duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+    rows.push(EnvRow::Header(
+        "xdg-desktop-portal log since simplewm started".into(),
+    ));
+    let since = ctx
+        .started
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
     let out = command_output(Command::new("journalctl").args([
         "--user",
         "--unit=xdg-desktop-portal.service",
@@ -411,7 +496,11 @@ fn journal_rows(ctx: &Context, rows: &mut Vec<EnvRow>) {
             if lines.is_empty() {
                 rows.push(EnvRow::Line("(nothing logged)".into()));
             }
-            rows.extend(lines.into_iter().map(|l| EnvRow::Line(shorten_journal_line(l))));
+            rows.extend(
+                lines
+                    .into_iter()
+                    .map(|l| EnvRow::Line(shorten_journal_line(l))),
+            );
         }
         Err(err) => rows.push(EnvRow::Line(format!("journalctl failed: {err}"))),
     }
@@ -433,8 +522,11 @@ fn command_output(cmd: &mut Command) -> Result<String, String> {
     let out = cmd.output().map_err(|e| e.to_string())?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(if err.is_empty() { out.status.to_string() } else { err });
+        return Err(if err.is_empty() {
+            out.status.to_string()
+        } else {
+            err
+        });
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
-

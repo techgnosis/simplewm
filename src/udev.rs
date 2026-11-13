@@ -24,7 +24,6 @@ use smithay::{
     desktop::utils::OutputPresentationFeedback,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         calloop::{
             EventLoop, RegistrationToken,
             timer::{TimeoutAction, Timer},
@@ -32,6 +31,7 @@ use smithay::{
         drm::control::{Device as ControlDevice, ModeTypeFlags, connector},
         input::Libinput,
         rustix::fs::OFlags,
+        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
     },
     utils::{DeviceFd, Monotonic, Time, Transform},
     wayland::{dmabuf::DmabufFeedbackBuilder, presentation::Refresh},
@@ -42,8 +42,12 @@ use crate::{
     ui::CLEAR_COLOR,
 };
 
-type GbmDrmCompositor =
-    DrmCompositor<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, Option<OutputPresentationFeedback>, DrmDeviceFd>;
+type GbmDrmCompositor = DrmCompositor<
+    GbmAllocator<DrmDeviceFd>,
+    GbmFramebufferExporter<DrmDeviceFd>,
+    Option<OutputPresentationFeedback>,
+    DrmDeviceFd,
+>;
 
 pub struct UdevData {
     pub session: LibSeatSession,
@@ -69,7 +73,10 @@ impl UdevData {
     }
 }
 
-pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(
+    event_loop: &mut EventLoop<'static, State>,
+    state: &mut State,
+) -> Result<(), Box<dyn std::error::Error>> {
     let (mut session, notifier) = LibSeatSession::new()?;
     let seat_name = session.seat();
 
@@ -129,13 +136,21 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
     );
     let mode = Mode::from(drm_mode);
     let _global = output.create_global::<State>(&state.display_handle);
-    output.change_current_state(Some(mode), Some(Transform::Normal), None, Some((0, 0).into()));
+    output.change_current_state(
+        Some(mode),
+        Some(Transform::Normal),
+        None,
+        Some((0, 0).into()),
+    );
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
     state.output = Some(output.clone());
 
     let surface = drm.create_surface(crtc, drm_mode, &[connector.handle()])?;
-    let allocator = GbmAllocator::new(gbm.clone(), GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT);
+    let allocator = GbmAllocator::new(
+        gbm.clone(),
+        GbmBufferFlags::RENDERING | GbmBufferFlags::SCANOUT,
+    );
     let exporter = GbmFramebufferExporter::new(gbm.clone(), None);
     let render_formats = renderer.egl_context().dmabuf_render_formats().clone();
     let compositor = DrmCompositor::new(
@@ -156,7 +171,8 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
 
     // --- dmabuf ------------------------------------------------------------
     let formats = renderer.dmabuf_formats();
-    let render_node = EGLDevice::device_for_display(&egl_display).and_then(|d| d.try_get_render_node());
+    let render_node =
+        EGLDevice::device_for_display(&egl_display).and_then(|d| d.try_get_render_node());
     let global = match render_node {
         Ok(Some(node)) => {
             let feedback = DmabufFeedbackBuilder::new(node.dev_id(), formats).build()?;
@@ -164,17 +180,30 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
                 .dmabuf_state
                 .create_global_with_default_feedback::<State>(&state.display_handle, &feedback)
         }
-        _ => state.dmabuf_state.create_global::<State>(&state.display_handle, formats),
+        _ => state
+            .dmabuf_state
+            .create_global::<State>(&state.display_handle, formats),
     };
     state.dmabuf_global = Some(global);
 
-    state.startup_info.push(("Backend".into(), "TTY (DRM/KMS + libinput)".into()));
-    state.startup_info.push(("Session".into(), "libseat".into()));
+    state
+        .startup_info
+        .push(("Backend".into(), "TTY (DRM/KMS + libinput)".into()));
+    state
+        .startup_info
+        .push(("Session".into(), "libseat".into()));
     state.startup_info.push(("Seat".into(), seat_name.clone()));
-    state.startup_info.push(("GPU device".into(), gpu_path.display().to_string()));
+    state
+        .startup_info
+        .push(("GPU device".into(), gpu_path.display().to_string()));
     if let Ok(Some(node)) = &render_node {
-        let path = node.dev_path().map(|p| p.display().to_string()).unwrap_or_else(|| format!("{node:?}"));
-        state.startup_info.push(("Render node (dmabuf)".into(), path));
+        let path = node
+            .dev_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| format!("{node:?}"));
+        state
+            .startup_info
+            .push(("Render node (dmabuf)".into(), path));
     }
     state.startup_info.push((
         "Connector".into(),
@@ -182,7 +211,8 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
     ));
 
     // --- input -------------------------------------------------------------
-    let mut libinput = Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(session.clone().into());
+    let mut libinput =
+        Libinput::new_with_udev::<LibinputSessionInterface<LibSeatSession>>(session.clone().into());
     libinput
         .udev_assign_seat(&seat_name)
         .map_err(|_| "failed to assign libinput seat")?;
@@ -230,16 +260,19 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
                 match udev.compositor.frame_submitted() {
                     Ok(Some(Some(mut feedback))) => {
                         let (time, seq) = match meta {
-                            Some(DrmEventMetadata { time: DrmEventTime::Monotonic(t), sequence }) => {
-                                (Time::from(*t), *sequence as u64)
-                            }
+                            Some(DrmEventMetadata {
+                                time: DrmEventTime::Monotonic(t),
+                                sequence,
+                            }) => (Time::from(*t), *sequence as u64),
                             Some(m) => (now, m.sequence as u64),
                             None => (now, 0),
                         };
                         let refresh = udev
                             .output
                             .current_mode()
-                            .map(|m| Refresh::fixed(Duration::from_secs_f64(1000.0 / m.refresh as f64)))
+                            .map(|m| {
+                                Refresh::fixed(Duration::from_secs_f64(1000.0 / m.refresh as f64))
+                            })
                             .unwrap_or(Refresh::Unknown);
                         feedback.presented::<_, Monotonic>(
                             time,
@@ -290,7 +323,15 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
 pub fn shutdown(state: &mut State) {
     if let Some(Backend::Udev(udev)) = state.backend.take() {
         state.loop_handle.remove(udev.drm_token);
-        let UdevData { session, renderer, mut drm, compositor, libinput, output, .. } = udev;
+        let UdevData {
+            session,
+            renderer,
+            mut drm,
+            compositor,
+            libinput,
+            output,
+            ..
+        } = udev;
         drop(compositor);
         drm.pause();
         drop(drm);
@@ -312,10 +353,12 @@ impl State {
         let elements = self.render_elements(&mut udev.renderer);
         let output = udev.output.clone();
         let mut queued = false;
-        match udev
-            .compositor
-            .render_frame(&mut udev.renderer, &elements, CLEAR_COLOR, FrameFlags::DEFAULT)
-        {
+        match udev.compositor.render_frame(
+            &mut udev.renderer,
+            &elements,
+            CLEAR_COLOR,
+            FrameFlags::DEFAULT,
+        ) {
             Ok(result) => {
                 if !result.is_empty {
                     let feedback = self.take_presentation_feedback(&output);
@@ -339,13 +382,16 @@ impl State {
         if need_timer {
             // Nothing changed this time; poll again shortly.
             self.loop_handle
-                .insert_source(Timer::from_duration(Duration::from_millis(16)), |_, _, state| {
-                    if let Some(Backend::Udev(udev)) = state.backend.as_mut() {
-                        udev.timer_scheduled = false;
-                    }
-                    state.udev_render();
-                    TimeoutAction::Drop
-                })
+                .insert_source(
+                    Timer::from_duration(Duration::from_millis(16)),
+                    |_, _, state| {
+                        if let Some(Backend::Udev(udev)) = state.backend.as_mut() {
+                            udev.timer_scheduled = false;
+                        }
+                        state.udev_render();
+                        TimeoutAction::Drop
+                    },
+                )
                 .ok();
         }
 

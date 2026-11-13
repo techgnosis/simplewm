@@ -11,7 +11,8 @@ use smithay::{
     desktop::utils::OutputPresentationFeedback,
     output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::{
-        calloop::EventLoop, wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
+        calloop::EventLoop,
+        wayland_protocols::wp::presentation_time::server::wp_presentation_feedback,
         winit::dpi::LogicalSize, winit::window::Window as WinitWindow,
     },
     utils::{Monotonic, Rectangle, Transform},
@@ -28,7 +29,10 @@ pub struct WinitData {
     pub damage_tracker: OutputDamageTracker,
 }
 
-pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Result<(), Box<dyn std::error::Error>> {
+pub fn run(
+    event_loop: &mut EventLoop<'static, State>,
+    state: &mut State,
+) -> Result<(), Box<dyn std::error::Error>> {
     let attributes = WinitWindow::default_attributes()
         .with_title("simplewm")
         .with_inner_size(LogicalSize::new(1280.0, 800.0));
@@ -48,7 +52,12 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
         },
     );
     let _global = output.create_global::<State>(&state.display_handle);
-    output.change_current_state(Some(mode), Some(Transform::Flipped180), None, Some((0, 0).into()));
+    output.change_current_state(
+        Some(mode),
+        Some(Transform::Flipped180),
+        None,
+        Some((0, 0).into()),
+    );
     output.set_preferred(mode);
     state.space.map_output(&output, (0, 0));
     state.output = Some(output.clone());
@@ -68,19 +77,29 @@ pub fn run(event_loop: &mut EventLoop<'static, State>, state: &mut State) -> Res
             Err(err) => tracing::warn!(?err, "failed to build dmabuf feedback"),
         },
         _ => {
-            let global = state.dmabuf_state.create_global::<State>(&state.display_handle, formats);
+            let global = state
+                .dmabuf_state
+                .create_global::<State>(&state.display_handle, formats);
             state.dmabuf_global = Some(global);
         }
     }
 
-    state.startup_info.push(("Backend".into(), "nested (winit window in the host session)".into()));
+    state.startup_info.push((
+        "Backend".into(),
+        "nested (winit window in the host session)".into(),
+    ));
     state.startup_info.push((
         "Host WAYLAND_DISPLAY".into(),
         std::env::var("WAYLAND_DISPLAY").unwrap_or_else(|_| "(not set)".into()),
     ));
     if let Ok(Some(node)) = &render_node {
-        let path = node.dev_path().map(|p| p.display().to_string()).unwrap_or_else(|| format!("{node:?}"));
-        state.startup_info.push(("Render node (dmabuf)".into(), path));
+        let path = node
+            .dev_path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_else(|| format!("{node:?}"));
+        state
+            .startup_info
+            .push(("Render node (dmabuf)".into(), path));
     }
 
     let damage_tracker = OutputDamageTracker::from_output(&output);
@@ -138,7 +157,12 @@ fn render(state: &mut State, output: &Output) {
         } else {
             // No vblank timing from the host window, so report "now".
             let mut feedback = state.take_presentation_feedback(output);
-            feedback.presented::<_, Monotonic>(state.clock.now(), Refresh::Unknown, 0, wp_presentation_feedback::Kind::empty());
+            feedback.presented::<_, Monotonic>(
+                state.clock.now(),
+                Refresh::Unknown,
+                0,
+                wp_presentation_feedback::Kind::empty(),
+            );
         }
     }
     data.backend.window().request_redraw();
@@ -165,12 +189,19 @@ impl State {
     pub fn send_frames(&mut self, output: &Output) {
         let time = self.start_time.elapsed();
         for window in self.space.elements() {
-            window.send_frame(output, time, Some(Duration::ZERO), |_, _| Some(output.clone()));
-        }
-        if let smithay::input::pointer::CursorImageStatus::Surface(ref surface) = self.cursor_status {
-            smithay::desktop::utils::send_frames_surface_tree(surface, output, time, Some(Duration::ZERO), |_, _| {
+            window.send_frame(output, time, Some(Duration::ZERO), |_, _| {
                 Some(output.clone())
             });
+        }
+        if let smithay::input::pointer::CursorImageStatus::Surface(ref surface) = self.cursor_status
+        {
+            smithay::desktop::utils::send_frames_surface_tree(
+                surface,
+                output,
+                time,
+                Some(Duration::ZERO),
+                |_, _| Some(output.clone()),
+            );
         }
         self.space.refresh();
         self.popups.cleanup();

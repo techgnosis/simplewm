@@ -166,5 +166,12 @@ pub fn arrow_cursor() -> MemoryRenderBuffer {
             }
         }
     }
-    MemoryRenderBuffer::from_slice(&pixels, Fourcc::Argb8888, (w, h), 1, Transform::Normal, None)
+    MemoryRenderBuffer::from_slice(
+        &pixels,
+        Fourcc::Argb8888,
+        (w, h),
+        1,
+        Transform::Normal,
+        None,
+    )
 }

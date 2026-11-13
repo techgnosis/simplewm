@@ -13,12 +13,10 @@ pub const DESKTOP: &str = "simplewm";
 pub fn export(socket_name: &OsStr) {
     let mut wayland = std::ffi::OsString::from("WAYLAND_DISPLAY=");
     wayland.push(socket_name);
-    run(
-        Command::new("dbus-update-activation-environment")
-            .arg("--systemd")
-            .arg(wayland)
-            .arg(format!("XDG_CURRENT_DESKTOP={DESKTOP}")),
-    );
+    run(Command::new("dbus-update-activation-environment")
+        .arg("--systemd")
+        .arg(wayland)
+        .arg(format!("XDG_CURRENT_DESKTOP={DESKTOP}")));
     // Stop a portal left over from an earlier session so the next request starts a
     // fresh one that reads our environment and `simplewm-portals.conf`.
     stop_portals();
@@ -26,8 +24,12 @@ pub fn export(socket_name: &OsStr) {
 
 /// Remove what `export` set, so nothing tries to reach our socket after we exit.
 pub fn unexport() {
-    run(Command::new("systemctl")
-        .args(["--user", "unset-environment", "WAYLAND_DISPLAY", "XDG_CURRENT_DESKTOP"]));
+    run(Command::new("systemctl").args([
+        "--user",
+        "unset-environment",
+        "WAYLAND_DISPLAY",
+        "XDG_CURRENT_DESKTOP",
+    ]));
     stop_portals();
 }
 

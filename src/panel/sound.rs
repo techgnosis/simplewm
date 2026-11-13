@@ -7,7 +7,7 @@ use smithay::{
 };
 
 use super::{
-    BTN_H, BUTTON, BUTTON_HOT, CELL_HOT, FIELD_BG, FIELD_EDIT_RING, HEADER_H, NOTE_H, PAD, PanelHit, PanelId, Rect,
+    BTN_H, BUTTON, BUTTON_HOT, CELL_HOT, FIELD_BG, HEADER_H, NOTE_H, PAD, PanelHit, PanelId, Rect,
     SEPARATOR, bufs,
 };
 use crate::{
@@ -25,7 +25,14 @@ const PERCENT_W: i32 = 48;
 /// How much − and + change the volume.
 const STEP: f64 = 0.05;
 
+const BAR_H: i32 = 8;
+const THUMB_W: i32 = 6;
+
 const VOLUME_FILL: [f32; 4] = [0.25, 0.45, 0.80, 1.0];
+const THUMB: [f32; 4] = [0.90, 0.92, 0.96, 1.0];
+const THUMB_HOT: [f32; 4] = [1.0, 1.0, 1.0, 1.0];
+/// The chosen output, when there are several to choose from.
+const ROW_SELECTED: [f32; 4] = [0.25, 0.42, 0.70, 1.0];
 
 #[derive(Default)]
 pub struct SoundApplet {
@@ -68,12 +75,25 @@ fn layout(c: Rect, cards: usize) -> SoundLayout {
     let down = Rectangle::new((x + label_w, y).into(), (STEP_W, BTN_H).into());
     let bar_x = down.loc.x + STEP_W + 8;
     let bar_w = x + w - PERCENT_W - STEP_W - 8 - bar_x;
-    let bar = Rectangle::new((bar_x, y + 6).into(), (bar_w, BTN_H - 12).into());
+    let bar = Rectangle::new(
+        (bar_x, y + (BTN_H - BAR_H) / 2).into(),
+        (bar_w, BAR_H).into(),
+    );
     let up = Rectangle::new((bar_x + bar_w + 8, y).into(), (STEP_W, BTN_H).into());
     let percent = Rectangle::new((x + w - PERCENT_W, y).into(), (PERCENT_W, BTN_H).into());
     y += BTN_H + 4;
     let note = Rectangle::new((x, y).into(), (w, NOTE_H).into());
-    SoundLayout { header, cards, separator, volume_label, down, bar, up, percent, note }
+    SoundLayout {
+        header,
+        cards,
+        separator,
+        volume_label,
+        down,
+        bar,
+        up,
+        percent,
+        note,
+    }
 }
 
 fn content_height(cards: usize) -> i32 {
@@ -118,7 +138,14 @@ impl super::Panels {
     pub(super) fn sound_hit(&self, p: Point<f64, Logical>) -> Option<PanelHit> {
         let l = self.sound_layout();
         let inside = |r: Rect| r.to_f64().contains(p);
-        if let Some(i) = l.cards.iter().take(self.sound.sinks.len()).position(|r| inside(*r)) {
+        // With only one output there is nothing to choose.
+        if self.sound.sinks.len() > 1
+            && let Some(i) = l
+                .cards
+                .iter()
+                .take(self.sound.sinks.len())
+                .position(|r| inside(*r))
+        {
             return Some(PanelHit::SoundCard(i));
         }
         if self.sound.volume.is_some() {
@@ -129,10 +156,15 @@ impl super::Panels {
                 return Some(PanelHit::SoundUp);
             }
             // The bar, plus a little above and below it so it is easy to hit.
-            let target = Rectangle::new((l.bar.loc.x, l.down.loc.y).into(), (l.bar.size.w, BTN_H).into());
+            let target = Rectangle::new(
+                (l.bar.loc.x, l.down.loc.y).into(),
+                (l.bar.size.w, BTN_H).into(),
+            );
             if inside(target) {
                 let f = (p.x - l.bar.loc.x as f64) / l.bar.size.w.max(1) as f64;
-                return Some(PanelHit::SoundBar((f.clamp(0.0, 1.0) * 100.0).round() as u32));
+                return Some(PanelHit::SoundBar(
+                    (f.clamp(0.0, 1.0) * 100.0).round() as u32
+                ));
             }
         }
         None
@@ -143,6 +175,9 @@ impl super::Panels {
         let Some(id) = self.sound.sinks.get(i).map(|s| s.id) else {
             return;
         };
+        if self.sound.default == Some(id) {
+            return;
+        }
         if let Err(err) = sound::set_default(id) {
             self.sound.error = Some(err);
             return;
@@ -180,25 +215,61 @@ impl super::Panels {
         elems: &mut Vec<CustomElement>,
     ) {
         let l = self.sound_layout();
-        let SoundApplet { sinks, default, volume, error, solids } = &mut self.sound;
+        let SoundApplet {
+            sinks,
+            default,
+            volume,
+            error,
+            solids,
+        } = &mut self.sound;
         let n = sinks.len();
-        // Buffers: one per card, separator, −, +, bar track, bar fill.
-        let solids = bufs(solids, n + 5);
+        // Buffers: one per card, separator, −, +, bar track, bar fill, thumb.
+        let solids = bufs(solids, n + 6);
 
-        elems.extend(ui::text_in(text, renderer, "Sound card", l.header.loc.x, l.header));
+        let header = if n > 1 {
+            "Sound output — click one to use it"
+        } else {
+            "Sound output"
+        };
+        elems.extend(ui::text_in(
+            text,
+            renderer,
+            header,
+            l.header.loc.x,
+            l.header,
+        ));
         if n == 0 {
             let r = l.cards[0];
-            elems.extend(ui::text_in_alpha(text, renderer, "No sound cards found", r.loc.x + 8, r, 0.6));
+            elems.extend(ui::text_in_alpha(
+                text,
+                renderer,
+                "No sound outputs found",
+                r.loc.x + 8,
+                r,
+                0.6,
+            ));
         }
         let mut backs = Vec::new();
         for (i, (sink, r)) in sinks.iter().zip(&l.cards).enumerate() {
-            let chosen = *default == Some(sink.id);
-            let mark = if chosen { "●" } else { "○" };
-            elems.extend(ui::text_in(text, renderer, mark, r.loc.x + 8, *r));
-            let name = text.fit(&sink.description, r.size.w - 36);
-            elems.extend(ui::text_in(text, renderer, &name, r.loc.x + 28, *r));
-            if chosen {
+            let name = text.fit(&sink.description, r.size.w - 16);
+            if n == 1 {
+                // Nothing to choose: just say where sound goes.
+                elems.extend(ui::text_in(text, renderer, &name, r.loc.x + 8, *r));
                 backs.push((i, *r, FIELD_BG));
+                continue;
+            }
+            let chosen = *default == Some(sink.id);
+            let alpha = if chosen { 1.0 } else { 0.8 };
+            elems.extend(ui::text_in_alpha(
+                text,
+                renderer,
+                &name,
+                r.loc.x + 8,
+                *r,
+                alpha,
+            ));
+            if chosen {
+                backs.push((i, *r, ROW_SELECTED));
             } else if hovered == Some(PanelHit::SoundCard(i)) {
                 backs.push((i, *r, CELL_HOT));
             }
@@ -208,30 +279,72 @@ impl super::Panels {
         }
         elems.push(ui::solid(&mut solids[n], l.separator, SEPARATOR));
 
-        elems.extend(ui::text_in(text, renderer, "Volume", l.volume_label.loc.x, l.volume_label));
+        elems.extend(ui::text_in(
+            text,
+            renderer,
+            "Volume",
+            l.volume_label.loc.x,
+            l.volume_label,
+        ));
         if let Some(v) = *volume {
             let percent = format!("{}%", (v * 100.0).round() as i64);
             elems.extend(ui::text_centered(text, renderer, &percent, l.percent));
             elems.extend(ui::text_centered(text, renderer, "−", l.down));
             elems.extend(ui::text_centered(text, renderer, "+", l.up));
-            let button = |hit: PanelHit| if hovered == Some(hit) { BUTTON_HOT } else { BUTTON };
-            elems.push(ui::solid(&mut solids[n + 1], l.down, button(PanelHit::SoundDown)));
-            elems.push(ui::solid(&mut solids[n + 2], l.up, button(PanelHit::SoundUp)));
+            let button = |hit: PanelHit| {
+                if hovered == Some(hit) {
+                    BUTTON_HOT
+                } else {
+                    BUTTON
+                }
+            };
+            elems.push(ui::solid(
+                &mut solids[n + 1],
+                l.down,
+                button(PanelHit::SoundDown),
+            ));
+            elems.push(ui::solid(
+                &mut solids[n + 2],
+                l.up,
+                button(PanelHit::SoundUp),
+            ));
+            let bar_hot = matches!(hovered, Some(PanelHit::SoundBar(_)));
+            // The thumb sits on the end of the fill, kept inside the track.
             let fill_w = (v.clamp(0.0, 1.0) * l.bar.size.w as f64).round() as i32;
+            let thumb_x = (l.bar.loc.x + fill_w - THUMB_W / 2)
+                .clamp(l.bar.loc.x, l.bar.loc.x + l.bar.size.w - THUMB_W);
+            let thumb = Rectangle::new(
+                (thumb_x, l.down.loc.y + 4).into(),
+                (THUMB_W, BTN_H - 8).into(),
+            );
+            elems.push(ui::solid(
+                &mut solids[n + 5],
+                thumb,
+                if bar_hot { THUMB_HOT } else { THUMB },
+            ));
             let fill = Rectangle::new(l.bar.loc, (fill_w, l.bar.size.h).into());
             elems.push(ui::solid(&mut solids[n + 4], fill, VOLUME_FILL));
-            let track = if matches!(hovered, Some(PanelHit::SoundBar(_))) { FIELD_EDIT_RING } else { FIELD_BG };
+            let track = if bar_hot { BUTTON } else { FIELD_BG };
             elems.push(ui::solid(&mut solids[n + 3], l.bar, track));
         }
 
         let (note, alpha) = match &*error {
             Some(err) => (err.clone(), 1.0),
-            None if default.is_none() && n > 0 => ("Choose a sound card to set its volume".to_string(), 0.45),
+            None if default.is_none() && n > 0 => {
+                ("Choose an output to set its volume".to_string(), 0.45)
+            }
             None => (String::new(), 0.0),
         };
         if !note.is_empty() {
             let note = text.fit(&note, l.note.size.w);
-            elems.extend(ui::text_in_alpha(text, renderer, &note, l.note.loc.x, l.note, alpha));
+            elems.extend(ui::text_in_alpha(
+                text,
+                renderer,
+                &note,
+                l.note.loc.x,
+                l.note,
+                alpha,
+            ));
         }
     }
 }

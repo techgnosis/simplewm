@@ -17,7 +17,7 @@ use smithay::{
             protocol::wl_surface::WlSurface,
         },
     },
-    utils::{Clock, IsAlive, Monotonic, Logical, Point, Rectangle, SERIAL_COUNTER},
+    utils::{Clock, IsAlive, Logical, Monotonic, Point, Rectangle, SERIAL_COUNTER},
     wayland::{
         compositor::{CompositorClientState, CompositorState},
         dmabuf::{DmabufGlobal, DmabufState},
@@ -244,7 +244,11 @@ impl State {
     pub fn window_for_surface(&self, surface: &WlSurface) -> Option<Window> {
         self.space
             .elements()
-            .find(|w| w.toplevel().map(|t| t.wl_surface() == surface).unwrap_or(false))
+            .find(|w| {
+                w.toplevel()
+                    .map(|t| t.wl_surface() == surface)
+                    .unwrap_or(false)
+            })
             .cloned()
     }
 
@@ -274,7 +278,8 @@ impl State {
 
     /// Forget a client window that is about to be unmapped.
     pub fn note_unmap(&mut self, window: &Window) {
-        self.stack.retain(|e| *e != StackEntry::Window(window.clone()));
+        self.stack
+            .retain(|e| *e != StackEntry::Window(window.clone()));
     }
 
     /// Drop stack entries for windows that no longer exist.
@@ -295,10 +300,15 @@ impl State {
             .filter(|w| !self.stack.contains(&StackEntry::Window((*w).clone())))
             .map(|w| StackEntry::Window(w.clone()))
             .collect();
-        v.extend(self.stack.iter().filter(|e| match e {
-            StackEntry::Window(w) => w.alive() && self.space.elements().any(|x| x == w),
-            StackEntry::Panel(id) => self.panels.is_open(*id),
-        }).cloned());
+        v.extend(
+            self.stack
+                .iter()
+                .filter(|e| match e {
+                    StackEntry::Window(w) => w.alive() && self.space.elements().any(|x| x == w),
+                    StackEntry::Panel(id) => self.panels.is_open(*id),
+                })
+                .cloned(),
+        );
         v.reverse();
         v
     }
@@ -401,7 +411,8 @@ pub enum StackEntry {
 impl State {
     /// (Re)run the Desktop Portal checks; the rows arrive on `portal_check_tx`.
     pub fn refresh_portal_check(&mut self) {
-        self.panels.set_portal_rows(crate::portal_check::pending_rows());
+        self.panels
+            .set_portal_rows(crate::portal_check::pending_rows());
         let ctx = crate::portal_check::Context {
             wayland_display: self.socket_name.to_string_lossy().into_owned(),
             started: std::time::SystemTime::now() - self.start_time.elapsed(),
@@ -430,21 +441,38 @@ impl State {
         if let Some(output) = &self.output {
             let mode = output
                 .current_mode()
-                .map(|m| format!("{}x{} @ {:.2} Hz", m.size.w, m.size.h, m.refresh as f64 / 1000.0))
+                .map(|m| {
+                    format!(
+                        "{}x{} @ {:.2} Hz",
+                        m.size.w,
+                        m.size.h,
+                        m.refresh as f64 / 1000.0
+                    )
+                })
                 .unwrap_or_else(|| "(no mode)".into());
             rows.push(item("Output", format!("{} — {}", output.name(), mode)));
         }
         rows.push(item("wl_seat", "seat0 (keyboard, pointer)".into()));
         rows.push(item(
             "Settings database",
-            crate::panel::db_path().map(|p| p.display().to_string()).unwrap_or_else(|| "(unavailable)".into()),
+            crate::panel::db_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "(unavailable)".into()),
         ));
 
         let mut vars: Vec<(String, String)> = std::env::vars_os()
-            .map(|(k, v)| (k.to_string_lossy().into_owned(), v.to_string_lossy().into_owned()))
+            .map(|(k, v)| {
+                (
+                    k.to_string_lossy().into_owned(),
+                    v.to_string_lossy().into_owned(),
+                )
+            })
             .collect();
         vars.sort();
-        rows.push(EnvRow::Header(format!("Environment variables ({})", vars.len())));
+        rows.push(EnvRow::Header(format!(
+            "Environment variables ({})",
+            vars.len()
+        )));
         rows.extend(vars.into_iter().map(|(k, v)| EnvRow::Item(k, v)));
         rows
     }

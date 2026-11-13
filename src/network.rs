@@ -30,7 +30,10 @@ pub fn parse(address: &str, gateway: &str) -> Result<Ipv4Config, String> {
     let (addr, prefix) = address
         .split_once('/')
         .ok_or("Write the address with its prefix length, like 192.168.1.50/24.")?;
-    let addr: Ipv4Addr = addr.trim().parse().map_err(|_| format!("\"{}\" is not an IPv4 address.", addr.trim()))?;
+    let addr: Ipv4Addr = addr
+        .trim()
+        .parse()
+        .map_err(|_| format!("\"{}\" is not an IPv4 address.", addr.trim()))?;
     let prefix: u8 = prefix
         .trim()
         .parse()
@@ -43,27 +46,42 @@ pub fn parse(address: &str, gateway: &str) -> Result<Ipv4Config, String> {
     let mask = mask(prefix);
     let host = u32::from(addr) & !mask;
     if prefix <= 30 && (host == 0 || host == !mask) {
-        return Err(format!("{addr} is the network or broadcast address of /{prefix}."));
+        return Err(format!(
+            "{addr} is the network or broadcast address of /{prefix}."
+        ));
     }
 
     let gateway = gateway.trim();
     let gateway = if gateway.is_empty() {
         None
     } else {
-        let gw: Ipv4Addr = gateway.parse().map_err(|_| format!("\"{gateway}\" is not an IPv4 address."))?;
+        let gw: Ipv4Addr = gateway
+            .parse()
+            .map_err(|_| format!("\"{gateway}\" is not an IPv4 address."))?;
         if gw == addr {
             return Err("The gateway can't be the card's own address.".into());
         }
         if u32::from(gw) & mask != u32::from(addr) & mask {
-            return Err(format!("The gateway {gw} is not inside {}/{prefix}.", network(addr, prefix)));
+            return Err(format!(
+                "The gateway {gw} is not inside {}/{prefix}.",
+                network(addr, prefix)
+            ));
         }
         Some(gw)
     };
-    Ok(Ipv4Config { addr, prefix, gateway })
+    Ok(Ipv4Config {
+        addr,
+        prefix,
+        gateway,
+    })
 }
 
 fn mask(prefix: u8) -> u32 {
-    if prefix == 0 { 0 } else { u32::MAX << (32 - prefix) }
+    if prefix == 0 {
+        0
+    } else {
+        u32::MAX << (32 - prefix)
+    }
 }
 
 fn network(addr: Ipv4Addr, prefix: u8) -> Ipv4Addr {
@@ -91,13 +109,20 @@ pub fn ethernet_device() -> Option<String> {
 }
 
 fn sysfs(dir: &Path, file: &str) -> Option<String> {
-    fs::read_to_string(dir.join(file)).ok().map(|s| s.trim().to_string())
+    fs::read_to_string(dir.join(file))
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 fn ifindex(dev: &str) -> io::Result<u32> {
     sysfs(&Path::new("/sys/class/net").join(dev), "ifindex")
         .and_then(|s| s.parse().ok())
-        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("no network card named {dev}")))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("no network card named {dev}"),
+            )
+        })
 }
 
 /// What the applet shows about the card.
@@ -128,9 +153,20 @@ pub fn status(dev: &str) -> io::Result<Status> {
         up: flags & libc::IFF_UP as u32 != 0,
         operstate: sysfs(&dir, "operstate").unwrap_or_default(),
         carrier: sysfs(&dir, "carrier").map(|c| c == "1"),
-        speed: sysfs(&dir, "speed").and_then(|s| s.parse::<i64>().ok()).filter(|s| *s > 0).map(|s| s as u32),
-        addrs: nl.addresses(index)?.into_iter().map(|a| (a.local, a.prefix)).collect(),
-        gateways: nl.default_routes(index)?.into_iter().filter_map(|r| r.gateway).collect(),
+        speed: sysfs(&dir, "speed")
+            .and_then(|s| s.parse::<i64>().ok())
+            .filter(|s| *s > 0)
+            .map(|s| s as u32),
+        addrs: nl
+            .addresses(index)?
+            .into_iter()
+            .map(|a| (a.local, a.prefix))
+            .collect(),
+        gateways: nl
+            .default_routes(index)?
+            .into_iter()
+            .filter_map(|r| r.gateway)
+            .collect(),
     })
 }
 
@@ -151,8 +187,15 @@ pub fn network_manager_running() -> bool {
         return false;
     };
     dir.flatten()
-        .filter(|e| e.file_name().to_string_lossy().bytes().all(|b| b.is_ascii_digit()))
-        .any(|e| fs::read_to_string(e.path().join("comm")).is_ok_and(|c| c.trim() == "NetworkManager"))
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .bytes()
+                .all(|b| b.is_ascii_digit())
+        })
+        .any(|e| {
+            fs::read_to_string(e.path().join("comm")).is_ok_and(|c| c.trim() == "NetworkManager")
+        })
 }
 
 /// Switch the card on, replace its IPv4 addresses with `cfg.addr`, and point
@@ -180,7 +223,14 @@ pub fn apply(dev: &str, cfg: &Ipv4Config) -> io::Result<()> {
 /// removes the routes through it) is fine.
 fn ignore_missing(r: io::Result<()>) -> io::Result<()> {
     match r {
-        Err(e) if matches!(e.raw_os_error(), Some(libc::ESRCH | libc::ENOENT | libc::EADDRNOTAVAIL)) => Ok(()),
+        Err(e)
+            if matches!(
+                e.raw_os_error(),
+                Some(libc::ESRCH | libc::ENOENT | libc::EADDRNOTAVAIL)
+            ) =>
+        {
+            Ok(())
+        }
         r => r,
     }
 }
@@ -188,7 +238,9 @@ fn ignore_missing(r: io::Result<()>) -> io::Result<()> {
 /// A short explanation of a failed `apply`/`status`.
 pub fn describe(err: &io::Error) -> String {
     match err.raw_os_error() {
-        Some(libc::EPERM) => "Not allowed: simplewm is missing CAP_NET_ADMIN (run make, which runs setcap).".into(),
+        Some(libc::EPERM) => {
+            "Not allowed: simplewm is missing CAP_NET_ADMIN (run make, which runs setcap).".into()
+        }
         Some(libc::ENETUNREACH) => "The gateway is not reachable from that address.".into(),
         _ => err.to_string(),
     }
@@ -320,7 +372,11 @@ impl Netlink {
     fn open() -> io::Result<Self> {
         // SAFETY: plain socket(2)/bind(2) calls; the fd is owned right away.
         unsafe {
-            let fd = libc::socket(libc::AF_NETLINK, libc::SOCK_RAW | libc::SOCK_CLOEXEC, libc::NETLINK_ROUTE);
+            let fd = libc::socket(
+                libc::AF_NETLINK,
+                libc::SOCK_RAW | libc::SOCK_CLOEXEC,
+                libc::NETLINK_ROUTE,
+            );
             if fd < 0 {
                 return Err(io::Error::last_os_error());
             }
@@ -328,7 +384,12 @@ impl Netlink {
             let mut sa: libc::sockaddr_nl = std::mem::zeroed();
             sa.nl_family = libc::AF_NETLINK as u16;
             let len = std::mem::size_of::<libc::sockaddr_nl>() as u32;
-            if libc::bind(fd.as_raw_fd(), &sa as *const _ as *const libc::sockaddr, len) < 0 {
+            if libc::bind(
+                fd.as_raw_fd(),
+                &sa as *const _ as *const libc::sockaddr,
+                len,
+            ) < 0
+            {
                 return Err(io::Error::last_os_error());
             }
             Ok(Netlink { fd, seq: 0 })
@@ -365,7 +426,8 @@ impl Netlink {
         let mut buf = vec![0u8; 64 * 1024];
         loop {
             // SAFETY: recv into a buffer we own, at most its length.
-            let n = unsafe { libc::recv(self.fd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len(), 0) };
+            let n =
+                unsafe { libc::recv(self.fd.as_raw_fd(), buf.as_mut_ptr().cast(), buf.len(), 0) };
             if n < 0 {
                 let err = io::Error::last_os_error();
                 if err.kind() == io::ErrorKind::Interrupted {
@@ -389,8 +451,14 @@ impl Netlink {
                 match ty {
                     NLMSG_DONE => return Ok(out),
                     NLMSG_ERROR => {
-                        let code = payload.get(0..4).map_or(0, |e| i32::from_ne_bytes(e.try_into().unwrap()));
-                        return if code == 0 { Ok(out) } else { Err(io::Error::from_raw_os_error(-code)) };
+                        let code = payload
+                            .get(0..4)
+                            .map_or(0, |e| i32::from_ne_bytes(e.try_into().unwrap()));
+                        return if code == 0 {
+                            Ok(out)
+                        } else {
+                            Err(io::Error::from_raw_os_error(-code))
+                        };
                     }
                     _ => out.push(payload.to_vec()),
                 }
@@ -412,10 +480,17 @@ impl Netlink {
     }
 
     fn addresses(&mut self, index: u32) -> io::Result<Vec<Addr>> {
-        let replies = self.request(Msg::new(RTM_GETADDR, NLM_F_REQUEST | NLM_F_DUMP, &ifaddrmsg(0, 0, 0)))?;
+        let replies = self.request(Msg::new(
+            RTM_GETADDR,
+            NLM_F_REQUEST | NLM_F_DUMP,
+            &ifaddrmsg(0, 0, 0),
+        ))?;
         let mut out = Vec::new();
         for r in replies {
-            if r.len() < 8 || r[0] != libc::AF_INET as u8 || u32::from_ne_bytes(r[4..8].try_into().unwrap()) != index {
+            if r.len() < 8
+                || r[0] != libc::AF_INET as u8
+                || u32::from_ne_bytes(r[4..8].try_into().unwrap()) != index
+            {
                 continue;
             }
             let (mut local, mut address) = (None, None);
@@ -427,26 +502,41 @@ impl Netlink {
                 }
             }
             if let Some(local) = local.or(address) {
-                out.push(Addr { local, address: address.unwrap_or(local), prefix: r[1] });
+                out.push(Addr {
+                    local,
+                    address: address.unwrap_or(local),
+                    prefix: r[1],
+                });
             }
         }
         Ok(out)
     }
 
     fn del_addr(&mut self, index: u32, a: &Addr) -> io::Result<()> {
-        let msg = Msg::new(RTM_DELADDR, NLM_F_REQUEST | NLM_F_ACK, &ifaddrmsg(a.prefix, 0, index))
-            .ip(IFA_LOCAL, a.local)
-            .ip(IFA_ADDRESS, a.address);
+        let msg = Msg::new(
+            RTM_DELADDR,
+            NLM_F_REQUEST | NLM_F_ACK,
+            &ifaddrmsg(a.prefix, 0, index),
+        )
+        .ip(IFA_LOCAL, a.local)
+        .ip(IFA_ADDRESS, a.address);
         self.ack(msg)
     }
 
     fn add_addr(&mut self, index: u32, addr: Ipv4Addr, prefix: u8) -> io::Result<()> {
         let flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE;
-        let mut msg = Msg::new(RTM_NEWADDR, flags, &ifaddrmsg(prefix, RT_SCOPE_UNIVERSE, index))
-            .ip(IFA_LOCAL, addr)
-            .ip(IFA_ADDRESS, addr);
+        let mut msg = Msg::new(
+            RTM_NEWADDR,
+            flags,
+            &ifaddrmsg(prefix, RT_SCOPE_UNIVERSE, index),
+        )
+        .ip(IFA_LOCAL, addr)
+        .ip(IFA_ADDRESS, addr);
         if prefix <= 30 {
-            msg = msg.ip(IFA_BROADCAST, Ipv4Addr::from(u32::from(addr) | !mask(prefix)));
+            msg = msg.ip(
+                IFA_BROADCAST,
+                Ipv4Addr::from(u32::from(addr) | !mask(prefix)),
+            );
         }
         self.ack(msg)
     }
@@ -461,7 +551,11 @@ impl Netlink {
             if r.len() < 12 || r[0] != libc::AF_INET as u8 || r[1] != 0 || r[7] != RTN_UNICAST {
                 continue;
             }
-            let mut route = Route { gateway: None, priority: None, table: r[4] as u32 };
+            let mut route = Route {
+                gateway: None,
+                priority: None,
+                table: r[4] as u32,
+            };
             let (mut oif, mut has_dst) = (None, false);
             for (ty, data) in attrs(&r[12..]) {
                 match ty {
@@ -481,10 +575,18 @@ impl Netlink {
     }
 
     fn del_route(&mut self, index: u32, route: &Route) -> io::Result<()> {
-        let table = if route.table < 256 { route.table as u8 } else { 0 };
-        let mut msg = Msg::new(RTM_DELROUTE, NLM_F_REQUEST | NLM_F_ACK, &rtmsg(table, 0, RT_SCOPE_NOWHERE, 0))
-            .u32(RTA_TABLE, route.table)
-            .u32(RTA_OIF, index);
+        let table = if route.table < 256 {
+            route.table as u8
+        } else {
+            0
+        };
+        let mut msg = Msg::new(
+            RTM_DELROUTE,
+            NLM_F_REQUEST | NLM_F_ACK,
+            &rtmsg(table, 0, RT_SCOPE_NOWHERE, 0),
+        )
+        .u32(RTA_TABLE, route.table)
+        .u32(RTA_OIF, index);
         if let Some(gw) = route.gateway {
             msg = msg.ip(RTA_GATEWAY, gw);
         }
@@ -497,7 +599,9 @@ impl Netlink {
     fn add_default_route(&mut self, index: u32, gateway: Ipv4Addr) -> io::Result<()> {
         let flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE;
         let body = rtmsg(RT_TABLE_MAIN, RTPROT_STATIC, RT_SCOPE_UNIVERSE, RTN_UNICAST);
-        let msg = Msg::new(RTM_NEWROUTE, flags, &body).ip(RTA_GATEWAY, gateway).u32(RTA_OIF, index);
+        let msg = Msg::new(RTM_NEWROUTE, flags, &body)
+            .ip(RTA_GATEWAY, gateway)
+            .u32(RTA_OIF, index);
         self.ack(msg)
     }
 }

@@ -83,7 +83,9 @@ pub struct Filter {
 impl Filter {
     pub fn matches(&self, file_name: &str) -> bool {
         let name = file_name.to_lowercase();
-        self.globs.iter().any(|g| glob_match(g.as_bytes(), name.as_bytes()))
+        self.globs
+            .iter()
+            .any(|g| glob_match(g.as_bytes(), name.as_bytes()))
     }
 }
 
@@ -106,8 +108,12 @@ pub struct BackendStatus {
     pub last_request: Option<String>,
 }
 
-static STATUS: Mutex<BackendStatus> =
-    Mutex::new(BackendStatus { serving: false, problem: None, requests: 0, last_request: None });
+static STATUS: Mutex<BackendStatus> = Mutex::new(BackendStatus {
+    serving: false,
+    problem: None,
+    requests: 0,
+    last_request: None,
+});
 
 pub fn status() -> BackendStatus {
     STATUS.lock().map(|s| s.clone()).unwrap_or_default()
@@ -128,41 +134,52 @@ fn set_problem(problem: String) {
 
 /// Start serving the portal backend on the session bus (in the background).
 pub fn start(tx: Sender<PortalEvent>) {
-    let spawned = std::thread::Builder::new().name("portal".into()).spawn(move || {
-        let chooser = FileChooser { tx, next_id: AtomicU64::new(1) };
-        let result = zbus::blocking::connection::Builder::session()
-            .and_then(|b| b.serve_at(OBJECT_PATH, chooser))
-            .and_then(|b| b.build());
-        let conn = match result {
-            Ok(conn) => conn,
-            Err(err) => {
-                tracing::warn!(?err, "portal: cannot connect to the session bus");
-                set_problem(format!("cannot connect to the session bus: {err}"));
-                return;
+    let spawned = std::thread::Builder::new()
+        .name("portal".into())
+        .spawn(move || {
+            let chooser = FileChooser {
+                tx,
+                next_id: AtomicU64::new(1),
+            };
+            let result = zbus::blocking::connection::Builder::session()
+                .and_then(|b| b.serve_at(OBJECT_PATH, chooser))
+                .and_then(|b| b.build());
+            let conn = match result {
+                Ok(conn) => conn,
+                Err(err) => {
+                    tracing::warn!(?err, "portal: cannot connect to the session bus");
+                    set_problem(format!("cannot connect to the session bus: {err}"));
+                    return;
+                }
+            };
+            // Don't take the name from another running simplewm.
+            match conn.request_name_with_flags(BUS_NAME, RequestNameFlags::DoNotQueue.into()) {
+                Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
+                    tracing::info!(name = BUS_NAME, "portal: file chooser backend ready");
+                    update_status(|s| s.serving = true);
+                }
+                Ok(reply) => {
+                    tracing::warn!(
+                        ?reply,
+                        name = BUS_NAME,
+                        "portal: name already owned elsewhere"
+                    );
+                    set_problem(
+                        "the bus name is owned by another process (another simplewm?)".into(),
+                    );
+                    return;
+                }
+                Err(err) => {
+                    tracing::warn!(?err, name = BUS_NAME, "portal: cannot own bus name");
+                    set_problem(format!("cannot own the bus name: {err}"));
+                    return;
+                }
             }
-        };
-        // Don't take the name from another running simplewm.
-        match conn.request_name_with_flags(BUS_NAME, RequestNameFlags::DoNotQueue.into()) {
-            Ok(RequestNameReply::PrimaryOwner | RequestNameReply::AlreadyOwner) => {
-                tracing::info!(name = BUS_NAME, "portal: file chooser backend ready");
-                update_status(|s| s.serving = true);
+            // zbus serves requests on its own executor thread; keep the connection alive.
+            loop {
+                std::thread::park();
             }
-            Ok(reply) => {
-                tracing::warn!(?reply, name = BUS_NAME, "portal: name already owned elsewhere");
-                set_problem("the bus name is owned by another process (another simplewm?)".into());
-                return;
-            }
-            Err(err) => {
-                tracing::warn!(?err, name = BUS_NAME, "portal: cannot own bus name");
-                set_problem(format!("cannot own the bus name: {err}"));
-                return;
-            }
-        }
-        // zbus serves requests on its own executor thread; keep the connection alive.
-        loop {
-            std::thread::park();
-        }
-    });
+        });
     if let Err(err) = spawned {
         tracing::warn!(?err, "portal: cannot start thread");
         set_problem(format!("cannot start the D-Bus thread: {err}"));
@@ -192,8 +209,18 @@ impl FileChooser {
         let multiple = opt_bool(&options, "multiple");
         let directory = opt_bool(&options, "directory");
         let folder = opt_path(&options, "current_folder");
-        self.pick(server, handle, false, multiple, directory, title, folder, String::new(), &options)
-            .await
+        self.pick(
+            server,
+            handle,
+            false,
+            multiple,
+            directory,
+            title,
+            folder,
+            String::new(),
+            &options,
+        )
+        .await
     }
 
     async fn save_file(
@@ -216,7 +243,10 @@ impl FileChooser {
             }
             folder = file.parent().map(Path::to_path_buf).or(folder);
         }
-        self.pick(server, handle, true, false, false, title, folder, name, &options).await
+        self.pick(
+            server, handle, true, false, false, title, folder, name, &options,
+        )
+        .await
     }
 }
 
@@ -252,7 +282,10 @@ impl FileChooser {
         };
 
         // The frontend calls Close on this object to cancel the dialog.
-        let close = Request { tx: self.tx.clone(), id };
+        let close = Request {
+            tx: self.tx.clone(),
+            id,
+        };
         if let Err(err) = server.at(&handle, close).await {
             tracing::warn!(?err, "portal: cannot export request object");
         }
@@ -286,7 +319,11 @@ impl FileChooser {
 /// Record a request in the status (finished by `note_outcome`).
 fn note_request(kind: &str, app_id: &str, title: &str) {
     let time = chrono::Local::now().format("%H:%M:%S");
-    let app = if app_id.is_empty() { "an unsandboxed app" } else { app_id };
+    let app = if app_id.is_empty() {
+        "an unsandboxed app"
+    } else {
+        app_id
+    };
     update_status(|s| {
         s.requests += 1;
         s.last_request = Some(format!("{time} {kind} \"{title}\" from {app}: waiting"));
@@ -318,11 +355,16 @@ impl Request {
 // --- option parsing ----------------------------------------------------------
 
 fn opt_bool(options: &Options, key: &str) -> bool {
-    options.get(key).and_then(|v| v.downcast_ref::<bool>().ok()).unwrap_or(false)
+    options
+        .get(key)
+        .and_then(|v| v.downcast_ref::<bool>().ok())
+        .unwrap_or(false)
 }
 
 fn opt_str(options: &Options, key: &str) -> Option<String> {
-    options.get(key).and_then(|v| v.downcast_ref::<String>().ok())
+    options
+        .get(key)
+        .and_then(|v| v.downcast_ref::<String>().ok())
 }
 
 /// A path option, sent as a NUL-terminated byte array.
@@ -349,13 +391,15 @@ fn parse_filters(options: &Options) -> (Vec<Filter>, Option<usize>) {
     let current = raw("current_filter")
         .and_then(|v| RawFilter::try_from(v).ok())
         .and_then(to_filter)
-        .map(|cur| match filters.iter().position(|f| f.name == cur.name) {
-            Some(i) => i,
-            None => {
-                filters.push(cur);
-                filters.len() - 1
-            }
-        });
+        .map(
+            |cur| match filters.iter().position(|f| f.name == cur.name) {
+                Some(i) => i,
+                None => {
+                    filters.push(cur);
+                    filters.len() - 1
+                }
+            },
+        );
     (filters, current)
 }
 
@@ -468,6 +512,9 @@ mod tests {
 
     #[test]
     fn uris() {
-        assert_eq!(file_uri(Path::new("/tmp/a b/ü.txt")), "file:///tmp/a%20b/%C3%BC.txt");
+        assert_eq!(
+            file_uri(Path::new("/tmp/a b/ü.txt")),
+            "file:///tmp/a%20b/%C3%BC.txt"
+        );
     }
 }

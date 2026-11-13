@@ -6,9 +6,9 @@ use smithay::{
     desktop::Window,
     input::pointer::{
         AxisFrame, ButtonEvent, GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent,
-        GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-        GestureSwipeUpdateEvent, GrabStartData, MotionEvent, PointerGrab, PointerInnerHandle,
-        RelativeMotionEvent,
+        GesturePinchEndEvent, GesturePinchUpdateEvent, GestureSwipeBeginEvent,
+        GestureSwipeEndEvent, GestureSwipeUpdateEvent, GrabStartData, MotionEvent, PointerGrab,
+        PointerInnerHandle, RelativeMotionEvent,
     },
     reexports::{
         wayland_protocols::xdg::shell::server::xdg_toplevel,
@@ -60,14 +60,24 @@ macro_rules! forward_rest {
             handle.relative_motion(data, focus, event);
         }
 
-        fn button(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, event: &ButtonEvent) {
+        fn button(
+            &mut self,
+            data: &mut State,
+            handle: &mut PointerInnerHandle<'_, State>,
+            event: &ButtonEvent,
+        ) {
             handle.button(data, event);
             if !handle.current_pressed().contains(&self.start_data.button) {
                 handle.unset_grab(self, data, event.serial, event.time, true);
             }
         }
 
-        fn axis(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, details: AxisFrame) {
+        fn axis(
+            &mut self,
+            data: &mut State,
+            handle: &mut PointerInnerHandle<'_, State>,
+            details: AxisFrame,
+        ) {
             handle.axis(data, details)
         }
 
@@ -75,28 +85,68 @@ macro_rules! forward_rest {
             handle.frame(data);
         }
 
-        fn gesture_swipe_begin(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, event: &GestureSwipeBeginEvent) {
+        fn gesture_swipe_begin(
+            &mut self,
+            data: &mut State,
+            handle: &mut PointerInnerHandle<'_, State>,
+            event: &GestureSwipeBeginEvent,
+        ) {
             handle.gesture_swipe_begin(data, event)
         }
-        fn gesture_swipe_update(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, event: &GestureSwipeUpdateEvent) {
+        fn gesture_swipe_update(
+            &mut self,
+            data: &mut State,
+            handle: &mut PointerInnerHandle<'_, State>,
+            event: &GestureSwipeUpdateEvent,
+        ) {
             handle.gesture_swipe_update(data, event)
         }
-        fn gesture_swipe_end(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, event: &GestureSwipeEndEvent) {
+        fn gesture_swipe_end(
+            &mut self,
+            data: &mut State,
+            handle: &mut PointerInnerHandle<'_, State>,
+            event: &GestureSwipeEndEvent,
+        ) {
             handle.gesture_swipe_end(data, event)
         }
-        fn gesture_pinch_begin(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, event: &GesturePinchBeginEvent) {
+        fn gesture_pinch_begin(
+            &mut self,
+            data: &mut State,
+            handle: &mut PointerInnerHandle<'_, State>,
+            event: &GesturePinchBeginEvent,
+        ) {
             handle.gesture_pinch_begin(data, event)
         }
-        fn gesture_pinch_update(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, event: &GesturePinchUpdateEvent) {
+        fn gesture_pinch_update(
+            &mut self,
+            data: &mut State,
+            handle: &mut PointerInnerHandle<'_, State>,
+            event: &GesturePinchUpdateEvent,
+        ) {
             handle.gesture_pinch_update(data, event)
         }
-        fn gesture_pinch_end(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, event: &GesturePinchEndEvent) {
+        fn gesture_pinch_end(
+            &mut self,
+            data: &mut State,
+            handle: &mut PointerInnerHandle<'_, State>,
+            event: &GesturePinchEndEvent,
+        ) {
             handle.gesture_pinch_end(data, event)
         }
-        fn gesture_hold_begin(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, event: &GestureHoldBeginEvent) {
+        fn gesture_hold_begin(
+            &mut self,
+            data: &mut State,
+            handle: &mut PointerInnerHandle<'_, State>,
+            event: &GestureHoldBeginEvent,
+        ) {
             handle.gesture_hold_begin(data, event)
         }
-        fn gesture_hold_end(&mut self, data: &mut State, handle: &mut PointerInnerHandle<'_, State>, event: &GestureHoldEndEvent) {
+        fn gesture_hold_end(
+            &mut self,
+            data: &mut State,
+            handle: &mut PointerInnerHandle<'_, State>,
+            event: &GestureHoldEndEvent,
+        ) {
             handle.gesture_hold_end(data, event)
         }
 
@@ -176,12 +226,20 @@ impl PointerGrab<State> for PanelMoveGrab {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResizeState {
     Idle,
-    Resizing { edges: Edges, initial: Rectangle<i32, Logical> },
-    WaitingForLastCommit { edges: Edges, initial: Rectangle<i32, Logical> },
+    Resizing {
+        edges: Edges,
+        initial: Rectangle<i32, Logical>,
+    },
+    WaitingForLastCommit {
+        edges: Edges,
+        initial: Rectangle<i32, Logical>,
+    },
 }
 
 fn resize_state(window: &Window) -> &RefCell<ResizeState> {
-    window.user_data().insert_if_missing(|| RefCell::new(ResizeState::Idle));
+    window
+        .user_data()
+        .insert_if_missing(|| RefCell::new(ResizeState::Idle));
     window.user_data().get::<RefCell<ResizeState>>().unwrap()
 }
 
@@ -193,7 +251,12 @@ pub struct ResizeGrab {
 }
 
 impl ResizeGrab {
-    pub fn start(state: &mut State, start_data: GrabStartData<State>, window: Window, edges: Edges) -> Self {
+    pub fn start(
+        state: &mut State,
+        start_data: GrabStartData<State>,
+        window: Window,
+        edges: Edges,
+    ) -> Self {
         let initial = state
             .space
             .element_geometry(&window)
@@ -246,7 +309,11 @@ impl PointerGrab<State> for ResizeGrab {
         let min_h = min.h.max(60);
         let max_w = if max.w == 0 { i32::MAX } else { max.w };
         let max_h = if max.h == 0 { i32::MAX } else { max.h };
-        let size: Size<i32, Logical> = (w.clamp(min_w, max_w.max(min_w)), h.clamp(min_h, max_h.max(min_h))).into();
+        let size: Size<i32, Logical> = (
+            w.clamp(min_w, max_w.max(min_w)),
+            h.clamp(min_h, max_h.max(min_h)),
+        )
+            .into();
 
         toplevel.with_pending_state(|state| {
             state.states.set(xdg_toplevel::State::Resizing);

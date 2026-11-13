@@ -10,8 +10,8 @@ mod session_env;
 mod sound;
 mod state;
 mod text;
-mod ui;
 mod udev;
+mod ui;
 mod winit;
 
 use smithay::reexports::{calloop::EventLoop, wayland_server::Display};

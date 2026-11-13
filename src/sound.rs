@@ -28,7 +28,8 @@ pub fn outputs() -> Result<Outputs, String> {
 }
 
 fn parse_dump(json: &str) -> Result<Outputs, String> {
-    let objects: Vec<Value> = serde_json::from_str(json).map_err(|e| format!("could not read pw-dump: {e}"))?;
+    let objects: Vec<Value> =
+        serde_json::from_str(json).map_err(|e| format!("could not read pw-dump: {e}"))?;
     let mut sinks = Vec::new();
     let mut names = Vec::new();
     let mut default_name = None;
@@ -42,7 +43,10 @@ fn parse_dump(json: &str) -> Result<Outputs, String> {
                 .or(props["node.nick"].as_str())
                 .unwrap_or(name)
                 .to_string();
-            sinks.push(Sink { id: id as u32, description });
+            sinks.push(Sink {
+                id: id as u32,
+                description,
+            });
             names.push(name.to_string());
         }
         if o["props"]["metadata.name"] == "default"
@@ -55,7 +59,9 @@ fn parse_dump(json: &str) -> Result<Outputs, String> {
             }
         }
     }
-    let default = default_name.and_then(|d| names.iter().position(|n| *n == d)).map(|i| sinks[i].id);
+    let default = default_name
+        .and_then(|d| names.iter().position(|n| *n == d))
+        .map(|i| sinks[i].id);
     Ok(Outputs { sinks, default })
 }
 
@@ -66,7 +72,12 @@ pub fn volume(id: u32) -> Result<f64, String> {
 }
 
 fn parse_volume(out: &str) -> Option<f64> {
-    out.trim().strip_prefix("Volume:")?.split_whitespace().next()?.parse().ok()
+    out.trim()
+        .strip_prefix("Volume:")?
+        .split_whitespace()
+        .next()?
+        .parse()
+        .ok()
 }
 
 /// Set sink `id`'s volume (0.0 to 1.0).
@@ -82,10 +93,16 @@ pub fn set_default(id: u32) -> Result<(), String> {
 
 fn run(cmd: &mut Command) -> Result<String, String> {
     let program = cmd.get_program().to_string_lossy().into_owned();
-    let out = cmd.output().map_err(|e| format!("could not run {program}: {e}"))?;
+    let out = cmd
+        .output()
+        .map_err(|e| format!("could not run {program}: {e}"))?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
-        return Err(if err.is_empty() { format!("{program} failed ({})", out.status) } else { err });
+        return Err(if err.is_empty() {
+            format!("{program} failed ({})", out.status)
+        } else {
+            err
+        });
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
@@ -117,8 +134,14 @@ mod tests {
         assert_eq!(
             o.sinks,
             [
-                Sink { id: 51, description: "HDMI Audio".into() },
-                Sink { id: 52, description: "Built-in Audio".into() }
+                Sink {
+                    id: 51,
+                    description: "HDMI Audio".into()
+                },
+                Sink {
+                    id: 52,
+                    description: "Built-in Audio".into()
+                }
             ]
         );
         assert_eq!(o.default, Some(52));
