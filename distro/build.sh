@@ -70,15 +70,76 @@ USER_NAME=user
 USER_PASSWORD=simplewm
 USER_GROUPS="seat audio video input wheel"
 
-# Folders the system doesn't need, removed from the root filesystem (Alpine's base layout
-# makes them). Only empty ones (or holding only empty folders) are removed; if a package
-# ever puts files in one, the build stops. Nothing can make them again: there's no package
-# manager in the system.
+# What the system doesn't need, removed at the end of the build (see "A smaller
+# filesystem" in DISTRO.md for why each goes). Nothing can bring them back: there's no
+# package manager in the system.
+#
+# REMOVE: files and folders deleted with whatever is in them.
+REMOVE="
+    /boot
+
+    /etc/inittab
+    /etc/fstab
+    /etc/motd
+    /etc/securetty
+    /etc/modules
+    /etc/sysctl.conf
+    /etc/nsswitch.conf
+    /etc/vdpau_wrapper.cfg
+    /etc/sudo.conf
+    /etc/sudo_logsrvd.conf
+    /etc/crontabs
+    /etc/periodic
+    /etc/network
+    /etc/udhcpc
+    /etc/logrotate.d
+    /etc/pam.d
+    /etc/security
+    /etc/pkcs11
+    /etc/busybox-paths.d
+    /etc/xdg/autostart
+    /etc/xdg/Xwayland-session.d
+    /etc/profile.d/README
+    /etc/profile.d/color_prompt.sh.disabled
+    /etc/dbus-1/system.conf
+
+    /usr/share/dbus-1/system.conf
+    /usr/share/dbus-1/system.d
+    /usr/share/dbus-1/system-services
+    /usr/share/udhcpc
+    /usr/share/aclocal
+    /usr/share/pkgconfig
+
+    /var/spool
+    /var/log/apk.log
+"
+# REMOVE_DIRS: folders that should be empty (or hold only empty folders). If a package
+# ever puts files in one, the build stops and lists them instead of deleting them.
 REMOVE_DIRS="
     /media
     /mnt
     /opt
     /srv
+    /usr/local
+
+    /etc/opt
+    /etc/xdg
+    /etc/alsa
+    /etc/udev/rules.d
+    /etc/modules-load.d
+    /etc/sysctl.d
+    /lib/modules-load.d
+    /lib/sysctl.d
+    /usr/lib/modules-load.d
+
+    /var/mail
+    /var/opt
+    /var/local
+    /var/db
+    /var/empty
+    /var/lib/misc
+    /var/lib/dbus
+    /var/cache/misc
 "
 
 # Drivers the initramfs loads to reach the root filesystem (plus what they need).
@@ -131,7 +192,8 @@ for g in $USER_GROUPS; do
     chroot "$ROOT" addgroup "$USER_NAME" "$g"
 done
 echo "$USER_NAME:$USER_PASSWORD" | chroot "$ROOT" chpasswd >/dev/null
-echo "%wheel ALL=(ALL:ALL) ALL" > "$ROOT/etc/sudoers.d/wheel"
+# Members of wheel may use sudo, with their own password, and without sudo's lecture.
+printf '%%wheel ALL=(ALL:ALL) ALL\nDefaults lecture=never\n' > "$ROOT/etc/sudoers.d/wheel"
 chmod 440 "$ROOT/etc/sudoers.d/wheel"
 
 # Only the accounts the system uses: root and the user. Alpine's base layout adds ones for
@@ -151,17 +213,6 @@ rm -f "$ROOT/etc/passwd-" "$ROOT/etc/shadow-" "$ROOT/etc/group-"
 # root without one. Lock it; the user gets root through sudo, with their own password.
 sed -i 's/^root:[^:]*:/root:*:/' "$ROOT/etc/shadow"
 rm -f "$ROOT/usr/libexec/dbus-daemon-launch-helper"
-
-echo "== trimming"
-for dir in $REMOVE_DIRS; do
-    [ -e "$ROOT$dir" ] || continue
-    find "$ROOT$dir" -depth -type d -empty -delete
-    if [ -e "$ROOT$dir" ]; then
-        echo "$dir isn't empty; not removing it:" >&2
-        find "$ROOT$dir" -not -type d >&2
-        exit 1
-    fi
-done
 
 echo "== kernel"
 kver=$(ls "$ROOT/lib/modules")
@@ -183,6 +234,20 @@ modprobe --dirname "$ROOT" --set-version "$kver" --show-depends --all $INITRAMFS
     done
 (cd "$ird" && find . | cpio -o -H newc --quiet | gzip -9) > "$OUT/initramfs.cpio.gz"
 rm -rf "$ird"
+
+echo "== trimming"
+for path in $REMOVE; do
+    rm -rf "${ROOT:?}$path"
+done
+for dir in $REMOVE_DIRS; do
+    [ -e "$ROOT$dir" ] || continue
+    find "$ROOT$dir" -depth -type d -empty -delete
+    if [ -e "$ROOT$dir" ]; then
+        echo "$dir isn't empty; not removing it:" >&2
+        find "$ROOT$dir" -not -type d >&2
+        exit 1
+    fi
+done
 
 echo "== disk image"
 used=$(du -sm "$ROOT" | cut -f1)

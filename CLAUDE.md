@@ -154,7 +154,12 @@ for screenshots (convert PPM to PNG to view), `sendkey` to type (one key per com
 `spc`, `dot`, `shift-4` for `$`…), and `quit` at the end. To test failures, boot a copy
 of `out/root.img` changed with `debugfs -w` in the container (e2fsprogs-extra), e.g. with
 a stub `/usr/bin/simplewm`; when simplewm exits, simplewm-init gives a user shell on tty1 to
-type into. `build.sh` empties `out/`, so keep test images elsewhere or remake them. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
+type into. To check what a screenshot can't show, give the test copy a
+`/home/user/.bash_profile` (simplewm is started through the login shell) that runs checks in
+the background and writes a report ending with `sync` (new data otherwise waits up to 30 s
+to reach the disk); test copies are written to, so read the report afterwards with
+`debugfs -c -R "cat /home/user/check.log"` (`-c`: QEMU's `quit` leaves the filesystem
+unclean). `build.sh` empties `out/`, so keep test images elsewhere or remake them. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
 
 ## Code map (`src/`)
 

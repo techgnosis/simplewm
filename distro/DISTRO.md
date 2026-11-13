@@ -370,12 +370,45 @@ to the render node of the GPU it opened.
 **Fixed: no sound with libudev-zero.** PipeWire found no sound cards; switching to eudev
 fixed it (see "eudev vs libudev-zero").
 
-**A smaller filesystem.** The user wants as little in the filesystem as possible.
-`build.sh` removes the folders listed in `REMOVE_DIRS`; add to that list to trim more. So
-far: `/media`, `/mnt`, `/opt` and `/srv` (Alpine's base layout makes them, empty). Only
-empty folders (or ones holding only empty folders) are removed; if a package ever puts
-files in one, the build stops and lists them. Nothing in the system can make them again,
-since there's no package manager; anyone who wants one back can make it.
+**A smaller filesystem.** The user wants as little in the filesystem as possible, to
+lighten the load on whoever looks around it. `build.sh` trims at the end of the build
+with two lists; add to them to trim more. Nothing in the system can bring anything back,
+since there's no package manager.
+
+- `REMOVE`: deleted with their contents. So far:
+  - `/boot`: the kernel, its config and System.map. `build.sh` copies the kernel to
+    `out/` first; QEMU boots that. (The real machine's boot setup will decide what it
+    needs.)
+  - What only OpenRC, busybox init or a login would read: `inittab`, `fstab` (it only
+    listed a CD-ROM and USB stick under `/media`), `motd`, `securetty`, `modules`,
+    `sysctl.conf`, and `busybox-paths.d` (a list for apk's busybox trigger).
+  - Services that don't run: cron (`/etc/crontabs`, `/etc/periodic`, `/var/spool`),
+    ifupdown and DHCP (`/etc/network`, `/etc/udhcpc`, `/usr/share/udhcpc`; the Network
+    applet uses `ip` directly), logrotate (`/etc/logrotate.d`, for acpid, which isn't
+    installed), sudo's log server (`sudo_logsrvd.conf`), D-Bus's system bus
+    (`system.conf` in `/etc/dbus-1` and `/usr/share/dbus-1`, `system.d`,
+    `system-services`), desktop-session autostart and Xwayland (`/etc/xdg`).
+  - Files nothing reads here: `nsswitch.conf` (musl doesn't use it), `sudo.conf` (all
+    comments), `/etc/pam.d` and `/etc/security` (sudo is built without PAM; only vlock's
+    file was there), `pkcs11.conf.example`, `vdpau_wrapper.cfg` (Flash Player settings),
+    `profile.d/README` and the disabled `color_prompt.sh.disabled`, the `aclocal` and
+    `pkgconfig` build files, and `/var/log/apk.log`.
+- `REMOVE_DIRS`: folders that should be empty (or hold only empty folders). If a package
+  ever puts files in one, the build stops and lists them instead of deleting them. So
+  far: `/media`, `/mnt`, `/opt`, `/srv`, `/usr/local`, `/etc/opt`, `/etc/alsa`,
+  `/etc/udev/rules.d`, the `modules-load.d` and `sysctl.d` folders, and `/var/mail`,
+  `/var/opt`, `/var/local`, `/var/db`, `/var/empty`, `/var/lib/misc`, `/var/lib/dbus`,
+  `/var/cache/misc`.
+
+After trimming, `/etc` holds: bash, dbus-1 (session.conf), fonts, group, gtk-3.0,
+hostname, hosts, inputrc, machine-id, modprobe.d, mtab, passwd, profile, profile.d,
+protocols, pulse, services, shadow, shells, ssl, sudoers, sudoers.d, terminfo, udev. Kept
+on purpose: `modprobe.d` (driver blacklists matter on real hardware), `/lib/firmware`
+(the real machine's GPU needs firmware), `/var/tmp`, `/var/run` and `/var/lock` (programs
+expect them). sudo's first-use lecture is turned off (`Defaults lecture=never`).
+
+Checked after trimming, with a test image that writes a report: all services run, the
+sound card is found, simplewm's portal is on the session bus, Firefox starts, sudo works.
 
 Accounts are trimmed the same way (`KEEP_ACCOUNTS` in `build.sh`): `/etc/passwd` and
 `/etc/shadow` hold only `root` and the user. Alpine's base layout adds accounts for

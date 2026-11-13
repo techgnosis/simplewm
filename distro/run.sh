@@ -4,9 +4,10 @@
 #   distro/run.sh            the screen in a window (needs qemu-ui-gtk and
 #                            qemu-hw-display-virtio-vga on Arch; qemu-desktop has both)
 #   distro/run.sh headless [image]
-#                            no window, for testing boots from a script; changes to the
-#                            disk are thrown away when QEMU exits. image: another disk
-#                            image to boot instead of out/root.img (a test variant)
+#                            no window, for testing boots from a script; changes to
+#                            out/root.img are thrown away when QEMU exits. image: a test
+#                            copy to boot instead, which is written to (so a test can
+#                            leave results in it to read with debugfs afterwards)
 #
 # Either way the serial console is this terminal: the kernel's and simplewm-init's
 # messages (output only). Ctrl+A then X quits QEMU; Ctrl+A then C its monitor.
@@ -21,7 +22,8 @@ for f in vmlinuz initramfs.cpio.gz root.img; do
     [ -e "$out/$f" ] || { echo "no $out/$f; run distro/build.sh first" >&2; exit 1; }
 done
 image=$out/root.img
-[ "${1:-}" = headless ] && [ -n "${2:-}" ] && image=$2
+test_image=
+[ "${1:-}" = headless ] && [ -n "${2:-}" ] && image=$2 && test_image=yes
 
 # The VM's screen fills what a window can use on the host's monitor: its preferred mode
 # (the first line of a connected connector's modes, as simplewm picks it), less
@@ -51,9 +53,9 @@ gpu="-device virtio-vga,xres=$xres,yres=$yres"
 snapshot=
 if [ "${1:-}" = headless ]; then
     screen="$gpu -display none"
-    # Test boots never change the disk image: writes go to a temporary layer that's
-    # thrown away when QEMU exits.
-    snapshot=-snapshot
+    # Test boots never change out/root.img: writes go to a temporary layer that's thrown
+    # away when QEMU exits. A test copy is written to.
+    [ -n "$test_image" ] || snapshot=-snapshot
 elif qemu-system-x86_64 -display help 2>/dev/null | grep -qx gtk; then
     screen="$gpu -display gtk,show-menubar=off"
 else
