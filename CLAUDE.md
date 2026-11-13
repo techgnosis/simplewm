@@ -144,7 +144,7 @@ Update this list when a change adds or drops one.
 Scripts for building the custom distro from Alpine packages; `distro/DISTRO.md` has the
 plan and describes each script. `distro/build.sh` builds simplewm for musl
 (`build-simplewm.sh`, into `target/alpine/`), the root filesystem, kernel, initramfs and
-disk image (inside an Alpine container, `distro/container.sh`), and `distro/run.sh` boots
+disk image (inside an Alpine container, `distro/container.sh`), and `distro/run.sh` (or `make vm`) boots
 them in QEMU, which starts straight into simplewm (`/sbin/init` is simplewm-init). Claude can test a boot itself with
 `distro/run.sh headless [image]` (no window, and changes to the disk are thrown away).
 There's no shell on the serial port (it's output only), so drive the VM through QEMU's

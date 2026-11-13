@@ -1,4 +1,4 @@
-.PHONY: all simplewm run install clean audit
+.PHONY: all simplewm run vm install clean audit
 
 all: simplewm
 
@@ -8,6 +8,10 @@ simplewm:
 
 run: simplewm
 	./simplewm
+
+# Boot the distro in QEMU, in a window (build it first with distro/build.sh).
+vm:
+	distro/run.sh
 
 # Install simplewm to /usr/bin (needs sudo).
 install: simplewm
