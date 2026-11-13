@@ -1,19 +1,19 @@
 //! Static IPv4 setup for the wired network card, behind the Network applet.
 //!
-//! simplewm sets the address, the default route and the link state itself,
-//! over rtnetlink. That needs CAP_NET_ADMIN, which `make` gives the binary with
-//! `setcap` (the capability is not passed on to programs simplewm launches).
-//! Card details are read from /sys/class/net.
+//! The card's state is read without privileges, from /sys/class/net and
+//! rtnetlink dumps. Changing it needs root: `apply` runs one fixed `ip` script
+//! through `sudo`, with the user's password (typed into simplewm's password
+//! window) on sudo's stdin. The values reach the script only as separate
+//! arguments, after `parse` has checked them, never as shell text.
 
 use std::{
-    fs, io,
+    fs,
+    io::{self, Write},
     net::Ipv4Addr,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
     path::Path,
+    process::{Command, Stdio},
 };
-
-/// Bit of CAP_NET_ADMIN in the capability sets.
-const CAP_NET_ADMIN: u32 = 12;
 
 /// An address with its prefix length, and the gateway for the default route.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -170,17 +170,6 @@ pub fn status(dev: &str) -> io::Result<Status> {
     })
 }
 
-/// Whether this process can change network settings.
-pub fn has_net_admin() -> bool {
-    let Ok(s) = fs::read_to_string("/proc/self/status") else {
-        return false;
-    };
-    s.lines()
-        .find_map(|l| l.strip_prefix("CapEff:"))
-        .and_then(|v| u64::from_str_radix(v.trim(), 16).ok())
-        .is_some_and(|caps| caps & (1 << CAP_NET_ADMIN) != 0)
-}
-
 /// Whether NetworkManager is running (it would undo what simplewm sets).
 pub fn network_manager_running() -> bool {
     let Ok(dir) = fs::read_dir("/proc") else {
@@ -198,52 +187,144 @@ pub fn network_manager_running() -> bool {
         })
 }
 
-/// Switch the card on, replace its IPv4 addresses with `cfg.addr`, and point
-/// the default route at `cfg.gateway`.
-pub fn apply(dev: &str, cfg: &Ipv4Config) -> io::Result<()> {
-    let index = ifindex(dev)?;
-    let mut nl = Netlink::open()?;
-    nl.set_up(index)?;
-    for route in nl.default_routes(index)? {
-        ignore_missing(nl.del_route(index, &route))?;
-    }
-    for addr in nl.addresses(index)? {
-        if (addr.local, addr.prefix) != (cfg.addr, cfg.prefix) {
-            ignore_missing(nl.del_addr(index, &addr))?;
-        }
-    }
-    nl.add_addr(index, cfg.addr, cfg.prefix)?;
-    if let Some(gw) = cfg.gateway {
-        nl.add_default_route(index, gw)?;
-    }
-    Ok(())
+/// Run as root by `apply`: switch the card on, set the address (keeping it if
+/// it is already there, so connections survive), remove the other addresses,
+/// and replace the default route. Arguments: card, address/prefix, gateway
+/// (may be empty), then the addresses to remove.
+const APPLY_SCRIPT: &str = r#"set -e
+dev=$1 addr=$2 gw=$3
+shift 3
+ip link set dev "$dev" up
+ip -4 addr replace "$addr" brd + dev "$dev"
+for old in "$@"; do ip -4 addr del "$old" dev "$dev"; done
+ip -4 route flush exact 0.0.0.0/0 dev "$dev"
+if [ -n "$gw" ]; then ip -4 route replace default via "$gw" dev "$dev" proto static; fi
+"#;
+
+/// Why `apply` failed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApplyError {
+    /// sudo didn't accept the password.
+    WrongPassword,
+    /// Anything else, explained.
+    Failed(String),
 }
 
-/// Deleting something that went away meanwhile (removing an address also
-/// removes the routes through it) is fine.
-fn ignore_missing(r: io::Result<()>) -> io::Result<()> {
-    match r {
-        Err(e)
-            if matches!(
-                e.raw_os_error(),
-                Some(libc::ESRCH | libc::ENOENT | libc::EADDRNOTAVAIL)
-            ) =>
-        {
-            Ok(())
+/// `APPLY_SCRIPT`'s arguments for setting `cfg` on `dev`, which has `current`
+/// addresses now.
+fn script_args(dev: &str, cfg: &Ipv4Config, current: &[(Ipv4Addr, u8)]) -> Vec<String> {
+    let mut args = vec![
+        dev.to_string(),
+        format!("{}/{}", cfg.addr, cfg.prefix),
+        cfg.gateway.map(|g| g.to_string()).unwrap_or_default(),
+    ];
+    args.extend(
+        current
+            .iter()
+            .filter(|&&(a, p)| (a, p) != (cfg.addr, cfg.prefix))
+            .map(|(a, p)| format!("{a}/{p}")),
+    );
+    args
+}
+
+/// A card name as the kernel allows, and that `ip` can't mistake for an option.
+fn plain_device_name(dev: &str) -> bool {
+    !dev.is_empty()
+        && !dev.starts_with('-')
+        && dev
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"_.-@".contains(&b))
+}
+
+/// Set `cfg` on `dev` as root, through sudo with `password`. Blocks until sudo
+/// is done (a wrong password takes a few seconds), so call it off the event
+/// loop. The password is wiped from memory before returning.
+pub fn apply(dev: &str, cfg: &Ipv4Config, mut password: String) -> Result<(), ApplyError> {
+    let result = run_sudo(dev, cfg, &password);
+    wipe(&mut password);
+    result
+}
+
+fn run_sudo(dev: &str, cfg: &Ipv4Config, password: &str) -> Result<(), ApplyError> {
+    if !plain_device_name(dev) {
+        return Err(ApplyError::Failed(format!("unexpected card name {dev:?}")));
+    }
+    let current = status(dev)
+        .map(|s| s.addrs)
+        .map_err(|e| ApplyError::Failed(describe(&e)))?;
+    // -k: always ask, so the password line is always read by sudo itself.
+    // -S: read it from stdin. -p "": no prompt text on stderr.
+    let mut child = Command::new("/usr/bin/sudo")
+        .args([
+            "-k",
+            "-S",
+            "-p",
+            "",
+            "--",
+            "/bin/sh",
+            "-c",
+            APPLY_SCRIPT,
+            "simplewm-net",
+        ])
+        .args(script_args(dev, cfg, &current))
+        // English messages, to tell a wrong password from other failures.
+        .env("LC_ALL", "C")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| ApplyError::Failed(format!("cannot run sudo: {e}")))?;
+    if let Some(mut stdin) = child.stdin.take() {
+        // A failed write means sudo already quit; its exit status says why.
+        let mut line = Vec::with_capacity(password.len() + 1);
+        line.extend_from_slice(password.as_bytes());
+        line.push(b'\n');
+        let _ = stdin.write_all(&line);
+        wipe_bytes(&mut line);
+    }
+    let out = child
+        .wait_with_output()
+        .map_err(|e| ApplyError::Failed(format!("sudo failed: {e}")))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(sudo_error(&String::from_utf8_lossy(&out.stderr)))
+}
+
+/// Make sense of sudo's (or the script's) stderr after a failure.
+fn sudo_error(stderr: &str) -> ApplyError {
+    if stderr.contains("incorrect password") || stderr.contains("Sorry, try again") {
+        return ApplyError::WrongPassword;
+    }
+    if stderr.contains("not in the sudoers file") || stderr.contains("not allowed to execute") {
+        return ApplyError::Failed("your account is not allowed to use sudo.".into());
+    }
+    let last = stderr.lines().rev().find(|l| !l.trim().is_empty());
+    let msg = last.unwrap_or("sudo failed").trim();
+    ApplyError::Failed(match msg {
+        "Error: Nexthop has invalid gateway." => {
+            "the gateway is not reachable from that address.".into()
         }
-        r => r,
+        _ => msg.trim_start_matches("Error: ").to_string(),
+    })
+}
+
+/// Overwrite a secret before its memory is freed.
+pub fn wipe(s: &mut String) {
+    let mut bytes = std::mem::take(s).into_bytes();
+    wipe_bytes(&mut bytes);
+}
+
+fn wipe_bytes(bytes: &mut [u8]) {
+    for b in bytes.iter_mut() {
+        // SAFETY: a plain write to a byte we own; volatile so it isn't optimized away.
+        unsafe { std::ptr::write_volatile(b, 0) };
     }
 }
 
-/// A short explanation of a failed `apply`/`status`.
+/// A short explanation of a failed `status`.
 pub fn describe(err: &io::Error) -> String {
-    match err.raw_os_error() {
-        Some(libc::EPERM) => {
-            "Not allowed: simplewm is missing CAP_NET_ADMIN (run make, which runs setcap).".into()
-        }
-        Some(libc::ENETUNREACH) => "The gateway is not reachable from that address.".into(),
-        _ => err.to_string(),
-    }
+    err.to_string()
 }
 
 // --- rtnetlink -------------------------------------------------------------------
@@ -251,33 +332,18 @@ pub fn describe(err: &io::Error) -> String {
 const NLMSG_ERROR: u16 = 2;
 const NLMSG_DONE: u16 = 3;
 const NLM_F_REQUEST: u16 = 0x1;
-const NLM_F_ACK: u16 = 0x4;
-const NLM_F_REPLACE: u16 = 0x100;
 const NLM_F_DUMP: u16 = 0x300;
-const NLM_F_CREATE: u16 = 0x400;
 
-const RTM_NEWLINK: u16 = 16;
-const RTM_NEWADDR: u16 = 20;
-const RTM_DELADDR: u16 = 21;
 const RTM_GETADDR: u16 = 22;
-const RTM_NEWROUTE: u16 = 24;
-const RTM_DELROUTE: u16 = 25;
 const RTM_GETROUTE: u16 = 26;
 
 const IFA_ADDRESS: u16 = 1;
 const IFA_LOCAL: u16 = 2;
-const IFA_BROADCAST: u16 = 4;
 
 const RTA_DST: u16 = 1;
 const RTA_OIF: u16 = 4;
 const RTA_GATEWAY: u16 = 5;
-const RTA_PRIORITY: u16 = 6;
-const RTA_TABLE: u16 = 15;
 
-const RT_TABLE_MAIN: u8 = 254;
-const RTPROT_STATIC: u8 = 4;
-const RT_SCOPE_UNIVERSE: u8 = 0;
-const RT_SCOPE_NOWHERE: u8 = 255;
 const RTN_UNICAST: u8 = 1;
 
 const HDR_LEN: usize = 16;
@@ -285,16 +351,12 @@ const HDR_LEN: usize = 16;
 /// An IPv4 address on the card, as the kernel reports it.
 struct Addr {
     local: Ipv4Addr,
-    /// The peer address (the same as `local` unless point-to-point).
-    address: Ipv4Addr,
     prefix: u8,
 }
 
 /// A default route through the card.
 struct Route {
     gateway: Option<Ipv4Addr>,
-    priority: Option<u32>,
-    table: u32,
 }
 
 /// A netlink message being built: header, fixed body, then attributes.
@@ -307,23 +369,6 @@ impl Msg {
         v[6..8].copy_from_slice(&flags.to_ne_bytes());
         v.extend_from_slice(body);
         Msg(v)
-    }
-
-    fn attr(mut self, ty: u16, data: &[u8]) -> Self {
-        let len = 4 + data.len();
-        self.0.extend_from_slice(&(len as u16).to_ne_bytes());
-        self.0.extend_from_slice(&ty.to_ne_bytes());
-        self.0.extend_from_slice(data);
-        self.0.resize(self.0.len().next_multiple_of(4), 0);
-        self
-    }
-
-    fn ip(self, ty: u16, ip: Ipv4Addr) -> Self {
-        self.attr(ty, &ip.octets())
-    }
-
-    fn u32(self, ty: u16, v: u32) -> Self {
-        self.attr(ty, &v.to_ne_bytes())
     }
 }
 
@@ -466,19 +511,6 @@ impl Netlink {
         }
     }
 
-    fn ack(&mut self, msg: Msg) -> io::Result<()> {
-        self.request(msg).map(drop)
-    }
-
-    fn set_up(&mut self, index: u32) -> io::Result<()> {
-        // ifinfomsg: family, pad, type (u16), index (i32), flags, change
-        let mut body = vec![libc::AF_UNSPEC as u8, 0, 0, 0];
-        body.extend_from_slice(&index.to_ne_bytes());
-        body.extend_from_slice(&(libc::IFF_UP as u32).to_ne_bytes());
-        body.extend_from_slice(&(libc::IFF_UP as u32).to_ne_bytes());
-        self.ack(Msg::new(RTM_NEWLINK, NLM_F_REQUEST | NLM_F_ACK, &body))
-    }
-
     fn addresses(&mut self, index: u32) -> io::Result<Vec<Addr>> {
         let replies = self.request(Msg::new(
             RTM_GETADDR,
@@ -504,41 +536,11 @@ impl Netlink {
             if let Some(local) = local.or(address) {
                 out.push(Addr {
                     local,
-                    address: address.unwrap_or(local),
                     prefix: r[1],
                 });
             }
         }
         Ok(out)
-    }
-
-    fn del_addr(&mut self, index: u32, a: &Addr) -> io::Result<()> {
-        let msg = Msg::new(
-            RTM_DELADDR,
-            NLM_F_REQUEST | NLM_F_ACK,
-            &ifaddrmsg(a.prefix, 0, index),
-        )
-        .ip(IFA_LOCAL, a.local)
-        .ip(IFA_ADDRESS, a.address);
-        self.ack(msg)
-    }
-
-    fn add_addr(&mut self, index: u32, addr: Ipv4Addr, prefix: u8) -> io::Result<()> {
-        let flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE;
-        let mut msg = Msg::new(
-            RTM_NEWADDR,
-            flags,
-            &ifaddrmsg(prefix, RT_SCOPE_UNIVERSE, index),
-        )
-        .ip(IFA_LOCAL, addr)
-        .ip(IFA_ADDRESS, addr);
-        if prefix <= 30 {
-            msg = msg.ip(
-                IFA_BROADCAST,
-                Ipv4Addr::from(u32::from(addr) | !mask(prefix)),
-            );
-        }
-        self.ack(msg)
     }
 
     /// IPv4 default routes (any table) that leave through the card.
@@ -551,18 +553,12 @@ impl Netlink {
             if r.len() < 12 || r[0] != libc::AF_INET as u8 || r[1] != 0 || r[7] != RTN_UNICAST {
                 continue;
             }
-            let mut route = Route {
-                gateway: None,
-                priority: None,
-                table: r[4] as u32,
-            };
+            let mut route = Route { gateway: None };
             let (mut oif, mut has_dst) = (None, false);
             for (ty, data) in attrs(&r[12..]) {
                 match ty {
                     RTA_OIF => oif = u32_of(data),
                     RTA_GATEWAY => route.gateway = ipv4(data),
-                    RTA_PRIORITY => route.priority = u32_of(data),
-                    RTA_TABLE => route.table = u32_of(data).unwrap_or(route.table),
                     RTA_DST => has_dst = true,
                     _ => {}
                 }
@@ -572,37 +568,6 @@ impl Netlink {
             }
         }
         Ok(out)
-    }
-
-    fn del_route(&mut self, index: u32, route: &Route) -> io::Result<()> {
-        let table = if route.table < 256 {
-            route.table as u8
-        } else {
-            0
-        };
-        let mut msg = Msg::new(
-            RTM_DELROUTE,
-            NLM_F_REQUEST | NLM_F_ACK,
-            &rtmsg(table, 0, RT_SCOPE_NOWHERE, 0),
-        )
-        .u32(RTA_TABLE, route.table)
-        .u32(RTA_OIF, index);
-        if let Some(gw) = route.gateway {
-            msg = msg.ip(RTA_GATEWAY, gw);
-        }
-        if let Some(p) = route.priority {
-            msg = msg.u32(RTA_PRIORITY, p);
-        }
-        self.ack(msg)
-    }
-
-    fn add_default_route(&mut self, index: u32, gateway: Ipv4Addr) -> io::Result<()> {
-        let flags = NLM_F_REQUEST | NLM_F_ACK | NLM_F_CREATE | NLM_F_REPLACE;
-        let body = rtmsg(RT_TABLE_MAIN, RTPROT_STATIC, RT_SCOPE_UNIVERSE, RTN_UNICAST);
-        let msg = Msg::new(RTM_NEWROUTE, flags, &body)
-            .ip(RTA_GATEWAY, gateway)
-            .u32(RTA_OIF, index);
-        self.ack(msg)
     }
 }
 
@@ -627,6 +592,60 @@ mod tests {
     }
 
     #[test]
+    fn builds_script_args() {
+        let cfg = parse("10.0.0.5/24", "10.0.0.1").unwrap();
+        let current = [
+            (Ipv4Addr::new(10, 0, 0, 5), 24),
+            (Ipv4Addr::new(192, 168, 1, 2), 24),
+        ];
+        // The new address is kept, not removed and re-added; the others go.
+        assert_eq!(
+            script_args("enp3s0", &cfg, &current),
+            ["enp3s0", "10.0.0.5/24", "10.0.0.1", "192.168.1.2/24"]
+        );
+        let cfg = parse("10.0.0.5/24", "").unwrap();
+        assert_eq!(script_args("eth0", &cfg, &[]), ["eth0", "10.0.0.5/24", ""]);
+    }
+
+    #[test]
+    fn checks_device_names() {
+        assert!(plain_device_name("enp3s0"));
+        assert!(plain_device_name("eth0.100"));
+        assert!(!plain_device_name(""));
+        assert!(!plain_device_name("-x"));
+        assert!(!plain_device_name("a b"));
+        assert!(!plain_device_name("eth0;reboot"));
+    }
+
+    #[test]
+    fn reads_sudo_errors() {
+        let wrong = "Sorry, try again.\nsudo: no password was provided\nsudo: 1 incorrect password attempt\n";
+        assert_eq!(sudo_error(wrong), ApplyError::WrongPassword);
+        assert_eq!(
+            sudo_error("james is not in the sudoers file.\n"),
+            ApplyError::Failed("your account is not allowed to use sudo.".into())
+        );
+        assert_eq!(
+            sudo_error("Error: Nexthop has invalid gateway.\n"),
+            ApplyError::Failed("the gateway is not reachable from that address.".into())
+        );
+        assert_eq!(
+            sudo_error("Error: Cannot find device \"d9\".\n\n"),
+            ApplyError::Failed("Cannot find device \"d9\".".into())
+        );
+    }
+
+    #[test]
+    fn wipes_secrets() {
+        let mut s = String::from("hunter2");
+        wipe(&mut s);
+        assert!(s.is_empty());
+        let mut b = *b"secret";
+        wipe_bytes(&mut b);
+        assert_eq!(b, [0; 6]);
+    }
+
+    #[test]
     fn reads_the_card() {
         // Read-only netlink dumps work without any capability.
         if let Some(dev) = ethernet_device() {
@@ -637,27 +656,51 @@ mod tests {
 
 #[cfg(test)]
 mod namespace_test {
-    /// Run inside a scratch network namespace with a dummy card, e.g.
-    /// `unshare -rn sh -c 'ip link add d0 type dummy; SIMPLEWM_TEST_DEV=d0 <test binary> --ignored'`.
+    use std::process::Command;
+
+    use super::*;
+
+    /// Run `APPLY_SCRIPT` the way `apply` does, minus sudo (the test is
+    /// already root in its namespace).
+    fn run_script(dev: &str, cfg: &Ipv4Config) -> Result<(), ApplyError> {
+        let current = status(dev).unwrap().addrs;
+        let out = Command::new("/bin/sh")
+            .args(["-c", APPLY_SCRIPT, "simplewm-net"])
+            .args(script_args(dev, cfg, &current))
+            .env("LC_ALL", "C")
+            .output()
+            .unwrap();
+        if out.status.success() {
+            Ok(())
+        } else {
+            Err(sudo_error(&String::from_utf8_lossy(&out.stderr)))
+        }
+    }
+
+    /// Run inside a scratch network namespace with a dummy card:
+    /// `unshare -rnm sh -c 'mount -t sysfs none /sys && ip link add d0 type dummy && SIMPLEWM_TEST_DEV=d0 cargo test applies_to_a_card -- --ignored'`.
     #[test]
     #[ignore]
     fn applies_to_a_card() {
         let dev = std::env::var("SIMPLEWM_TEST_DEV").expect("SIMPLEWM_TEST_DEV");
-        let first = super::parse("10.1.2.3/24", "10.1.2.1").unwrap();
-        super::apply(&dev, &first).unwrap();
-        let s = super::status(&dev).unwrap();
+        let first = parse("10.1.2.3/24", "10.1.2.1").unwrap();
+        run_script(&dev, &first).unwrap();
+        let s = status(&dev).unwrap();
         assert!(s.up);
         assert_eq!(s.addrs, [(first.addr, 24)]);
         assert_eq!(s.gateways, [first.gateway.unwrap()]);
-        // Applying again replaces both.
-        let second = super::parse("172.16.0.9/16", "172.16.0.1").unwrap();
-        super::apply(&dev, &second).unwrap();
-        let s = super::status(&dev).unwrap();
+        // Applying the same again is fine.
+        run_script(&dev, &first).unwrap();
+        assert_eq!(status(&dev).unwrap().addrs, [(first.addr, 24)]);
+        // Applying something else replaces both.
+        let second = parse("172.16.0.9/16", "172.16.0.1").unwrap();
+        run_script(&dev, &second).unwrap();
+        let s = status(&dev).unwrap();
         assert_eq!(s.addrs, [(second.addr, 16)]);
         assert_eq!(s.gateways, [second.gateway.unwrap()]);
         // No gateway: the default route goes away.
-        let third = super::parse("172.16.0.9/16", "").unwrap();
-        super::apply(&dev, &third).unwrap();
-        assert!(super::status(&dev).unwrap().gateways.is_empty());
+        let third = parse("172.16.0.9/16", "").unwrap();
+        run_script(&dev, &third).unwrap();
+        assert!(status(&dev).unwrap().gateways.is_empty());
     }
 }

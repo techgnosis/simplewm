@@ -21,6 +21,7 @@ impl super::Panels {
             Field::PickName => &self.picker.name,
             Field::NetAddress => &self.net.address,
             Field::NetGateway => &self.net.gateway,
+            Field::SudoPassword => &self.sudo.password,
         }
     }
 
@@ -29,6 +30,7 @@ impl super::Panels {
             Field::PickName => &mut self.picker.name,
             Field::NetAddress => &mut self.net.address,
             Field::NetGateway => &mut self.net.gateway,
+            Field::SudoPassword => &mut self.sudo.password,
         }
     }
 
@@ -74,6 +76,10 @@ impl super::Panels {
             keysyms::KEY_Return | keysyms::KEY_KP_Enter if f.panel() == PanelId::Network => {
                 self.network_apply()
             }
+            keysyms::KEY_Return | keysyms::KEY_KP_Enter if f == Field::SudoPassword => {
+                self.sudo_submit()
+            }
+            keysyms::KEY_Escape if f == Field::SudoPassword => self.sudo_cancel(),
             keysyms::KEY_Return | keysyms::KEY_KP_Enter | keysyms::KEY_Escape => {
                 self.stop_editing()
             }

@@ -148,7 +148,9 @@ fn applet_glyph(id: PanelId, tile: Rect) -> ([f32; 4], Vec<Rect>) {
             ];
             (TILE_SOUND, rects)
         }
-        PanelId::ControlPanel | PanelId::FilePicker => (TILE_LAUNCHER, Vec::new()),
+        PanelId::ControlPanel | PanelId::FilePicker | PanelId::Password => {
+            (TILE_LAUNCHER, Vec::new())
+        }
     }
 }
 

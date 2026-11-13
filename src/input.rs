@@ -64,10 +64,25 @@ impl State {
                     udev.change_vt(vt);
                 }
             }
-            Some(KeyAction::Panel(sym, ch, ctrl)) => self.panels.key(sym, ch, ctrl),
+            Some(KeyAction::Panel(sym, ch, ctrl)) => {
+                self.panels.key(sym, ch, ctrl);
+                self.after_panel_action();
+            }
             Some(KeyAction::Picker(sym, ch, ctrl)) => self.picker_key(sym, ch, ctrl),
             Some(KeyAction::CancelScreenshot) => self.cancel_screenshot(),
             Some(KeyAction::Swallow) | None => {}
+        }
+    }
+
+    /// After a click or key in a panel: open a window it asked for (the
+    /// Password window), or move focus on if it closed itself.
+    fn after_panel_action(&mut self) {
+        if let Some(id) = self.panels.take_open_request() {
+            let out = self.output_geometry();
+            self.panels.show(id, out);
+            self.focus_panel(id);
+        } else if self.panels.active.is_none() {
+            self.focus_top();
         }
     }
 
@@ -444,6 +459,8 @@ impl State {
                     PanelHit::Close if id == PanelId::FilePicker => {
                         self.finish_pick(crate::portal::PickResult::Cancelled);
                     }
+                    // Closing the Password window cancels what it was asked for.
+                    PanelHit::Close if id == PanelId::Password => self.panels.sudo_cancel(),
                     PanelHit::Close => {
                         self.panels.close(id);
                         self.focus_top();
@@ -486,6 +503,8 @@ impl State {
                     }
                     PanelHit::SoundDown => self.panels.sound_step(-1.0),
                     PanelHit::SoundUp => self.panels.sound_step(1.0),
+                    PanelHit::SudoOk => self.panels.sudo_submit(),
+                    PanelHit::SudoCancel => self.panels.sudo_cancel(),
                     PanelHit::ChooseShotDir => {
                         self.panels.stop_editing();
                         self.choose_screenshot_dir();
@@ -493,6 +512,7 @@ impl State {
                     PanelHit::Pick(h) => self.picker_click(h),
                     PanelHit::Body => self.panels.stop_editing(),
                 }
+                self.after_panel_action();
                 Press::Consume
             }
             Hit::Close(w) => {

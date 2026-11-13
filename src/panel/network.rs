@@ -1,6 +1,8 @@
 //! The Network applet: shows the wired card's state and sets a static IPv4
-//! address and default gateway on it (see `crate::network`). The values are
-//! saved and applied again each time simplewm starts.
+//! address and default gateway on it (see `crate::network`). Apply saves the
+//! values and sets them on the card, which needs root: it opens the Password
+//! window (see `sudo`). simplewm never sets them on its own, so after a reboot
+//! the applet points out that they need applying.
 
 use smithay::{
     backend::renderer::{element::solid::SolidColorBuffer, gles::GlesRenderer},
@@ -9,7 +11,7 @@ use smithay::{
 
 use super::{
     BTN_H, BUTTON, BUTTON_HOT, ENV_ROW_H, EnvRow, FIELD_H, Field, NOTE_H, PAD, PanelHit, PanelId,
-    Rect, RowList, SEPARATOR, bufs, field_char_at, render_field,
+    Rect, RowList, SEPARATOR, bufs, field_char_at, render_field, sudo::SudoJob,
 };
 use crate::{
     network,
@@ -35,6 +37,8 @@ pub struct NetworkApplet {
     pub address: String,
     /// "192.168.1.1", or empty for no default route.
     pub gateway: String,
+    /// What is saved: (address, gateway). The fields may differ while edited.
+    saved: (String, String),
     status: RowList,
     /// Result of the last Apply: (message, is an error).
     note: Option<(String, bool)>,
@@ -103,14 +107,10 @@ fn content_height() -> i32 {
         + PAD
 }
 
-/// Rows describing the card's current state.
-fn status_rows() -> Vec<EnvRow> {
+/// Rows describing the card's current state, and whether it has the `saved`
+/// settings.
+fn status_rows(saved: Option<network::Ipv4Config>) -> Vec<EnvRow> {
     let mut rows = Vec::new();
-    if !network::has_net_admin() {
-        rows.push(EnvRow::Line(
-            "simplewm is missing CAP_NET_ADMIN, so Apply will fail. Run make to set it.".into(),
-        ));
-    }
     if network::network_manager_running() {
         rows.push(EnvRow::Line(
             "NetworkManager is running and may undo these settings.".into(),
@@ -124,6 +124,19 @@ fn status_rows() -> Vec<EnvRow> {
     rows.push(item("Card", dev.clone()));
     match network::status(&dev) {
         Ok(s) => {
+            if let Some(cfg) = saved {
+                let has_addr = s.addrs.contains(&(cfg.addr, cfg.prefix));
+                let has_gw = cfg.gateway.is_none_or(|g| s.gateways.contains(&g));
+                if !(has_addr && has_gw) {
+                    rows.insert(
+                        0,
+                        EnvRow::Line(
+                            "The card doesn't have your saved settings. Press Apply to set them."
+                                .into(),
+                        ),
+                    );
+                }
+            }
             rows.push(item("Hardware address", s.mac));
             let state = if s.up {
                 format!("on ({})", s.operstate)
@@ -167,33 +180,6 @@ fn status_rows() -> Vec<EnvRow> {
     rows
 }
 
-/// Apply the saved settings (at startup). Errors are only logged.
-pub(super) fn apply_saved(address: &str, gateway: &str) {
-    if address.trim().is_empty() {
-        return;
-    }
-    let cfg = match network::parse(address, gateway) {
-        Ok(cfg) => cfg,
-        Err(err) => {
-            tracing::warn!(err, "saved network settings are invalid");
-            return;
-        }
-    };
-    let Some(dev) = network::ethernet_device() else {
-        tracing::warn!("no wired network card to apply network settings to");
-        return;
-    };
-    match network::apply(&dev, &cfg) {
-        Ok(()) => tracing::info!(dev, ?cfg, "applied network settings"),
-        Err(err) => tracing::warn!(
-            dev,
-            ?cfg,
-            err = network::describe(&err),
-            "failed to apply network settings"
-        ),
-    }
-}
-
 // --- Panels glue ---------------------------------------------------------------
 
 impl super::Panels {
@@ -202,7 +188,16 @@ impl super::Panels {
             self.net.address = super::db::load_setting(conn, KEY_ADDRESS).unwrap_or_default();
             self.net.gateway = super::db::load_setting(conn, KEY_GATEWAY).unwrap_or_default();
         }
-        apply_saved(&self.net.address, &self.net.gateway);
+        self.net.saved = (self.net.address.clone(), self.net.gateway.clone());
+    }
+
+    /// The saved settings, if there are any and they are valid.
+    fn saved_network(&self) -> Option<network::Ipv4Config> {
+        let (address, gateway) = &self.net.saved;
+        if address.is_empty() {
+            return None;
+        }
+        network::parse(address, gateway).ok()
     }
 
     pub(super) fn network_size(&self) -> (i32, i32) {
@@ -216,7 +211,8 @@ impl super::Panels {
     /// Re-read the card's state (on open, Refresh and after Apply).
     pub fn refresh_network(&mut self) {
         let vp = self.net_layout().status;
-        self.net.status.set(status_rows(), vp);
+        let saved = self.saved_network();
+        self.net.status.set(status_rows(saved), vp);
     }
 
     pub(super) fn scroll_network(&mut self, amount: f64) {
@@ -252,8 +248,8 @@ impl super::Panels {
         None
     }
 
-    /// The Apply button (or Enter in a field): save the fields and set them on
-    /// the card.
+    /// The Apply button (or Enter in a field): save the fields, then ask for
+    /// the password to set them on the card.
     pub fn network_apply(&mut self) {
         self.stop_editing();
         let (address, gateway) = (
@@ -262,10 +258,9 @@ impl super::Panels {
         );
         if address.is_empty() && gateway.is_empty() {
             self.save_settings(&[(KEY_ADDRESS, ""), (KEY_GATEWAY, "")]);
-            self.net.note = Some((
-                "Cleared: nothing will be set when simplewm starts.".into(),
-                false,
-            ));
+            self.net.saved = Default::default();
+            self.net.note = Some(("Cleared. The card keeps what it has now.".into(), false));
+            self.refresh_network();
             return;
         }
         let cfg = match network::parse(&address, &gateway) {
@@ -278,21 +273,27 @@ impl super::Panels {
         self.net.address = address.clone();
         self.net.gateway = gateway.clone();
         self.save_settings(&[(KEY_ADDRESS, &address), (KEY_GATEWAY, &gateway)]);
-        self.net.note = Some(match network::ethernet_device() {
-            None => (
-                "Saved, but there is no wired network card to set it on.".into(),
-                true,
-            ),
-            Some(dev) => match network::apply(&dev, &cfg) {
-                Ok(()) => (
-                    format!("Set on {dev} and saved; it is set again each time simplewm starts."),
-                    false,
-                ),
-                Err(err) => (
-                    format!("Saved, but not set: {}", network::describe(&err)),
+        self.net.saved = (address, gateway);
+        match network::ethernet_device() {
+            None => {
+                self.net.note = Some((
+                    "Saved, but there is no wired network card to set it on.".into(),
                     true,
-                ),
-            },
+                ))
+            }
+            Some(dev) => {
+                self.net.note = Some(("Saved. Waiting for your password…".into(), false));
+                self.ask_password(SudoJob::Network { dev, cfg });
+            }
+        }
+        self.refresh_network();
+    }
+
+    /// How setting the address on `dev` went (from the Password window).
+    pub(super) fn network_applied(&mut self, dev: &str, result: Result<(), String>) {
+        self.net.note = Some(match result {
+            Ok(()) => (format!("Set on {dev} and saved."), false),
+            Err(err) => (format!("Saved, but not set on the card: {err}"), true),
         });
         self.refresh_network();
     }
@@ -356,7 +357,7 @@ impl super::Panels {
             Some((msg, true)) => (msg.as_str(), 1.0),
             Some((msg, false)) => (msg.as_str(), 0.8),
             None => (
-                "Saved and set again each time simplewm starts · Tab switches fields",
+                "Apply saves these and asks for your password · Tab switches fields",
                 0.45,
             ),
         };

@@ -142,6 +142,22 @@ impl State {
             })
             .expect("failed to init screenshot channel");
 
+        // The Password window's sudo workers report back here.
+        let mut panels = Panels::new();
+        let (sudo_tx, sudo_rx) = channel::channel::<crate::panel::SudoDone>();
+        event_loop
+            .handle()
+            .insert_source(sudo_rx, |event, _, state| {
+                if let channel::Event::Msg(done) = event
+                    && state.panels.sudo_done(done)
+                    && state.panels.active.is_none()
+                {
+                    state.focus_top();
+                }
+            })
+            .expect("failed to init sudo channel");
+        panels.sudo.tx = Some(sudo_tx);
+
         // File chooser requests from the desktop portal (answered by the File Picker).
         let (portal_tx, portal_rx) = channel::channel::<crate::portal::PortalEvent>();
         event_loop
@@ -188,7 +204,7 @@ impl State {
             cursor_status: CursorImageStatus::default_named(),
             output: None,
             ui: Ui::new(),
-            panels: Panels::new(),
+            panels,
             stack: Vec::new(),
             backend: None,
             windows_opened: 0,

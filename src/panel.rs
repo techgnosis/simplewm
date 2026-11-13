@@ -15,6 +15,9 @@
 //!   wired network card (see `network` and `crate::network`).
 //! * The Sound applet window chooses PipeWire's sound card and sets its volume
 //!   (see `sound` and `crate::sound`).
+//! * The Password window is not in the Control Panel either: it asks for the
+//!   user's password when an applet needs root, and runs that through sudo
+//!   (see `sudo`).
 //! * The File Picker window is not in the Control Panel: it opens when an app
 //!   asks for a file through the desktop portal (see `picker`), or from the
 //!   Launcher and Screenshot applets.
@@ -47,6 +50,7 @@ mod picker;
 mod rows;
 mod screenshot;
 mod sound;
+mod sudo;
 mod text_field;
 
 pub use db::db_path;
@@ -55,6 +59,7 @@ pub use network::NetworkApplet;
 pub use picker::{FilePicker, PickHit};
 pub use rows::EnvRow;
 pub use sound::SoundApplet;
+pub use sudo::{SudoDone, SudoPrompt};
 
 use rows::{ENV_H, ENV_ROW_H, ENV_W, PORTAL_H, PORTAL_W, RowList};
 use text_field::{field_char_at, render_field};
@@ -72,6 +77,7 @@ pub enum PanelId {
     Network,
     Sound,
     FilePicker,
+    Password,
 }
 
 impl PanelId {
@@ -86,6 +92,7 @@ impl PanelId {
             PanelId::Network => "Network",
             PanelId::Sound => "Sound",
             PanelId::FilePicker => "File Picker",
+            PanelId::Password => "Password",
         }
     }
 }
@@ -110,6 +117,8 @@ pub enum Field {
     NetAddress,
     /// Default gateway in the Network applet.
     NetGateway,
+    /// The user's password, in the Password window (shown as dots).
+    SudoPassword,
 }
 
 impl Field {
@@ -117,6 +126,7 @@ impl Field {
         match self {
             Field::PickName => PanelId::FilePicker,
             Field::NetAddress | Field::NetGateway => PanelId::Network,
+            Field::SudoPassword => PanelId::Password,
         }
     }
 
@@ -125,7 +135,7 @@ impl Field {
         match self {
             Field::NetAddress => Some(Field::NetGateway),
             Field::NetGateway => Some(Field::NetAddress),
-            Field::PickName => None,
+            Field::PickName | Field::SudoPassword => None,
         }
     }
 }
@@ -179,6 +189,9 @@ pub enum PanelHit {
     SoundBar(u32),
     SoundDown,
     SoundUp,
+    // Password window
+    SudoOk,
+    SudoCancel,
     // File Picker
     Pick(PickHit),
 }
@@ -230,7 +243,11 @@ pub struct Panels {
     network: PanelWindow,
     sound_window: PanelWindow,
     file_picker: PanelWindow,
+    password: PanelWindow,
     pub picker: FilePicker,
+    pub sudo: SudoPrompt,
+    /// A panel that asked to be opened and focused (see `take_open_request`).
+    open_request: Option<PanelId>,
     pub net: NetworkApplet,
     sound: SoundApplet,
     /// Environment rows (refreshed when the window is opened).
@@ -272,7 +289,10 @@ impl Panels {
             network: PanelWindow::default(),
             sound_window: PanelWindow::default(),
             file_picker: PanelWindow::default(),
+            password: PanelWindow::default(),
             picker: FilePicker::default(),
+            sudo: SudoPrompt::default(),
+            open_request: None,
             net: NetworkApplet::default(),
             sound: SoundApplet::default(),
             env: RowList::default(),
@@ -300,6 +320,7 @@ impl Panels {
             PanelId::Network => &self.network,
             PanelId::Sound => &self.sound_window,
             PanelId::FilePicker => &self.file_picker,
+            PanelId::Password => &self.password,
         }
     }
 
@@ -314,6 +335,7 @@ impl Panels {
             PanelId::Network => &mut self.network,
             PanelId::Sound => &mut self.sound_window,
             PanelId::FilePicker => &mut self.file_picker,
+            PanelId::Password => &mut self.password,
         }
     }
 
@@ -355,6 +377,7 @@ impl Panels {
             PanelId::Network => self.network_size(),
             PanelId::Sound => self.sound_size(),
             PanelId::FilePicker => self.picker_size(),
+            PanelId::Password => self.sudo_size(),
         }
     }
 
@@ -376,7 +399,8 @@ impl Panels {
             let (w, h) = self.content_size(id);
             let min_y = out.loc.y + ui::BAR_HEIGHT + ui::TITLE_HEIGHT;
             let loc = match (id, self.control.loc) {
-                (PanelId::ControlPanel | PanelId::FilePicker, _) | (_, None) => Point::from((
+                (PanelId::ControlPanel | PanelId::FilePicker | PanelId::Password, _)
+                | (_, None) => Point::from((
                     out.loc.x + (out.size.w - w) / 2,
                     (out.loc.y + (out.size.h - h) / 3).max(min_y),
                 )),
@@ -385,6 +409,12 @@ impl Panels {
             self.win_mut(id).loc = Some(loc);
         }
         self.win_mut(id).open = true;
+    }
+
+    /// A panel an action asked to open (the Password window), for `State` to
+    /// show and focus.
+    pub fn take_open_request(&mut self) -> Option<PanelId> {
+        self.open_request.take()
     }
 
     pub fn close(&mut self, id: PanelId) {
@@ -421,6 +451,7 @@ impl Panels {
             PanelId::Launcher => self.launcher_hit(p),
             PanelId::Screenshot => self.screenshot_hit(p),
             PanelId::FilePicker => self.picker_hit(text, p),
+            PanelId::Password => self.sudo_hit(text, p),
             PanelId::Portal => self.portal_hit(p),
             PanelId::Network => self.network_hit(text, p),
             PanelId::Sound => self.sound_hit(p),
@@ -453,6 +484,7 @@ impl Panels {
             PanelId::Network => self.render_network(text, renderer, hovered, elems),
             PanelId::Sound => self.render_sound(text, renderer, hovered, elems),
             PanelId::FilePicker => self.render_picker(text, renderer, hovered, elems),
+            PanelId::Password => self.render_sudo(text, renderer, hovered, elems),
         }
 
         // Frame: content background, title bar with close button, borders.

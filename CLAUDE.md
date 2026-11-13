@@ -33,10 +33,14 @@ feature complete, so expect bug fixes and UI polish, not new features.
   `WAYLAND_DISPLAY` and `XDG_CURRENT_DESKTOP=simplewm` to systemd at startup, restarts the
   portal, and removes them on exit. Nested, it leaves the host session alone, so nested
   apps get the host's file dialogs.
-- The Network applet sets a static IPv4 address and gateway itself over rtnetlink (no
-  DHCP, no DNS). That needs `CAP_NET_ADMIN`, which `make` gives the binary with `sudo
-  setcap` (only when the binary changed). Programs simplewm launches don't get it.
-  NetworkManager must be masked or it undoes the settings.
+- simplewm runs with no special privileges. The Network applet sets a static IPv4 address
+  and gateway (no DHCP, no DNS) only when the user presses Apply: the Password window asks
+  for their password and runs one fixed `ip` script through `sudo -k -S` on a worker thread
+  (`network::apply`, `panel/sudo.rs`). The values reach the script only as separate
+  arguments after `network::parse` has checked them, never as shell text. The password is
+  passed to sudo on stdin and wiped afterwards. Nothing is set at startup; the applet says
+  when the card lacks the saved settings. polkit is masked on the user's machine, so
+  don't use it. NetworkManager must stay masked or it undoes the settings.
 - The Sound applet drives PipeWire through `pw-dump` and `wpctl`, and WirePlumber remembers
   the choices. With one output it just names it; with several it lists them to choose from.
 
@@ -52,7 +56,9 @@ feature complete, so expect bug fixes and UI polish, not new features.
   exercise D-Bus on a scratch bus: `dbus-run-session -- cargo test bus -- --ignored` drives
   the file dialog backend the way an app would and checks the Desktop Portal bus checks.
   Run it after touching `portal.rs`, `portal_check.rs` or zbus. `network::namespace_test`
-  applies addresses to a dummy card.
+  runs the root `ip` script on a dummy card in a throwaway namespace (no sudo, nothing real
+  touched). Never test the sudo path with a wrong password: failed attempts count toward
+  the account's faillock lockout.
 - `make` builds the release binary with `--locked`; `make install` puts it in `/usr/bin`
   and installs the portal files.
 
@@ -95,7 +101,7 @@ feature complete, so expect bug fixes and UI polish, not new features.
   `text_centered`, `text_in_alpha`, `solid`).
 - `text.rs`: font rasterizing with fontdue (`measure`, `fit`).
 - Behind the applets, with no UI code:
-  - `network.rs`: rtnetlink.
+  - `network.rs`: reads the card (sysfs, rtnetlink dumps) and sets it (sudo + `ip`).
   - `sound.rs`: PipeWire.
   - `screenshot.rs`: offscreen re-render, then the PNG is written on a worker thread.
   - `portal.rs`: the zbus FileChooser backend, on its own thread inside `zbus::block_on`.
@@ -116,6 +122,9 @@ blocks:
 - `launcher.rs`, `screenshot.rs`, `network.rs` and `sound.rs`: one applet each.
 - `rows.rs`: Environment, Desktop Portal and the `RowList` they share with Network.
 - `picker.rs`: the File Picker.
+- `sudo.rs`: the Password window. An action asks for it with `ask_password(SudoJob)`, and
+  `State::after_panel_action` opens and focuses it. A worker runs the job, and the result
+  comes back as `SudoDone` to `job_finished`.
 
 Two shared files support them: `text_field.rs` (editable fields) and `db.rs` (settings;
 add a step to `migrate` to change the schema). Applet files usually go in this order:
