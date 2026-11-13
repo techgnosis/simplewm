@@ -2,3 +2,5 @@ target/
 /simplewm
 *.log
 /distro/root/
+/distro/out/
+/distro/cache/

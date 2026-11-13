@@ -209,11 +209,9 @@ The steps, all inside an Alpine container (rootless podman, on the Arch host):
    (`/etc/passwd`, `/etc/group`, including the `seat` and `audio` groups) and a few other
    config files.
 4. Make the disk image from the folder, still in the container (`mkfs.ext4 -d <folder>`
-   needs no root). Rootless podman maps the container's root to the host user's sub-IDs,
-   so files owned by root inside the folder look odd from the host; building the image in
-   there keeps ownership right.
-5. Boot it: a kernel (Alpine's `linux-lts` package to start with, our own later, see Open
-   questions) that runs our init as PID 1.
+   needs no root). Building it in there keeps ownership right (see "In the repo").
+5. Boot it: a kernel and a small initramfs that mounts the disk and runs our init as
+   PID 1.
 
 Things to keep in mind:
 
@@ -224,7 +222,8 @@ Things to keep in mind:
 - **Busybox comes along anyway** and provides `/bin/sh`, `mktemp`, `chmod`, `mv` and `rm`,
   which the Network applet's Apply script needs; `ip` comes from iproute2.
 - **Package install scripts** run when apk installs into the folder. They expect Alpine's
-  usual layout; usually harmless, but the most likely source of surprises.
+  usual layout; usually harmless, but the most likely source of surprises. (busybox's
+  warns it can't create device nodes; harmless, the kernel's devtmpfs provides them.)
 - **Licensing is fine**: it's all open source and meant to be reused.
 
 **Testing: QEMU first.** QEMU boots the disk image with a virtual graphics card (virtio-gpu)
@@ -232,20 +231,38 @@ that simplewm drives through DRM like a real one, so the whole boot can be tried
 over without touching the real disk. Only once it boots cleanly does it go on a USB stick or
 spare partition.
 
-**First step:** a script that builds the root folder and boots it in QEMU as far as a text
-console, before simplewm is involved. Then add seatd, mdevd and simplewm.
+## In the repo: `distro/`
 
-The host needs `podman` and `qemu` installed for this.
+Done so far: the system builds and boots in QEMU to a root shell on a text console. Next:
+seatd, mdevd, simplewm and the real init.
 
-**In the repo:** the `distro/` folder. `distro/container.sh [command…]` runs a command (a
-shell by default) in an Alpine 3.24 container with the project root mounted at `/work`.
-The root filesystem goes in `distro/root/` (git-ignored), filled with
-`apk --root /work/distro/root --initdb --keys-dir /etc/apk/keys --repositories-file
-/etc/apk/repositories add …`. Root in the container is the host user, so files owned by
-root come out as the host user's; anything owned by another user needs
-`podman unshare rm -rf` to delete. The script passes `--cgroup-manager=cgroupfs
---events-backend=file`, because when simplewm runs the session bus on a TTY, systemd isn't
-on it and podman's default (asking systemd over D-Bus) fails.
+- `container.sh [command…]` runs a command (a shell by default) in an Alpine 3.24
+  container with the project root mounted at `/work`. Root in the container is the host
+  user, so files owned by root come out as the host user's; anything owned by another
+  user needs `podman unshare rm -rf` to delete. It passes `--cgroup-manager=cgroupfs
+  --events-backend=file`, because when simplewm runs the session bus on a TTY, systemd
+  isn't on it and podman's default (asking systemd over D-Bus) fails.
+- `build.sh` (run on the host; it re-runs itself in the container) builds everything from
+  scratch: `root/` (the root filesystem, from `PACKAGES` via `apk --root … --initdb`),
+  and in `out/` the kernel, the initramfs and `root.img` (ext4). Downloaded packages are
+  kept in `cache/`. All three folders are git-ignored.
+- `run.sh` boots `out/` in QEMU with KVM: the serial console is the terminal (Ctrl+A
+  then X quits). If QEMU's GTK window and virtio-vga-gl are installed (on Arch:
+  `qemu-ui-gtk qemu-ui-opengl qemu-hw-display-virtio-vga-gl`), the screen also opens in a
+  window with OpenGL passed through; the user's host has only `qemu-base` so far, which
+  has no window.
+- `initramfs-init` is the initramfs's `/init` (static busybox): it loads the drivers
+  listed in `INITRAMFS_MODULES` (virtio disk, ext4, in dependency order worked out by
+  kmod at build time), mounts `root=` and switches to its `/sbin/init`.
+- `init` is the root filesystem's `/sbin/init` for now: it mounts `/proc`, `/sys`,
+  `/dev/pts`, `/dev/shm` and `/run`, and keeps a root shell on tty1 and ttyS0. busybox's
+  `poweroff`, `reboot` and `halt` work (they signal PID 1). The real init replaces it.
+
+**The kernel** is Alpine's `linux-virt` for now (smaller, meant for VMs; `KERNEL` in
+`build.sh`), switched to `linux-lts` or our own for the real machine. It's unpacked from
+its package rather than installed, because Alpine's kernel packages insist on an
+initramfs generator (mkinitfs), whose trigger fails here and which we don't need. Disk and
+filesystem drivers are modules in both flavors, hence our own initramfs.
 
 ## Open questions
 

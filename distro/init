@@ -1,0 +1,43 @@
+#!/bin/sh
+# /sbin/init, PID 1. For now: mount the basics and give a root shell on the screen's
+# console (tty1) and the serial console (ttyS0). The real init (seatd, mdevd, simplewm
+# as the user; see DISTRO.md) replaces this.
+export PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root
+
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mountpoint -q /dev || mount -t devtmpfs dev /dev
+mkdir -p /dev/pts /dev/shm
+mount -t devpts devpts /dev/pts
+mount -t tmpfs -o mode=1777,nosuid,nodev shm /dev/shm
+mount -t tmpfs -o mode=755,nosuid,nodev run /run
+hostname -F /etc/hostname
+
+# busybox's poweroff, reboot and halt signal PID 1 with USR2, TERM and USR1.
+shutdown() {
+    kill -TERM -1 2>/dev/null
+    sleep 1
+    kill -KILL -1 2>/dev/null
+    sync
+    mount -o remount,ro /
+    "$1" -f
+}
+trap 'shutdown poweroff' USR2
+trap 'shutdown reboot' TERM
+trap 'shutdown halt' USR1
+
+for tty in tty1 ttyS0; do
+    [ -c /dev/$tty ] || continue
+    (
+        while :; do
+            setsid -c sh -l <>/dev/$tty >&0 2>&0
+            sleep 1
+        done
+    ) &
+done
+
+# PID 1 must never exit. `wait` also reaps orphans that end up as our children.
+while :; do
+    wait
+    sleep 1
+done
