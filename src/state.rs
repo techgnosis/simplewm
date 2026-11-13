@@ -103,7 +103,12 @@ pub struct State {
 }
 
 impl State {
-    pub fn new(event_loop: &mut EventLoop<'static, State>, display: Display<State>) -> Self {
+    /// `tty`: simplewm is the session, so it also becomes the desktop portal.
+    pub fn new(
+        event_loop: &mut EventLoop<'static, State>,
+        display: Display<State>,
+        tty: bool,
+    ) -> Self {
         let start_time = Instant::now();
         let dh = display.handle();
 
@@ -158,7 +163,8 @@ impl State {
             .expect("failed to init sudo channel");
         panels.sudo.tx = Some(sudo_tx);
 
-        // File chooser requests from the desktop portal (answered by the File Picker).
+        // File chooser requests to simplewm's desktop portal (answered by the File Picker).
+        // Nested, the host session's portal keeps the bus name.
         let (portal_tx, portal_rx) = channel::channel::<crate::portal::PortalEvent>();
         event_loop
             .handle()
@@ -168,7 +174,9 @@ impl State {
                 }
             })
             .expect("failed to init portal channel");
-        crate::portal::start(portal_tx);
+        if tty {
+            crate::portal::start(portal_tx);
+        }
 
         let (portal_check_tx, portal_check_rx) = channel::channel::<Vec<EnvRow>>();
         event_loop
@@ -431,11 +439,7 @@ impl State {
     pub fn refresh_portal_check(&mut self) {
         self.panels
             .set_portal_rows(crate::portal_check::pending_rows());
-        let ctx = crate::portal_check::Context {
-            wayland_display: self.socket_name.to_string_lossy().into_owned(),
-            started: std::time::SystemTime::now() - self.start_time.elapsed(),
-        };
-        crate::portal_check::spawn(ctx, self.portal_check_tx.clone());
+        crate::portal_check::spawn(self.portal_check_tx.clone());
     }
 
     /// Everything shown in the Environment applet: how simplewm was started.

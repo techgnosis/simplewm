@@ -9,13 +9,12 @@ simplewm:
 run: simplewm
 	./simplewm
 
-# Install simplewm to /usr/bin and register it as the only backend of
-# xdg-desktop-portal. The .portal file must live in /usr/share (the portal does
-# not look anywhere else). Needs sudo for both.
+# Install simplewm to /usr/bin (needs sudo). simplewm is the desktop portal itself
+# now, so this also removes the files that once made it an xdg-desktop-portal backend.
 install: simplewm
 	sudo install -Dm755 ./simplewm /usr/bin/simplewm
-	sudo install -Dm644 simplewm.portal /usr/share/xdg-desktop-portal/portals/simplewm.portal
-	install -Dm644 simplewm-portals.conf $(HOME)/.config/xdg-desktop-portal/simplewm-portals.conf
+	sudo rm -f /usr/share/xdg-desktop-portal/portals/simplewm.portal
+	rm -f $(HOME)/.config/xdg-desktop-portal/simplewm-portals.conf
 
 clean:
 	cargo clean

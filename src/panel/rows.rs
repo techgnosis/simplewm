@@ -1,6 +1,5 @@
 //! Scrollable read-only row lists, and the two applets that are just one:
-//! Environment (how simplewm was started, see `crate::session_env`) and
-//! Desktop Portal (file dialog checks, see `crate::portal_check`, plus a
+//! Environment (how simplewm was started) and Desktop Portal (file dialog checks, see `crate::portal_check`, plus a
 //! Refresh button). The Network applet uses a `RowList` too.
 
 use smithay::{

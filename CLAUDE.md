@@ -30,11 +30,18 @@ feature complete, so expect bug fixes and UI polish, not new features.
 - Windows always float. Title bars are always drawn by simplewm (server-side decorations
   are forced). Size moves and resizes a window once (halves, quarters, full screen below
   the bar) and doesn't snap it there.
-- simplewm is the only `xdg-desktop-portal` backend (`make install` sets that up) and only
-  implements FileChooser, answered with its own File Picker. On a TTY it exports
-  `WAYLAND_DISPLAY` and `XDG_CURRENT_DESKTOP=simplewm` to systemd at startup, restarts the
-  portal, and removes them on exit. Nested, it leaves the host session alone, so nested
-  apps get the host's file dialogs.
+- On a TTY simplewm is the desktop portal itself: it owns `org.freedesktop.portal.Desktop`
+  on the session bus (no `xdg-desktop-portal` process) and only implements FileChooser
+  (OpenFile and SaveFile, version 4), answered with its own File Picker. Other portal
+  interfaces are simply missing. Results are plain file paths, so Flatpak apps can't open
+  them (that would need xdg-document-portal); the user doesn't care about Flatpak. If
+  another process has the name, simplewm queues for it, and stops a leftover
+  `xdg-desktop-portal` with `systemctl --user stop`. The user means to mask
+  xdg-desktop-portal, xdg-document-portal and xdg-permission-store. simplewm exports
+  nothing to systemd or D-Bus activation. Nested, it doesn't take the name, so nested apps
+  get the host's file dialogs.
+- Long-term goal: boot simplewm in a minimal custom distro, doing as much as it can in one
+  process. The PipeWire tools and the `ip` script are staying.
 - simplewm runs with no special privileges. The Network applet sets a static IPv4 address,
   gateway and DNS server (no DHCP) only when the user presses Apply: the Password window
   asks for their password and runs one fixed `ip` script through `sudo -k -S` on a worker
@@ -60,13 +67,13 @@ feature complete, so expect bug fixes and UI polish, not new features.
   something on a machine that has the hardware or service.
 - The `#[ignore]`d tests need a setup; each one's doc comment says how to run it. Two
   exercise D-Bus on a scratch bus: `dbus-run-session -- cargo test bus -- --ignored` drives
-  the file dialog backend the way an app would and checks the Desktop Portal bus checks.
-  Run it after touching `portal.rs`, `portal_check.rs` or zbus. `network::namespace_test`
+  the portal the way apps do (including the hand-over of the bus name) and checks the
+  Desktop Portal bus checks. Run it after touching `portal.rs`, `portal_check.rs` or zbus. `network::namespace_test`
   runs the root `ip` script on a dummy card in a throwaway namespace, writing a scratch
   resolv.conf instead of the real one (no sudo, nothing real touched). Never test the sudo
   path with a wrong password: failed attempts count toward the account's faillock lockout.
 - `make` builds the release binary with `--locked`; `make install` puts it in `/usr/bin`
-  and installs the portal files.
+  and removes the files that made it an `xdg-desktop-portal` backend before.
 
 ## Dependencies
 
@@ -111,9 +118,10 @@ feature complete, so expect bug fixes and UI polish, not new features.
     both (sudo + `ip`, then the resolv.conf rewrite).
   - `sound.rs`: PipeWire.
   - `screenshot.rs`: offscreen re-render, then the PNG is written on a worker thread.
-  - `portal.rs`: the zbus FileChooser backend, on its own thread inside `zbus::block_on`.
+  - `portal.rs`: the desktop portal (FileChooser and its Request objects), on its own
+    thread inside `zbus::block_on`. Calls return a handle at once; `serve` sends each
+    answer later as the Response signal, and closes dialogs of apps that leave the bus.
   - `portal_check.rs`: the Desktop Portal applet's checks, on a worker thread.
-  - `session_env.rs`: exporting simplewm's display to systemd.
 
   Worker threads report back over calloop channels.
 
