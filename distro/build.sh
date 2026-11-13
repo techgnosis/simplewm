@@ -1,13 +1,15 @@
 #!/bin/sh
 # Build the distro from Alpine packages:
 #
+#   target/alpine/release/simplewm  simplewm for musl (build-simplewm.sh)
 #   distro/root/                  the root filesystem (apk installs into it)
 #   distro/out/vmlinuz            the kernel
 #   distro/out/initramfs.cpio.gz  loads the disk and filesystem drivers, mounts the root
 #   distro/out/root.img           distro/root/ as an ext4 disk image
 #
 # Run it on the host; it re-runs itself inside the Alpine container (container.sh).
-# Each build starts from an empty root. Downloaded packages are kept in distro/cache/.
+# Each build starts from an empty root, so the user's home (simplewm's settings) starts
+# empty too. Downloaded packages are kept in distro/cache/.
 set -eu
 
 if [ ! -e /etc/alpine-release ]; then
@@ -24,7 +26,42 @@ PACKAGES="
     alpine-baselayout
     busybox
     musl-utils
+    kmod
+
+    mdevd
+    mdev-conf
+    libudev-zero
+    seatd
+
+    libgcc
+    libseat
+    libinput-libs
+    libxkbcommon
+    xkeyboard-config
+    mesa-gbm
+    mesa-egl
+    mesa-gles
+    mesa-dri-gallium
+
+    dbus
+    pipewire
+    pipewire-pulse
+    pipewire-tools
+    wireplumber
+
+    iproute2
+    sudo
+    shared-mime-info
+
+    alacritty
+    font-dejavu
 "
+
+# The user simplewm runs as, and their password (for sudo, which the Network applet
+# uses). Development values; the password is the same in every build.
+USER_NAME=user
+USER_PASSWORD=simplewm
+USER_GROUPS="seat audio video input wheel"
 
 # Drivers the initramfs loads to reach the root filesystem (plus what they need).
 INITRAMFS_MODULES="virtio_pci virtio_blk ext4"
@@ -32,6 +69,8 @@ INITRAMFS_MODULES="virtio_pci virtio_blk ext4"
 ROOT=/work/distro/root
 OUT=/work/distro/out
 CACHE=/work/distro/cache
+
+sh build-simplewm.sh
 
 echo "== tools"
 apk add -q busybox-static e2fsprogs kmod
@@ -45,6 +84,10 @@ apk --root "$ROOT" --initdb --quiet \
     --cache-dir "$CACHE" \
     add $PACKAGES
 cp /etc/apk/repositories "$ROOT/etc/apk/repositories"
+if apk --root "$ROOT" info -e eudev-libs >/dev/null; then
+    echo "eudev-libs got in; libudev-zero must provide libudev.so.1" >&2
+    exit 1
+fi
 
 # The kernel is unpacked rather than installed: Alpine's kernel packages insist on an
 # initramfs generator (mkinitfs), and we make our own initramfs below.
@@ -52,10 +95,22 @@ apk fetch --quiet --output "$CACHE" "linux-$KERNEL"
 tar -xzf "$(ls -t "$CACHE"/linux-"$KERNEL"-*.apk | head -n 1)" -C "$ROOT" \
     --exclude '.*' boot lib 2>/dev/null
 
-# Our pieces.
+echo "== our pieces"
+install -m 755 /work/target/alpine/release/simplewm "$ROOT/usr/bin/simplewm"
 rm -f "$ROOT/sbin/init"
 install -m 755 init "$ROOT/sbin/init"
+sed -i "s/^USER_NAME=.*/USER_NAME=$USER_NAME/" "$ROOT/sbin/init"
 echo simplewm > "$ROOT/etc/hostname"
+# dbus-daemon wants a machine ID.
+chroot "$ROOT" dbus-uuidgen --ensure=/etc/machine-id
+
+chroot "$ROOT" adduser -D -u 1000 -s /bin/sh -g "$USER_NAME" "$USER_NAME"
+for g in $USER_GROUPS; do
+    chroot "$ROOT" addgroup "$USER_NAME" "$g"
+done
+echo "$USER_NAME:$USER_PASSWORD" | chroot "$ROOT" chpasswd >/dev/null
+echo "%wheel ALL=(ALL:ALL) ALL" > "$ROOT/etc/sudoers.d/wheel"
+chmod 440 "$ROOT/etc/sudoers.d/wheel"
 
 echo "== kernel"
 kver=$(ls "$ROOT/lib/modules")

@@ -7,8 +7,9 @@
 //! restarts them when they exit, and there are no unit files.
 //!
 //! If a service is already running (started by systemd, or a host desktop when nested),
-//! simplewm leaves it alone and shows who runs it. It looks for the service's socket first
-//! (and asks the kernel who's listening), then for a process of that name owned by us.
+//! simplewm leaves it alone and shows who runs it: whoever answers on the service's socket
+//! (the kernel says who's listening), or for WirePlumber, which has no socket, a process
+//! of that name owned by us.
 //!
 //! Each started program gets three threads: one reads its output (stdout and stderr share
 //! one pipe), one waits for it to exit, and one waits for its socket to answer. They report
@@ -221,15 +222,20 @@ impl Services {
 
     /// Start the pending services whose dependency has settled (up, or given up on).
     fn advance(&mut self) {
-        loop {
-            let ready = self.pending.iter().position(|s| {
-                s.after()
-                    .is_none_or(|dep| !matches!(self.status(dep), Status::Starting))
-            });
-            let Some(i) = ready else { break };
+        while let Some(i) = self.next_ready() {
             let s = self.pending.remove(i);
             self.start(s);
         }
+    }
+
+    /// The first pending service whose dependency has settled. A dependency that is
+    /// still pending itself hasn't: it hasn't even been tried yet.
+    fn next_ready(&self) -> Option<usize> {
+        self.pending.iter().position(|s| {
+            s.after().is_none_or(|dep| {
+                !self.pending.contains(&dep) && !matches!(self.status(dep), Status::Starting)
+            })
+        })
     }
 
     /// Re-check who runs the services simplewm isn't running (when an applet opens).
@@ -585,18 +591,19 @@ fn bus_socket(address: &str) -> Option<PathBuf> {
         .map(PathBuf::from)
 }
 
-/// Who already runs service `s`, if anyone: whoever listens on its socket, else a
-/// process of that name owned by us.
+/// Who already runs service `s`, if anyone: whoever listens on its socket, or for a
+/// service with no socket, a process of that name owned by us.
 fn other_instance(s: Service, runtime: &Path) -> Option<String> {
-    if let Some(socket) = s.socket(runtime)
-        && let Ok(stream) = UnixStream::connect(&socket)
-    {
-        return Some(match peer_pid(&stream) {
-            Some(pid) => describe_pid(pid),
-            None => "another program".into(),
-        });
-    }
-    find_process(s.program()).map(describe_pid)
+    let Some(socket) = s.socket(runtime) else {
+        return find_process(s.program()).map(describe_pid);
+    };
+    // A service with a socket is running if and only if something answers there: a
+    // dbus-daemon serving some other bus (an accessibility bus, say) isn't our bus.
+    let stream = UnixStream::connect(&socket).ok()?;
+    Some(match peer_pid(&stream) {
+        Some(pid) => describe_pid(pid),
+        None => "another program".into(),
+    })
 }
 
 /// PID of the process on the other end of a Unix socket.
@@ -660,6 +667,29 @@ pub fn describe_pid(pid: u32) -> String {
 mod tests {
     use super::*;
     use std::sync::mpsc;
+
+    #[test]
+    fn starts_in_dependency_order() {
+        let mut services = Services::new(Arc::new(|_| {}), String::new());
+        services.pending = Service::ALL.to_vec();
+        let next = |services: &Services| services.next_ready().map(|i| services.pending[i]);
+
+        // Only the bus can go first; PipeWire's users wait while PipeWire is pending.
+        assert_eq!(next(&services), Some(Service::Bus));
+        services.pending.retain(|s| *s != Service::Bus);
+        services.procs[Service::Bus.index()].status = Status::Starting;
+        assert_eq!(next(&services), None);
+
+        services.procs[Service::Bus.index()].status = Status::Running;
+        assert_eq!(next(&services), Some(Service::PipeWire));
+        services.pending.retain(|s| *s != Service::PipeWire);
+        services.procs[Service::PipeWire.index()].status = Status::Starting;
+        assert_eq!(next(&services), None);
+
+        // A dependency that failed has settled too: the rest still get their try.
+        services.procs[Service::PipeWire.index()].status = Status::Failed("x".into());
+        assert!(next(&services).is_some());
+    }
 
     #[test]
     fn reads_bus_socket() {

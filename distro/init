@@ -1,8 +1,16 @@
 #!/bin/sh
-# /sbin/init, PID 1. For now: mount the basics and give a root shell on the screen's
-# console (tty1) and the serial console (ttyS0). The real init (seatd, mdevd, simplewm
-# as the user; see DISTRO.md) replaces this.
+# /sbin/init, PID 1: mount the basics, start mdevd (devices) and seatd (screen and input
+# access) as root, then run simplewm as the user, and start it again if it exits.
+#
+# For development, root shells with no password run on the serial console (ttyS0) and on
+# tty2 (Ctrl+Alt+F2). They go before this runs on a real machine.
 export PATH=/usr/sbin:/usr/bin:/sbin:/bin HOME=/root
+
+USER_NAME=user
+
+log() {
+    echo "init: $*" > /dev/console
+}
 
 mount -t proc proc /proc
 mount -t sysfs sys /sys
@@ -11,12 +19,16 @@ mkdir -p /dev/pts /dev/shm
 mount -t devpts devpts /dev/pts
 mount -t tmpfs -o mode=1777,nosuid,nodev shm /dev/shm
 mount -t tmpfs -o mode=755,nosuid,nodev run /run
+mount -t tmpfs -o mode=1777,nosuid,nodev tmp /tmp
 hostname -F /etc/hostname
+ip link set lo up
+mkdir -p /var/log
 
 # busybox's poweroff, reboot and halt signal PID 1 with USR2, TERM and USR1.
 shutdown() {
+    log "shutting down"
     kill -TERM -1 2>/dev/null
-    sleep 1
+    sleep 2
     kill -KILL -1 2>/dev/null
     sync
     mount -o remount,ro /
@@ -26,7 +38,27 @@ trap 'shutdown poweroff' USR2
 trap 'shutdown reboot' TERM
 trap 'shutdown halt' USR1
 
-for tty in tty1 ttyS0; do
+# --- devices: mdevd ------------------------------------------------------------------
+# mdevd follows /etc/mdev.conf (Alpine's mdev-conf): it loads drivers for new devices and
+# gives /dev files their groups. -O 4 passes each event on to libudev-zero, so simplewm,
+# libinput and PipeWire hear about devices that come and go. mdevd says it's ready on fd 3.
+mkfifo /run/mdevd.ready
+mdevd -O 4 -D 3 3>/run/mdevd.ready >>/var/log/mdevd.log 2>&1 &
+read -r _ < /run/mdevd.ready
+rm /run/mdevd.ready
+# Replay the devices that were there before mdevd started, so their drivers load.
+mdevd-coldplug
+
+# --- seat: seatd ---------------------------------------------------------------------
+# seatd opens the GPU and input devices for members of the seat group, and switches
+# virtual terminals. It says it's ready on fd 3.
+mkfifo /run/seatd.ready
+seatd -g seat -n 3 3>/run/seatd.ready >>/var/log/seatd.log 2>&1 &
+read -r _ < /run/seatd.ready
+rm /run/seatd.ready
+
+# --- development shells --------------------------------------------------------------
+for tty in ttyS0 tty2; do
     [ -c /dev/$tty ] || continue
     (
         while :; do
@@ -35,6 +67,32 @@ for tty in tty1 ttyS0; do
         done
     ) &
 done
+
+# --- simplewm --------------------------------------------------------------------------
+uid=$(id -u "$USER_NAME")
+runtime=/run/user/$uid
+mkdir -p "$runtime"
+chown "$USER_NAME:$USER_NAME" "$runtime"
+chmod 700 "$runtime"
+
+# The GPU's driver loads during coldplug; give it a moment to show up.
+i=0
+while [ ! -e /dev/dri/card0 ] && [ $i -lt 50 ]; do
+    sleep 0.1
+    i=$((i + 1))
+done
+[ -e /dev/dri/card0 ] || log "no GPU (/dev/dri/card0) yet; starting simplewm anyway"
+
+(
+    while :; do
+        log "starting simplewm as $USER_NAME (log: ~$USER_NAME/simplewm.log)"
+        # su -l: the user's own ID and groups (seat, audio, video, input, wheel), HOME and
+        # the login PATH.
+        su -l "$USER_NAME" -c "export XDG_RUNTIME_DIR=$runtime; exec simplewm >>simplewm.log 2>&1"
+        log "simplewm exited ($?); starting it again in 2 s"
+        sleep 2
+    done
+) &
 
 # PID 1 must never exit. `wait` also reaps orphans that end up as our children.
 while :; do

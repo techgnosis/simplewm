@@ -233,8 +233,10 @@ spare partition.
 
 ## In the repo: `distro/`
 
-Done so far: the system builds and boots in QEMU to a root shell on a text console. Next:
-seatd, mdevd, simplewm and the real init.
+Done so far: the system builds and boots in QEMU straight into simplewm, running as the
+user under seatd, with mdevd handling devices, simplewm's own session bus, PipeWire and
+WirePlumber, and alacritty opening from the launcher. Tested headless (screenshots through
+QEMU's monitor); the GTK window with OpenGL passed through is for the user to try.
 
 - `container.sh [command…]` runs a command (a shell by default) in an Alpine 3.24
   container with the project root mounted at `/work`. Root in the container is the host
@@ -242,21 +244,55 @@ seatd, mdevd, simplewm and the real init.
   user needs `podman unshare rm -rf` to delete. It passes `--cgroup-manager=cgroupfs
   --events-backend=file`, because when simplewm runs the session bus on a TTY, systemd
   isn't on it and podman's default (asking systemd over D-Bus) fails.
-- `build.sh` (run on the host; it re-runs itself in the container) builds everything from
-  scratch: `root/` (the root filesystem, from `PACKAGES` via `apk --root … --initdb`),
-  and in `out/` the kernel, the initramfs and `root.img` (ext4). Downloaded packages are
-  kept in `cache/`. All three folders are git-ignored.
+- `build-simplewm.sh` builds simplewm for musl in the container into
+  `target/alpine/release/`, with Rust from rustup (Alpine's is older than simplewm's
+  `rust-version`) and `-C target-feature=-crt-static` so it links Alpine's C libraries
+  dynamically. Rust and Cargo's downloads are kept in `cache/`. It builds against eudev's
+  libudev headers, because Alpine's `libinput-dev` insists on `eudev-dev`; libudev-zero has
+  the same `libudev.so.1` interface and is what the distro has at runtime.
+- `build.sh` (run on the host; it re-runs itself in the container) runs
+  `build-simplewm.sh`, then builds everything else from scratch: `root/` (from `PACKAGES`
+  via `apk --root … --initdb`; it fails if eudev-libs got in), and in `out/` the kernel,
+  the initramfs and `root.img` (ext4). It adds simplewm, the init, a machine ID for
+  dbus-daemon, and the user (`USER_NAME`, uid 1000, in seat, audio, video, input and
+  wheel, with the development password `USER_PASSWORD` for sudo; wheel may use sudo).
+  Each build starts from an empty root, so simplewm's settings in the user's home start
+  over too. Downloaded packages are kept in `cache/`. `root/`, `out/` and `cache/` are
+  git-ignored. busybox's install script warns it can't create device nodes; harmless.
 - `run.sh` boots `out/` in QEMU with KVM: the serial console is the terminal (Ctrl+A
-  then X quits). If QEMU's GTK window and virtio-vga-gl are installed (on Arch:
-  `qemu-ui-gtk qemu-ui-opengl qemu-hw-display-virtio-vga-gl`), the screen also opens in a
-  window with OpenGL passed through; the user's host has only `qemu-base` so far, which
-  has no window.
+  then X quits; Ctrl+A then C switches to QEMU's monitor, where `screendump file.ppm` takes
+  a screenshot). The screen opens in a GTK window with virtio-vga-gl (OpenGL passed
+  through to the host GPU, virgl in the guest). On Arch that needs `qemu-ui-gtk
+  qemu-ui-opengl qemu-hw-display-virtio-vga-gl` plus the modules it loads but doesn't
+  depend on: `qemu-hw-display-virtio-gpu qemu-hw-display-virtio-gpu-gl
+  qemu-hw-display-virtio-vga`. `run.sh headless` has no window and uses QEMU's standard VGA
+  card (the kernel's bochs driver, Mesa's software renderer), for testing from a script.
+  A virtio network card on QEMU's user network (address 10.0.2.15/24, gateway 10.0.2.2,
+  DNS 10.0.2.3), and a sound card only if QEMU has its PipeWire driver
+  (`qemu-audio-pipewire`).
 - `initramfs-init` is the initramfs's `/init` (static busybox): it loads the drivers
   listed in `INITRAMFS_MODULES` (virtio disk, ext4, in dependency order worked out by
   kmod at build time), mounts `root=` and switches to its `/sbin/init`.
-- `init` is the root filesystem's `/sbin/init` for now: it mounts `/proc`, `/sys`,
-  `/dev/pts`, `/dev/shm` and `/run`, and keeps a root shell on tty1 and ttyS0. busybox's
-  `poweroff`, `reboot` and `halt` work (they signal PID 1). The real init replaces it.
+- `init` is the root filesystem's `/sbin/init` (a shell script for now): it mounts
+  `/proc`, `/sys`, `/dev/pts`, `/dev/shm`, `/run` and `/tmp`, starts mdevd (`-O 4`
+  passes events on to libudev-zero) and `mdevd-coldplug` so drivers load for the devices
+  already there, starts seatd (`-g seat`), makes `/run/user/1000`, waits briefly for
+  `/dev/dri/card0`, and runs simplewm through `su -l` with `XDG_RUNTIME_DIR` set,
+  starting it again 2 s after it exits. Logs: `~user/simplewm.log`,
+  `/var/log/mdevd.log`, `/var/log/seatd.log`. Development root shells with no password
+  run on ttyS0 (the terminal) and tty2. busybox's `poweroff`, `reboot` and `halt` work
+  (they signal PID 1).
+- Device rules are Alpine's `mdev-conf` (`/etc/mdev.conf`): it loads drivers by modalias
+  and gives `/dev/dri` to video, `/dev/snd` to audio and input devices to input. kmod's
+  `modprobe` is installed because busybox's first hands the kernel the compressed module,
+  which logs "Invalid ELF header magic" for every driver before busybox falls back.
+
+**Known problem: software rendering shows black tiles.** In `run.sh headless` (and on any
+machine where Mesa draws in software), parts of the screen come out as black 64×64 blocks
+that change from frame to frame: llvmpipe renders in tiles on worker threads, and the frame
+is shown before it finishes (smithay can't make a sync object there: "failed to create
+signaled syncobj"). Not seen on real GPUs; a fix would be to wait for rendering to finish
+before queueing the frame when there's no fence.
 
 **The kernel** is Alpine's `linux-virt` for now (smaller, meant for VMs; `KERNEL` in
 `build.sh`), switched to `linux-lts` or our own for the real machine. It's unpacked from

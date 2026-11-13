@@ -140,11 +140,13 @@ Update this list when a change adds or drops one.
 ## The distro (`distro/`)
 
 Scripts for building the custom distro from Alpine packages; `distro/DISTRO.md` has the
-plan and describes each script. `distro/build.sh` builds the root filesystem, kernel,
-initramfs and disk image (inside an Alpine container, `distro/container.sh`), and
-`distro/run.sh` boots them in QEMU with the serial console in the terminal, so Claude can
-test a boot itself by piping commands into it and ending with `poweroff`. The outputs
-(`distro/root/`, `out/`, `cache/`) are git-ignored.
+plan and describes each script. `distro/build.sh` builds simplewm for musl
+(`build-simplewm.sh`, into `target/alpine/`), the root filesystem, kernel, initramfs and
+disk image (inside an Alpine container, `distro/container.sh`), and `distro/run.sh` boots
+them in QEMU, which starts straight into simplewm. Claude can test a boot itself with
+`distro/run.sh headless` (no window): pipe commands into the serial root shell, take
+screenshots with Ctrl+A C then `screendump distro/out/x.ppm` (convert PPM to PNG to view),
+and end with `poweroff`. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
 
 ## Code map (`src/`)
 
