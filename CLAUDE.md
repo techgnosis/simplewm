@@ -1,226 +1,134 @@
 # simplewm
 
-A very simple Wayland compositor written in Rust with Smithay.
+A small stacking Wayland compositor in Rust on Smithay. It draws all of its own UI: a top
+bar, window title bars and a Windows-style Control Panel of settings applets. simplewm is
+feature complete, so expect bug fixes and UI polish, not new features.
 
-This file is the spec for how simplewm behaves (the sections after **Working on the code**)
-and a guide to its code. Keep it up to date when either changes. The user doesn't read the
-code and judges simplewm only by using it, and simplewm is feature complete: expect small
-fixes and UI polish more than new features.
+## Working with the user
 
-* No keyboard shortcuts
-* No hand-edited config file; settings changed in the Control Panel are saved to
-  `~/.config/simplewm/simplewm.db` (SQLite)
-* Stacking, floating windows
-* Wayland only (no Xwayland / X11)
+- They never read the code. They judge simplewm by using it, so report changes in terms of
+  what they'll see and do, not in terms of code.
+- Claude can't see the screen. After a UI change, say exactly what to try. The user runs it
+  nested (`make run`) or on a TTY (`./simplewm`, or `./debug.sh` to log DRM and session
+  details to `simplewm-debug.log`). Their machine has one sound output (HDMI), one wired
+  network card and one monitor.
+- Keep this file current when behavior or structure changes. It's for Claude; nobody else
+  reads it.
 
-## Building and running
+## Rules simplewm keeps
 
-* `make` builds a release binary at `./simplewm` and gives it `CAP_NET_ADMIN` with
-  `sudo setcap` (asked only when the binary changed), so the Network applet can set the
-  network card's address and routes without simplewm running as root. Programs simplewm
-  launches don't get the capability.
-* Nested (inside an existing Wayland session, for development): `make run` or `./simplewm`
-* On real hardware from a TTY: `./simplewm`. simplewm takes no flags: it uses the TTY
-  backend when no `WAYLAND_DISPLAY`, `WAYLAND_SOCKET` or `DISPLAY` is set, and runs nested
-  otherwise.
-* `make clean` removes build output
+- No keyboard shortcuts. The one exception is Ctrl+Alt+F1… for switching virtual terminals
+  on a TTY.
+- No config file, flags or environment variables. Every setting is changed in a Control
+  Panel applet and saved in `~/.config/simplewm/simplewm.db` (SQLite). The backend is
+  chosen automatically: TTY when there's no `WAYLAND_DISPLAY`, `WAYLAND_SOCKET` or
+  `DISPLAY`, nested otherwise.
+- Wayland only (no Xwayland), one monitor (the first connected one, at its preferred mode),
+  US keyboard layout, one bundled font (DejaVu Sans).
+- Windows always float. Title bars are always drawn by simplewm (server-side decorations
+  are forced). Size moves and resizes a window once (halves, quarters, full screen below
+  the bar) and doesn't snap it there.
+- simplewm is the only `xdg-desktop-portal` backend (`make install` sets that up) and only
+  implements FileChooser, answered with its own File Picker. On a TTY it exports
+  `WAYLAND_DISPLAY` and `XDG_CURRENT_DESKTOP=simplewm` to systemd at startup, restarts the
+  portal, and removes them on exit. Nested, it leaves the host session alone, so nested
+  apps get the host's file dialogs.
+- The Network applet sets a static IPv4 address and gateway itself over rtnetlink (no
+  DHCP, no DNS). That needs `CAP_NET_ADMIN`, which `make` gives the binary with `sudo
+  setcap` (only when the binary changed). Programs simplewm launches don't get it.
+  NetworkManager must be masked or it undoes the settings.
+- The Sound applet drives PipeWire through `pw-dump` and `wpctl`, and WirePlumber remembers
+  the choices. With one output it just names it; with several it lists them to choose from.
 
-Only the first connected monitor is used.
+## Checking a change
 
-## Windows
+- `cargo build`, `cargo clippy --all-targets` (keep it at zero warnings), `cargo test`. Run
+  `cargo fmt` whenever you like.
+- Tests cover the logic that doesn't need a screen: the settings database, text fields, row
+  lists, File Picker listing and search, screenshot PNGs, portal globs and checks, network
+  address parsing and PipeWire output parsing. A few only do something on a machine that has
+  the hardware or service. `network::namespace_test` is `#[ignore]`d; its doc comment says
+  how to run it.
+- `make` builds the release binary with `--locked`; `make install` puts it in `/usr/bin`
+  and installs the portal files.
 
-The compositor always draws its own title bar (server-side decorations are forced).
-The title bar shows the window title, and has two buttons on the right:
+## Dependencies
 
-* A red close button
-* A button that says Size. It opens a row of small screen icons, each showing the
-  region the window will fill (the hovered one is named underneath):
-  * Left half
-  * Right half
-  * Top left, Top right, Bottom left, Bottom right (quarters)
-  * Full screen (fills the area below the top bar; the title bar stays)
+- Add crates only when they're really needed: about 200 crates already go into the build,
+  mostly through smithay and zbus.
+- `.cargo/config.toml` sets `global-min-publish-age = "21 days"` (Cargo 1.100+, which is
+  also `rust-version`), so Cargo never picks a version younger than that. If the resolver
+  says a version is "too new", lower the requirement instead of overriding the check. The
+  only exception is an urgent security fix:
+  `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update <crate> --precise <version>`.
+- `make audit` (`audit.py`) checks `Cargo.lock` against the OSV/RustSec database. Its
+  `ACCEPTED` list records advisories that don't affect us, and why. Run it after changing
+  dependencies.
+- SQLite is the system library, not bundled, so SQLite fixes arrive with OS updates.
+- zbus stays on 5: version 6 removed the blocking API that `portal.rs` and
+  `portal_check.rs` use.
 
-No windows are magnetic/snapped; they are always floating. Size moves and resizes the
-window once, after which it can be dragged away freely.
+## Code map (`src/`)
 
-Mouse:
+- `main.rs`: picks the backend and runs the calloop event loop.
+- `state.rs`: `State` holds everything: the Smithay protocol states, the window `Space`,
+  `stack` (the stacking order of client windows and panels together), `Ui`, `Panels` and
+  the backend.
+- `handlers.rs`: the Smithay protocol handlers, including the extra protocols gamescope
+  needs.
+- `udev.rs` (TTY: DRM/KMS, libinput, libseat) and `winit.rs` (nested). Both rebuild the
+  whole scene every frame and let the damage tracker work out what changed, so state
+  changes show up without asking for a redraw.
+- `input.rs`: all input. `handle_press` sends a click to the bar, a menu, a panel
+  (`PanelHit` → its action) or a client. Keys are filtered in this order: VT switch, Esc
+  during a screenshot, the focused File Picker, the text field being edited, and otherwise
+  the focused client.
+- `grabs.rs`: moving and resizing windows and panels.
+- `ui.rs`: the bar, menus, the Size picker, decorations, the cursor, toasts and
+  `build_elements` (the whole scene, front-most first), plus drawing helpers (`text_in`,
+  `text_centered`, `text_in_alpha`, `solid`).
+- `text.rs`: font rasterizing with fontdue (`measure`, `fit`).
+- Behind the applets, with no UI code:
+  - `network.rs`: rtnetlink.
+  - `sound.rs`: PipeWire.
+  - `screenshot.rs`: offscreen re-render, then the PNG is written on a worker thread.
+  - `portal.rs`: the zbus FileChooser backend, on its own thread.
+  - `portal_check.rs`: the Desktop Portal applet's checks, on a worker thread.
+  - `session_env.rs`: exporting simplewm's display to systemd.
 
-* Drag the title bar to move a window
-* Drag window edges/corners to resize
-* Click a window to focus it and raise it to the top
+  Worker threads report back over calloop channels.
 
-## Top menu
+## Panels (`panel.rs`, `panel/`)
 
-There is a top bar. Its items (three buttons and a clock) are grouped in the middle:
+`Panels` owns every window simplewm draws itself. Each `PanelId` gets a `PanelWindow`
+(open flag, position, buffers), and `Panels` also holds each applet's state. `panel.rs`
+has what they all share: placement, the frame, hit-test and render dispatch, `PanelHit`,
+and the shared sizes and colors. Each window has its own file of `impl super::Panels`
+blocks:
 
-* Control Panel — opens the Control Panel window (see below)
-* Launcher — opens a menu listing the executables configured in the Control Panel,
-  by file name (e.g. `alacritty`). Clicking one runs it.
-* Screenshot — the screen dims and the cursor becomes a crosshair; drag out a
-  rectangle and the shot is taken on release. Esc or a right click cancels. The
-  PNG is saved as `simplewm-screenshot-<date>-<time>.png` in the folder set in the
-  Screenshot applet, and a short "Saved …" message appears below the bar. If no
-  folder is set yet, the button opens the Screenshot applet instead.
+- `control.rs`: the Control Panel and Help.
+- `launcher.rs`, `screenshot.rs`, `network.rs` and `sound.rs`: one applet each.
+- `rows.rs`: Environment, Desktop Portal and the `RowList` they share with Network.
+- `picker.rs`: the File Picker.
 
-After the buttons is a clock (local time, e.g. `Sat 31 Oct  14:05`).
-
-## Control Panel
-
-Settings follow a Windows-style Control Panel model. The Control Panel is a
-compositor-drawn window showing one icon (with a name) per settings applet, plus a
-**Quit simplewm** button. Clicking an icon opens a separate window dedicated to
-that applet's settings. Panel windows stack, focus and move like any other window
-(drag the title bar; close with the red button).
-
-Applets:
-
-* **Launcher** — the executables in the Launcher menu, one path per row, with Change… and
-  Remove buttons per entry and an Add… button. Add… and Change… open the File Picker
-  (Add… starts in `/usr/bin` and accepts several files with Ctrl-click). `/usr/bin/alacritty`
-  is the default first entry and can be removed. Changes are saved immediately.
-* **Environment** — a read-only, scrollable (mouse wheel) view of how simplewm was
-  started: the Wayland socket clients connect to (`WAYLAND_DISPLAY`, socket and
-  lock file paths), backend details (host compositor socket when nested; seat,
-  GPU device and connector on a TTY; dmabuf render node), the output, and all
-  environment variables.
-* **Screenshot** — the folder screenshots are saved in, with a Choose… button that opens
-  the File Picker to pick it. There is no default; the folder is created if it no longer
-  exists.
-* **Desktop Portal** — checks for when apps get no file dialog (or a different one): whether
-  simplewm owns its portal bus name, whether `xdg-desktop-portal` is running and offers a
-  FileChooser, the `XDG_CURRENT_DESKTOP` that systemd and the running portal see, the installed
-  `simplewm.portal` and portal config, the portal's log since simplewm started, and commands
-  and per-toolkit settings to try. A summary at the top lists problems found; Refresh reruns
-  the checks.
-* **Network** — a static IPv4 address for the first wired network card. It shows the card's
-  state (interface on/off, cable, speed, current addresses and default gateway), and has an
-  Address field (`192.168.1.50/24`) and a Gateway field (`192.168.1.1`, or empty for no
-  default route). Apply (or Enter) switches the interface on, replaces its IPv4 addresses and
-  default route with these, and saves them; simplewm sets them again each time it starts.
-  Clearing both fields and applying stops that. There is no DHCP or DNS. If NetworkManager is
-  running it may undo the settings, so mask it (`sudo systemctl mask --now NetworkManager`).
-* **Sound** — where sound goes and its volume. With one PipeWire output (audio sink) it is
-  just named; with several they are listed and clicking one sends sound to it (the chosen one
-  is highlighted). Below is that output's volume: click the bar to set it, or use − and +
-  (5% steps). PipeWire (WirePlumber) remembers both. Uses `pw-dump` and `wpctl`.
-* **Help** — a short read-only note: simplewm takes no flags or environment variables, the
-  resolution is the monitor's preferred mode, there is no plain text config file, and there
-  are no keyboard shortcuts.
-
-## File dialogs (desktop portal)
-
-simplewm draws file dialogs itself. Apps like Firefox ask `xdg-desktop-portal` for a file
-dialog; simplewm registers as that portal's file chooser backend (D-Bus name
-`org.freedesktop.impl.portal.desktop.simplewm`) and answers by opening the **File Picker**
-window:
-
-* A Home button and the current folder; double-click a folder (or select it and press
-  Enter) to enter it, Backspace goes up a folder (in Save dialogs: Backspace in an empty
-  Name). A hint under the list says so
-* Double-click a file (or select it and press Open / Enter) to choose it; Ctrl-click
-  selects several when the app allows it
-* Save dialogs have a Name field (pre-filled by the app); saving over an existing file
-  asks you to press Save a second time
-* Hidden files toggle, and a Type button that cycles through the app's file filters
-* Type to search: the list narrows to names containing what you typed (names starting
-  with it first, the first match selected); Backspace edits the search, Esc clears it
-* Esc, Cancel or the close button cancels; arrow keys, Page Up / Page Down and Home / End
-  move the selection (held keys repeat); the mouse wheel scrolls three rows a notch, and
-  clicking the scrollbar jumps there
-* Only one File Picker is shown at a time; further requests wait their turn
-
-The Launcher and Screenshot applets use the same File Picker to choose executables and
-the screenshot folder.
-
-One-time setup: `make install`. It installs simplewm to `/usr/bin/`, copies `simplewm.portal` to
-`/usr/share/xdg-desktop-portal/portals/` (with sudo; the portal only looks there) and
-`simplewm-portals.conf` to `~/.config/xdg-desktop-portal/`. That config makes simplewm the
-only portal backend: no other backend is ever started, and portals simplewm does not
-implement yet are simply unavailable.
-
-The `xdg-desktop-portal` frontend itself is still needed, but D-Bus starts it on demand.
-It runs as a systemd user service and only sees systemd's environment, so in TTY mode
-simplewm exports `WAYLAND_DISPLAY` and `XDG_CURRENT_DESKTOP=simplewm` there at startup
-(via `dbus-update-activation-environment --systemd`), restarts the portal so it picks them
-up, and removes them on exit. Nested mode leaves the host session's environment alone, so
-nested apps get the host's file dialogs.
-
-## Defaults (not configurable)
-
-* A font is bundled into the binary for the bar, menus and titles
-* Nested mode uses a fixed-size window; TTY mode uses the monitor's preferred mode
-* Keyboard input goes to the focused window, US layout
-* Default arrow cursor drawn by the compositor; client-set cursors are honored
-
-## Working on the code
-
-### Checking a change
-
-* `cargo build`, `cargo clippy --all-targets` (keep it free of warnings) and `cargo test`.
-  Run `cargo fmt` freely; the formatting churn doesn't matter.
-* Tests cover the pure logic: settings database, text fields, row lists, File Picker listing
-  and search, screenshot PNGs, portal globs and checks, network address parsing, PipeWire
-  output parsing. Some only do something when the machine has the thing (PipeWire, a wired
-  card). `network::namespace_test` is `#[ignore]`d; its doc comment says how to run it.
-* Claude can't see the screen. The user tries UI changes, nested (`make run`) or on a TTY
-  (`./simplewm`, or `debug.sh` for DRM/session logging to `simplewm-debug.log`), so say what
-  to look at. On this machine there is one sound output (HDMI) and one wired card.
-
-### Map
-
-* `main.rs`: picks the backend (TTY when there's no host session, nested otherwise) and runs
-  the calloop event loop.
-* `state.rs`: `State`, which holds everything: the Smithay protocol states, the window
-  `Space`, the stacking order of windows and panels (`stack`), `Ui`, `Panels`, the backend.
-* `handlers.rs`: the Smithay protocol handlers (compositor, xdg-shell, decorations forced to
-  server side, seat, dmabuf, and the protocols gamescope needs).
-* `udev.rs` (TTY: DRM/KMS, libinput, libseat; one GPU, first connected output) and
-  `winit.rs` (nested window). Both rebuild the whole scene every frame from
-  `State::render_elements` and let the damage tracker find what changed, so a state change
-  shows up by itself with no redraw request.
-* `input.rs`: all keyboard and pointer input. `handle_press` routes a click to the top bar,
-  a menu, a panel (`PanelHit` → the action) or a client window. Keys are filtered in this
-  order: VT switching (Ctrl+Alt+F1…, the one exception to "no keyboard shortcuts"), Esc
-  during a screenshot, the File Picker when it's focused, the text field being edited, and
-  otherwise the focused client.
-* `grabs.rs`: move and resize grabs for windows and panels.
-* `ui.rs`: the top bar, menus, the Size picker, window decorations, the cursor, toasts and
-  `build_elements` (the whole scene, front-most first). Also small drawing helpers
-  (`text_in`, `text_centered`, `text_in_alpha`, `solid`) that the panels use.
-* `text.rs`: the bundled DejaVu Sans font, rasterized with fontdue (`measure`, `fit`).
-* `panel.rs` and `panel/`: the compositor-drawn windows (see below).
-* Behind the applets (no UI code): `network.rs` (rtnetlink, needs CAP_NET_ADMIN), `sound.rs`
-  (`pw-dump`, `wpctl`), `screenshot.rs` (offscreen re-render and PNG on a worker thread),
-  `portal.rs` (the zbus FileChooser backend on its own thread), `portal_check.rs` (Desktop
-  Portal checks on a worker thread), `session_env.rs` (exporting our display to systemd).
-* Worker threads report back over calloop channels (`State::screenshot_tx`,
-  `portal_check_tx`, the portal's `PortalEvent` channel).
-
-### Panels
-
-`Panels` (in `panel.rs`) owns every compositor-drawn window: one `PanelWindow` (open flag,
-position, frame buffers, content buffers) per `PanelId`, plus each applet's state. `panel.rs`
-holds what they share: placement, the frame, hit-test and render dispatch, `PanelHit`, and
-the shared sizes and colors. Each window lives in its own file under `panel/` as
-`impl super::Panels` blocks: `control.rs` (Control Panel and Help), `launcher.rs`,
-`screenshot.rs`, `rows.rs` (Environment and Desktop Portal, and the `RowList` they share
-with Network), `network.rs`, `sound.rs` and `picker.rs` (File Picker). Also `text_field.rs`
-(editable fields) and `db.rs` (SQLite settings; add a step to `migrate` to change the
-schema).
-
-The usual shape of an applet file: layout constants, a `*Layout` struct of rects computed
-from the content rect, then `*_size`, `*_hit` (point → `PanelHit`), actions, and `render_*`.
+Two shared files support them: `text_field.rs` (editable fields) and `db.rs` (settings;
+add a step to `migrate` to change the schema). Applet files usually go in this order:
+layout constants, a `*Layout` struct of rects, `*_size`, `*_hit`, actions, `render_*`.
 
 Drawing rules:
 
-* Elements are pushed front-most first, so push text before the background under it.
-* Keep `SolidColorBuffer`s from frame to frame (`bufs(&mut self.<window>.solids, n)`, with a
-  comment listing what each slot is for). The damage tracker tells elements apart by their
-  buffer, so a new buffer every frame would redraw everything.
-* Colors are premultiplied RGBA. Hover shows as `*_HOT` colors from the `hovered` hit.
+- Push elements front-most first: text before the background behind it.
+- Keep each panel's `SolidColorBuffer`s from frame to frame with
+  `bufs(&mut self.<window>.solids, n)`, and comment what each slot holds. The damage
+  tracker tells elements apart by their buffer.
+- Colors are premultiplied RGBA. Hovered controls use the `*_HOT` colors.
 
-Adding an applet touches: `PanelId` (and `title`), `APPLETS`, a `PanelWindow` in `Panels`
-(`new`, `win`, `win_mut`), the `content_size`/`hit`/`render` matches, a glyph in
-`control::applet_glyph` (a test checks it fits its tile), any `PanelHit` variants and their
-actions in `input.rs` (plus a refresh when it opens, if it shows live state), its own file
-under `panel/`, and its section in this file.
+Adding an applet means touching all of these:
+
+- `PanelId` and its `title`, and `APPLETS`.
+- A `PanelWindow` field in `Panels`, in `new`, `win` and `win_mut`.
+- The `content_size`, `hit` and `render` matches.
+- A glyph in `control::applet_glyph` (a test checks that it fits its tile).
+- New `PanelHit` variants and their actions in `input.rs`, plus a refresh when the applet
+  opens if it shows live state.
+- A new file under `panel/`.
