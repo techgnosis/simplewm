@@ -143,7 +143,7 @@ Update this list when a change adds or drops one.
 
 Scripts for building the custom distro from Alpine packages; `distro/DISTRO.md` has the
 plan and describes each script. `distro/build.sh` builds simplewm for musl
-(`build-simplewm.sh`, into `target/alpine/`), the root filesystem, kernel, initramfs and
+(`build-simplewm.sh`, into `target/alpine/`), the root filesystem, the kernel and the
 disk image (inside an Alpine container, `distro/container.sh`), and `distro/run.sh` (or `make vm`) boots
 them in QEMU, which starts straight into simplewm (`/sbin/init` is simplewm-init). Claude can test a boot itself with
 `distro/run.sh headless [image]` (no window, and changes to the disk are thrown away).
@@ -152,7 +152,10 @@ monitor (pipe Ctrl+A C, a command, Ctrl+A C into run.sh): `screendump distro/out
 for screenshots (convert PPM to PNG to view), `sendkey` to type (one key per command:
 `spc`, `dot`, `shift-4` for `$`…), and `quit` at the end. To test failures, boot a copy
 of `out/root.img` changed with `debugfs -w` in the container (e2fsprogs-extra), e.g. with
-a stub `/usr/bin/simplewm`; when simplewm exits, simplewm-init gives a user shell on tty1 to
+a stub `/usr/bin/simplewm`. Run `e2fsck -fy` on a copy before changing it: if QEMU
+was quit while the image was mounted, its journal still holds unwritten changes, which
+the kernel writes at boot over whatever debugfs changed (corrupting it). Make all the
+changes in one `debugfs -w -f <commands>` run; when simplewm exits, simplewm-init gives a user shell on tty1 to
 type into. To check what a screenshot can't show, give the test copy a
 `/home/user/.bash_profile` (simplewm is started through the login shell) that runs checks in
 the background and writes a report ending with `sync` (new data otherwise waits up to 30 s
@@ -161,6 +164,13 @@ to reach the disk); test copies are written to, so read the report afterwards wi
 unclean). Copy test images on the host with `cp --sparse=always` (the image is a 16 GB
 sparse file; busybox's `cp` in the container can't keep it sparse). `build.sh` empties
 `out/`, so keep test images elsewhere or remake them. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
+
+The kernel is our own (`distro/kernel.sh`, config in `distro/kernel.config`, kept in
+`savedefconfig` form): everything built in, no modules, no initramfs. `kernel.sh` alone
+rebuilds just `out/vmlinuz` (seconds when little changed), so a kernel change can be
+boot-tested against the existing `root.img`. After editing `kernel.config`, run
+`distro/kernel.sh refresh` and read its diff: a line that vanishes was ignored by the
+kernel. `DISTRO.md` ("The kernel") records why each change was made and what's left.
 
 ## Code map (`src/`)
 

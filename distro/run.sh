@@ -18,7 +18,7 @@
 set -eu
 
 out=$(cd "$(dirname "$0")" && pwd)/out
-for f in vmlinuz initramfs.cpio.gz root.img; do
+for f in vmlinuz root.img; do
     [ -e "$out/$f" ] || { echo "no $out/$f; run distro/build.sh first" >&2; exit 1; }
 done
 image=$out/root.img
@@ -75,8 +75,7 @@ fi
 exec qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 4 -m 2G \
     -kernel "$out/vmlinuz" \
-    -initrd "$out/initramfs.cpio.gz" \
-    -append "root=/dev/vda console=tty0 console=ttyS0 video=Virtual-1:${xres}x${yres}" \
+    -append "root=/dev/vda rw console=tty0 console=ttyS0 video=Virtual-1:${xres}x${yres}" \
     -drive "file=$image,format=raw,if=virtio" $snapshot \
     -vga none $screen \
     -device virtio-keyboard-pci -device virtio-tablet-pci \

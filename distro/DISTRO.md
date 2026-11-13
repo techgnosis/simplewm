@@ -29,6 +29,9 @@ made.
 - **Packages: Alpine's binaries, installed by apk into a folder.** No compiling the
   system ourselves; Alpine's musl packages become the root filesystem. Tested in QEMU
   first. Details below.
+- **Kernel: our own, with no modules and no initramfs.** Built from kernel.org's
+  long-term source with the config in `distro/kernel.config`, which we keep improving.
+  Every driver is built in. Details in "The kernel" below.
 
 ## Devices: the jobs involved
 
@@ -38,8 +41,8 @@ jobs then follow, and different tools split them up differently:
 
 1. **Loading drivers.** Each device says which driver module it needs (its "modalias").
    Something has to run `modprobe` for those, at boot for what's already there
-   ("coldplug") and later for what gets plugged in. This isn't needed if the custom kernel
-   has the machine's drivers built in, which is realistic for one known machine.
+   ("coldplug") and later for what gets plugged in. Not needed here: our kernel has every
+   driver built in and no modules at all (see "The kernel").
 2. **Permissions and names in `/dev`.** The kernel creates device files owned by root.
    Something has to give them the right group (for example `audio` for `/dev/snd`, so
    PipeWire can open the sound card) and add friendly links such as `/dev/disk/by-uuid/…`.
@@ -221,8 +224,8 @@ The steps, all inside an Alpine container (rootless podman, on the Arch host):
    config files.
 4. Make the disk image from the folder, still in the container (`mkfs.ext4 -d <folder>`
    needs no root). Building it in there keeps ownership right (see "In the repo").
-5. Boot it: a kernel and a small initramfs that mounts the disk and runs our init as
-   PID 1.
+5. Boot it: our own kernel (see "The kernel"), which mounts the disk itself and runs our
+   init as PID 1.
 
 Things to keep in mind:
 
@@ -273,8 +276,8 @@ answers that one too, always "server side". Not in the Launcher by default yet.
   `build-simplewm.sh`, then builds everything else from scratch: `root/` (from `PACKAGES`
   via `apk --root … --initdb`; afterwards apk's records, `/etc/apk` and `/lib/apk`,
   are deleted, so the system has no package manager and is changed only by rebuilding
-  it; then the folders in `REMOVE_DIRS` are removed, see "A smaller filesystem"), and in `out/` the kernel,
-  the initramfs and `root.img` (ext4). It adds simplewm, the init, udev's compiled hardware database
+  it; then the folders in `REMOVE_DIRS` are removed, see "A smaller filesystem"), and in `out/`
+  `root.img` (ext4) and the kernel (`kernel.sh`, see "The kernel"). It adds simplewm, the init, udev's compiled hardware database
   (`udevadm hwdb --update`), a machine ID for
   dbus-daemon, and the user (`USER_NAME`, uid 1000, in seat, audio, video, input and
   wheel, with the development password `USER_PASSWORD` for sudo; wheel may use sudo).
@@ -310,13 +313,12 @@ answers that one too, always "server side". Not in the Launcher by default yet.
   llvmpipe at that size is busy. A virtio network card on QEMU's user network (address 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3), and an
   Intel HDA sound card played through the host's PipeWire if QEMU has that driver
   (`qemu-audio-pipewire`).
-- `initramfs-init` is the initramfs's `/init` (static busybox): it loads the drivers
-  listed in `INITRAMFS_MODULES` (virtio disk, ext4, in dependency order worked out by
-  kmod at build time), mounts `root=` and switches to its `/sbin/init`.
+- `kernel.sh` builds the kernel from `kernel.config` into `out/vmlinuz` (see "The
+  kernel"). `run.sh` hands it `root=/dev/vda rw`; there's no initramfs.
 - **simplewm-init** (`src/bin/simplewm-init/`, built with simplewm) is `/sbin/init`
   (`/sbin/simplewm-init`, `/sbin/init` links to it). It refuses to run unless it's PID 1.
-  In order: it mounts `/proc`, `/sys`, `/dev` (unless the initramfs already moved it
-  there), `/dev/pts`, `/dev/shm`, `/run` and `/tmp`; starts udevd (`--daemon`), replays
+  In order: it mounts `/proc`, `/sys`, `/dev` (unless it's already mounted: our
+  kernel mounts devtmpfs there itself, `DEVTMPFS_MOUNT`), `/dev/pts`, `/dev/shm`, `/run` and `/tmp`; starts udevd (`--daemon`), replays
   the devices already there (`udevadm trigger`, subsystems then devices) and `udevadm
   settle`s; loads the Terminus 16x32 console font on tty1 (`setfont`, only after udev:
   the console may be VGA text mode before the GPU driver loads, which only takes fonts 8
@@ -351,11 +353,10 @@ answers that one too, always "server side". Not in the Launcher by default yet.
   5 s, syncs, remounts `/` read-only and powers off, reboots or halts. Ctrl+Alt+Del is
   turned off. Logs: `~user/simplewm.log`, `/var/log/seatd.log` (udevd's output goes
   nowhere for now).
-- Device rules are eudev's own (`/usr/lib/udev/rules.d`): drivers load by modalias
-  through its built-in kmod, `/dev/dri` goes to video (render nodes 0666), `/dev/snd` to
-  audio and input devices to input, and sound cards get `SOUND_INITIALIZED`. kmod is also
-  installed as `modprobe`: busybox's first hands the kernel the compressed module, which
-  logs "Invalid ELF header magic" for every driver before busybox falls back.
+- Device rules are eudev's own (`/usr/lib/udev/rules.d`): `/dev/dri` goes to video
+  (render nodes 0666), `/dev/snd` to audio and input devices to input, and sound cards get
+  `SOUND_INITIALIZED`. Its rules for loading drivers by modalias find nothing to load (the
+  kernel has no modules), and kmod's tools (`modprobe`, `lsmod`) aren't installed.
 
 **Fixed: software rendering showed black tiles.** With llvmpipe, parts of the screen came
 out as black 64×64 blocks: frames were queued before the renderer's worker threads
@@ -424,9 +425,8 @@ since there's no package manager.
     link C libraries need it), the `spirv-*`, `gi-*` and gdk-pixbuf developer tools,
     GObject typelibs (`/usr/lib/girepository-1.0`, for Python or JavaScript GTK
     programs), `/usr/share/pkgconfig` and `/usr/share/aclocal`.
-  - The kernel modules folder's `vmlinuz` link (it pointed into `/boot`).
   - `font-terminus` isn't installed at all: the build unpacks the one console font
-    simplewm-init loads (`ter-132n.psf.gz`) from its package, like the kernel. The rest
+    simplewm-init loads (`ter-132n.psf.gz`) from its package. The rest
     was 238 more console fonts and Terminus fonts that apps would have listed.
 - `REMOVE_DIRS`: folders that should be empty (or hold only empty folders). If a package
   ever puts files in one, the build stops and lists them instead of deleting them. So
@@ -465,11 +465,64 @@ password is locked (`*`): Alpine ships it empty. busybox `su` isn't setuid, so i
 usable, but nothing should be able to log in as root without a password; the user gets
 root through sudo with their own password (checked).
 
-**The kernel** is Alpine's `linux-virt` for now (smaller, meant for VMs; `KERNEL` in
-`build.sh`), switched to `linux-lts` or our own for the real machine. It's unpacked from
-its package rather than installed, because Alpine's kernel packages insist on an
-initramfs generator (mkinitfs), whose trigger fails here and which we don't need. Disk and
-filesystem drivers are modules in both flavors, hence our own initramfs.
+## The kernel
+
+Our own, built from kernel.org's source by `distro/kernel.sh` (in the container; source
+and build tree kept in `cache/kernel/`, so a rebuild only redoes what changed: about 13
+minutes from scratch on the user's 4 cores, seconds when nothing changed). The version is
+pinned in `kernel.sh` (`VERSION`, with the tarball's `SHA256` from kernel.org's
+`sha256sums.asc`): 6.18.63, the newest long-term kernel when it was picked, the same one
+Alpine's `linux-virt` was.
+
+**No modules, no initramfs.** Every driver the system needs is built in
+(`CONFIG_MODULES` is off), so the kernel finds the disk, mounts `root=` itself and runs
+`/sbin/init`, and devtmpfs is mounted on `/dev` before init starts. Before this, Alpine's
+`linux-virt` had the disk and ext4 drivers as modules, and our own initramfs (static
+busybox) loaded them, mounted the disk and switched to it. Nothing in the system loads
+modules now: no `/lib/modules` and no kmod tools.
+
+**`distro/kernel.config`** is the config in the form `make savedefconfig` writes: only
+the lines that differ from the kernel's defaults (about 240), so each line is a choice.
+Change it with `distro/kernel.sh menuconfig` (the kernel's menus; saved back on exit) or
+by hand. A build first checks that the file comes back unchanged from the kernel's config
+tools, and stops with a diff if not: that catches options that don't exist or whose
+dependencies are off, which the kernel would otherwise drop without a word. `kernel.sh
+refresh` rewrites the file in its proper form (after hand edits, or after raising
+`VERSION`) and shows what moved or dropped out.
+
+How it was made: the kernel's `x86_64_defconfig`, plus `kvm_guest.config`, plus our
+changes, then `savedefconfig`. Our changes:
+
+- Built in or turned on: NVMe (for the real machine; AHCI SATA, USB storage, Intel
+  i915, Intel HDA sound, and e1000/e1000e/r8169 network cards are already in the
+  defaults), virtio sound, HDA's generic, HDMI and Realtek codecs, USB HID, the DRM
+  framebuffer console and simpledrm (the console before the GPU driver takes over),
+  `DEVTMPFS_MOUNT`, tmpfs and ext4 ACLs and xattrs, user/PID/net namespaces and seccomp
+  (Firefox's sandbox and bubblewrap), `PREEMPT_DYNAMIC`, and `/proc/config.gz`
+  (`IKCONFIG_PROC`), so the running kernel's config can always be read.
+- Off: modules, initramfs support, SELinux, audit, wireless (cfg80211/mac80211/rfkill
+  and Wi-Fi drivers; the machine is wired), kernel IP autoconfiguration, 9p and network
+  filesystems, the floppy driver, and the defconfig's debug options (CGROUP_DEBUG,
+  PM_DEBUG, DEBUG_DEVRES, DEBUG_STACK_USAGE, DEBUG_BOOT_PARAMS, DEBUG_ENTRY).
+- Release name `6.18.63-simplewm` (`uname -r`).
+
+Checked in QEMU: before the switch, the old kernel loaded these modules, all now built
+in: virtio_blk, virtio_net, virtio_gpu, virtio_input, ext4, snd_hda_intel and its codec,
+evdev, mousedev, psmouse, i2c_piix4 (plus floppy, sr_mod/cdrom, kvm and qemu_fw_cfg, not
+needed). With the new kernel simplewm, seatd, udevd, the session bus, PipeWire and
+WirePlumber all come up, with `/dev/dri`, `/dev/input` and `/dev/snd` in place.
+
+Still to do:
+
+- Trim the defaults that come along from `x86_64_defconfig` and that nothing here uses
+  (many network drivers, cgroup controllers, hibernation, kexec, IPv4 multicast routing,
+  tracing and the remaining debug options). One group at a time, with a boot test each.
+- Fit it to the real machine: its GPU, sound and network drivers (look at `lspci -k`
+  on the host). A built-in GPU driver can't load firmware from the disk (it starts before
+  the disk is mounted), so AMD and newer Intel GPUs need theirs compiled into the kernel
+  (`CONFIG_EXTRA_FIRMWARE`), or the driver doesn't start.
+- How the real machine boots it: the kernel is an EFI program (`EFI_STUB`), so the
+  firmware could start it directly with `root=` and `rw`, with no bootloader.
 
 ## Open questions
 
@@ -479,4 +532,4 @@ filesystem drivers are modules in both flavors, hence our own initramfs.
 - How much of that simplewm could take over itself, and what has to stay a separate
   root process (simplewm runs unprivileged, so loading drivers and changing `/dev`
   permissions can't move into it).
-- A custom kernel with the machine's drivers built in.
+- Fitting the kernel to the real machine (see "The kernel").
