@@ -174,7 +174,7 @@ kernel. `DISTRO.md` ("The kernel") records why each change was made and what's l
 
 The distro also runs on the user's machine, from its own disk (`/dev/sdb`, found by the
 partition names `distro-esp` and `distro-root`): `sudo distro/install.sh /dev/sdb` writes
-`out/` to it, `sudo distro/efibootmgr.sh [next]` adds the Distro EFI boot entry (the
+`out/` to it, `sudo distro/efibootmgr.sh` adds the Distro EFI boot entry (the
 firmware starts the kernel directly). Only the user can run these (sudo password). The
 kernel must keep their hardware built in: AMD RX 480/580 (amdgpu, with its firmware in
 `CONFIG_EXTRA_FIRMWARE`), Intel HDA and HDMI audio, e1000e, AHCI, xHCI. `DISTRO.md`

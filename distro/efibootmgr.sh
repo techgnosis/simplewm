@@ -4,10 +4,9 @@
 # distro-root, on whichever disk has them: /dev/sdb on the user's machine).
 #
 #   sudo distro/efibootmgr.sh          add it (replacing an older Distro entry)
-#   sudo distro/efibootmgr.sh next     add it and boot it once, on the next restart only
 #
 # The entry goes last in the boot order, so the machine still starts what it started
-# before; pick Distro in the firmware's boot menu, or use `next`. No bootloader: the
+# before; pick Distro in the firmware's boot menu. No bootloader: the
 # firmware starts the kernel itself (an EFI program) and hands it the command line
 # below. The entry names the partitions by their IDs, which only change if install.sh
 # partitions the disk again; then run this again.
@@ -18,9 +17,9 @@ die() {
     exit 1
 }
 
-[ "$(id -u)" = 0 ] || die "needs root: sudo distro/efibootmgr.sh $*"
+[ "$(id -u)" = 0 ] || die "needs root: sudo distro/efibootmgr.sh"
 [ -d /sys/firmware/efi ] || die "this machine didn't start through EFI"
-case ${1:-} in '' | next) ;; *) die "usage: sudo distro/efibootmgr.sh [next]" ;; esac
+[ $# = 0 ] || die "usage: sudo distro/efibootmgr.sh"
 
 label() {
     lsblk -lnpo NAME,PARTLABEL | awk -v want="$1" '$2 == want { print $1 }'
@@ -49,9 +48,5 @@ num=$(efibootmgr | sed -n 's/^Boot\([0-9A-F]\{4\}\)\*\{0,1\} Distro\b.*/\1/p' | 
 # efibootmgr puts a new entry first; put it last.
 efibootmgr -q -o "${order:+$order,}$num"
 
-if [ "${1:-}" = next ]; then
-    efibootmgr -q -n "$num"
-fi
-
 echo "Boot$num: Distro on $esp ($disk), root $root, command line: $cmdline"
-efibootmgr | grep -E '^(BootNext|BootOrder):'
+efibootmgr | grep '^BootOrder:'

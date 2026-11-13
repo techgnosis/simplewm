@@ -558,8 +558,8 @@ the host's root filesystem.
 **Booting** (`efibootmgr.sh`): no bootloader. The kernel is an EFI program (`EFI_STUB`),
 so an EFI boot entry called Distro starts it directly with the command line
 `root=PARTUUID=<distro-root's ID> rw rootwait`. The entry goes last in the boot order, so
-the machine still starts CachyOS; Distro is picked from the firmware's boot menu, or
-`efibootmgr.sh next` sets it for the next restart only (`BootNext`). Running it again
+the machine still starts CachyOS; the user picks Distro from the firmware's boot menu
+(they asked for no one-time-boot option). Running it again
 replaces the entry; it only needs to after the disk is partitioned again (the entry and
 `root=` name the partitions by their IDs). No `console=` for the serial port: messages go
 to the screen (simpledrm on the firmware's framebuffer until amdgpu takes over).
