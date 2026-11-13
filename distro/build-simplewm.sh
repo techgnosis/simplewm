@@ -18,8 +18,6 @@ export PATH="$CARGO_HOME/bin:$PATH"
 export RUSTFLAGS="-C target-feature=-crt-static"
 
 echo "== simplewm: build tools"
-# libinput-dev insists on eudev's libudev headers. That's fine: libudev-zero has the same
-# interface (libudev.so.1), and it's what the distro has at runtime.
 apk add -q build-base pkgconf curl \
     mesa-dev libinput-dev libseat-dev libxkbcommon-dev
 

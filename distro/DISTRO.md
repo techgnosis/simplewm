@@ -14,9 +14,11 @@ made.
   input devices for simplewm and hands them over, and takes them back when you switch
   virtual terminals. Being in seatd's group is all simplewm needs, so it still runs with no
   special privileges. This also means no systemd and no logind.
-- **Devices: libudev-zero and mdevd.** libudev-zero is the libudev library that smithay,
-  libinput and PipeWire use, with no daemon behind it. mdevd loads drivers, sets
-  permissions in `/dev` and passes plug-in events on to libudev-zero. Why, below.
+- **Devices: eudev.** udev taken out of systemd: the `udevd` daemon with its rules and
+  hardware database, and the libudev library smithay, libinput and PipeWire use. It loads
+  drivers, sets permissions in `/dev` and tells programs about devices. First choice was
+  libudev-zero with mdevd; changed because PipeWire found no sound cards with it. Why,
+  below.
 - **D-Bus: dbus-daemon, started by simplewm.** Why, below.
 - **simplewm runs the user services**, in place of `systemd --user`: the session bus,
   PipeWire, pipewire-pulse and WirePlumber. Done (see "User services" below).
@@ -75,19 +77,27 @@ skarnet, also musl-friendly), which can load drivers and set permissions too.
 | Permissions and `/dev` links | Built in (rules)                     | mdevd's config file, or a boot script           |
 | Hotplug                  | Built in                                 | Needs mdevd (or another helper) to pass events on |
 | Hardware quirks database | Yes (hwdb)                               | No; libinput's own quirk files still apply      |
-| Predictable network names (`enp3s0`) | Yes                          | No; the card stays `eth0`                       |
+| Predictable network names (`enp3s0`) | Yes (`eudev-netifnames`, not installed) | No; the card stays `eth0`        |
+| Sound cards for PipeWire | Yes (marks them `SOUND_INITIALIZED`)     | No: PipeWire finds no cards (found in the VM)   |
 | Who uses it              | Void, Gentoo, Alpine (optional)          | KISS Linux, Alpine (optional), small embedded systems |
 
 **What simplewm needs from it:** enumerating the GPU, the monitor's connector and the
 input devices at startup, plus hotplug for input. Both options give that. PipeWire also
-uses libudev to find the sound card, and works with both.
+uses libudev to find the sound card, and that's where they differ (below).
 
-**Chosen: libudev-zero with mdevd.** It fits the goal better: two small, readable pieces, no
-rules language, and one machine with known hardware means the missing hardware database
-and network-name rules don't cost anything. eudev is the safer fallback if some program
-turns out to rely on udev behavior that libudev-zero doesn't copy. A third, less likely
-option is building systemd's udev on its own (Chimera Linux does this), which is the
-most compatible but the heaviest.
+**First choice was libudev-zero with mdevd; changed to eudev.** libudev-zero fit the goal
+better on paper: two small, readable pieces, no rules language, and one known machine
+means the missing hardware database and network-name rules cost nothing. It worked for the
+GPU and input in the VM, but PipeWire found no sound cards. PipeWire's ALSA monitor only
+takes a card once udev has set `SOUND_INITIALIZED` on it (`78-sound-card.rules` in
+systemd's udev and eudev), and libudev-zero only reports what's in the kernel's `uevent`
+file plus the `ID_INPUT_*` guesses it makes for input devices, with no way to add more.
+That's the case eudev was kept as the fallback for. The other ways out were patching
+libudev-zero (the first thing we'd compile ourselves) or naming the card in a fixed
+PipeWire config (no hotplug); the user chose eudev. Without the separate
+`eudev-netifnames` package the network card keeps the name `eth0`. A third, less likely
+option is building systemd's udev on its own (Chimera Linux does this), which is the most
+compatible but the heaviest.
 
 ## D-Bus
 
@@ -164,7 +174,7 @@ seatd and needs a root-owned D-Bus system bus just for itself.
 in order:
 
 1. Mount `/proc`, `/sys`, `/dev` and `/run`.
-2. Start the root services: mdevd (devices) and seatd (screen and input access).
+2. Start the root services: udevd (devices) and seatd (screen and input access).
 3. Create `/run/user/<uid>`, owned by the user.
 4. Switch to the user for good (their user ID and groups, such as `seat` and `audio`), set
    what a login would have set (`HOME`, `USER`, `PATH`, `XDG_RUNTIME_DIR`), send output to
@@ -187,8 +197,8 @@ If a login prompt is ever wanted, the usual fallback is `getty` with autologin o
 
 ## Building the root filesystem from Alpine packages
 
-Alpine is a musl distro and already packages everything chosen above: seatd, mdevd,
-libudev-zero, dbus-daemon, PipeWire, pipewire-pulse, WirePlumber, Mesa, libinput,
+Alpine is a musl distro and already packages everything chosen above: seatd, eudev,
+dbus-daemon, PipeWire, pipewire-pulse, WirePlumber, Mesa, libinput,
 libxkbcommon, iproute2 and sudo. So instead of building the system from source, we take
 Alpine's binaries.
 
@@ -215,8 +225,6 @@ The steps, all inside an Alpine container (rootless podman, on the Arch host):
 
 Things to keep in mind:
 
-- **Ask for `libudev-zero` by name.** libinput, Mesa and PipeWire need a libudev, and
-  Alpine fills that slot with eudev's library unless told otherwise.
 - **No OpenRC.** Alpine's own boot system only comes in with `alpine-base` or `openrc`;
   leave them out and our init is the only thing that runs.
 - **Busybox comes along anyway** and provides `/bin/sh`, `mktemp`, `chmod`, `mv` and `rm`,
@@ -234,9 +242,9 @@ spare partition.
 ## In the repo: `distro/`
 
 Done so far: the system builds and boots in QEMU straight into simplewm, running as the
-user under seatd, with mdevd handling devices, simplewm's own session bus, PipeWire and
-WirePlumber, and alacritty opening from the launcher. Tested headless (screenshots through
-QEMU's monitor). Sound doesn't work yet (see "Open problem" below).
+user under seatd, with eudev handling devices, simplewm's own session bus, PipeWire and
+WirePlumber finding the VM's sound card, and alacritty opening from the launcher. Tested
+headless (screenshots through QEMU's monitor).
 
 - `container.sh [command…]` runs a command (a shell by default) in an Alpine 3.24
   container with the project root mounted at `/work`. Root in the container is the host
@@ -247,13 +255,12 @@ QEMU's monitor). Sound doesn't work yet (see "Open problem" below).
 - `build-simplewm.sh` builds simplewm for musl in the container into
   `target/alpine/release/`, with Rust from rustup (Alpine's is older than simplewm's
   `rust-version`) and `-C target-feature=-crt-static` so it links Alpine's C libraries
-  dynamically. Rust and Cargo's downloads are kept in `cache/`. It builds against eudev's
-  libudev headers, because Alpine's `libinput-dev` insists on `eudev-dev`; libudev-zero has
-  the same `libudev.so.1` interface and is what the distro has at runtime.
+  dynamically. Rust and Cargo's downloads are kept in `cache/`.
 - `build.sh` (run on the host; it re-runs itself in the container) runs
   `build-simplewm.sh`, then builds everything else from scratch: `root/` (from `PACKAGES`
-  via `apk --root … --initdb`; it fails if eudev-libs got in), and in `out/` the kernel,
-  the initramfs and `root.img` (ext4). It adds simplewm, the init, a machine ID for
+  via `apk --root … --initdb`), and in `out/` the kernel,
+  the initramfs and `root.img` (ext4). It adds simplewm, the init, udev's compiled hardware database
+  (`udevadm hwdb --update`), a machine ID for
   dbus-daemon, and the user (`USER_NAME`, uid 1000, in seat, audio, video, input and
   wheel, with the development password `USER_PASSWORD` for sudo; wheel may use sudo).
   Each build starts from an empty root, so simplewm's settings in the user's home start
@@ -275,18 +282,19 @@ QEMU's monitor). Sound doesn't work yet (see "Open problem" below).
   listed in `INITRAMFS_MODULES` (virtio disk, ext4, in dependency order worked out by
   kmod at build time), mounts `root=` and switches to its `/sbin/init`.
 - `init` is the root filesystem's `/sbin/init` (a shell script for now): it mounts
-  `/proc`, `/sys`, `/dev/pts`, `/dev/shm`, `/run` and `/tmp`, starts mdevd (`-O 4`
-  passes events on to libudev-zero) and `mdevd-coldplug` so drivers load for the devices
-  already there, starts seatd (`-g seat`), makes `/run/user/1000`, waits briefly for
+  `/proc`, `/sys`, `/dev/pts`, `/dev/shm`, `/run` and `/tmp`, starts udevd
+  (`--daemon`), replays the devices already there with `udevadm trigger` (subsystems,
+  then devices) so their drivers load, and `udevadm settle`s, starts seatd (`-g seat`), makes `/run/user/1000`, waits briefly for
   `/dev/dri/card0`, and runs simplewm through `su -l` with `XDG_RUNTIME_DIR` set,
   starting it again 2 s after it exits. Logs: `~user/simplewm.log`,
-  `/var/log/mdevd.log`, `/var/log/seatd.log`. Development root shells with no password
+  `/var/log/seatd.log` (udevd's output goes nowhere for now). Development root shells with no password
   run on ttyS0 (the terminal) and tty2. busybox's `poweroff`, `reboot` and `halt` work
   (they signal PID 1).
-- Device rules are Alpine's `mdev-conf` (`/etc/mdev.conf`): it loads drivers by modalias
-  and gives `/dev/dri` to video, `/dev/snd` to audio and input devices to input. kmod's
-  `modprobe` is installed because busybox's first hands the kernel the compressed module,
-  which logs "Invalid ELF header magic" for every driver before busybox falls back.
+- Device rules are eudev's own (`/usr/lib/udev/rules.d`): drivers load by modalias
+  through its built-in kmod, `/dev/dri` goes to video (render nodes 0666), `/dev/snd` to
+  audio and input devices to input, and sound cards get `SOUND_INITIALIZED`. kmod is also
+  installed as `modprobe`: busybox's first hands the kernel the compressed module, which
+  logs "Invalid ELF header magic" for every driver before busybox falls back.
 
 **Fixed: software rendering showed black tiles.** With llvmpipe, parts of the screen came
 out as black 64×64 blocks: frames were queued before the renderer's worker threads
@@ -298,12 +306,8 @@ finished. simplewm now waits for rendering when smithay says the frame `needs_sy
 alacritty found no device ("failed to get driver name for fd -1"). simplewm now falls back
 to the render node of the GPU it opened.
 
-**Open problem: no sound with libudev-zero.** PipeWire's ALSA monitor only takes a sound
-card once udev has set `SOUND_INITIALIZED` on it (systemd's and eudev's
-`78-sound-card.rules` do). libudev-zero only reports what's in the kernel's `uevent` file
-plus the `ID_INPUT_*` guesses it makes for input devices, so PipeWire finds no cards: only
-"Dummy Output", although `/dev/snd` is there with the right group. This is the case the
-eudev fallback was kept for; it affects the real machine too.
+**Fixed: no sound with libudev-zero.** PipeWire found no sound cards; switching to eudev
+fixed it (see "eudev vs libudev-zero").
 
 **The kernel** is Alpine's `linux-virt` for now (smaller, meant for VMs; `KERNEL` in
 `build.sh`), switched to `linux-lts` or our own for the real machine. It's unpacked from
@@ -315,7 +319,7 @@ filesystem drivers are modules in both flavors, hence our own initramfs.
 
 - The init's details: what it does when simplewm exits or crashes (restart it, drop to a
   text console, or shut down), shutting down cleanly, and whether it supervises seatd and
-  mdevd.
+  udevd.
 - What `systemd --user` still does on this host that the distro won't have, if anything.
 - How much of that simplewm could take over itself, and what has to stay a separate
   root process (simplewm runs unprivileged, so loading drivers and changing `/dev`

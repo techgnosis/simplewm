@@ -1,5 +1,5 @@
 #!/bin/sh
-# /sbin/init, PID 1: mount the basics, start mdevd (devices) and seatd (screen and input
+# /sbin/init, PID 1: mount the basics, start udevd (devices) and seatd (screen and input
 # access) as root, then run simplewm as the user, and start it again if it exits.
 #
 # For development, root shells with no password run on the serial console (ttyS0) and on
@@ -38,16 +38,16 @@ trap 'shutdown poweroff' USR2
 trap 'shutdown reboot' TERM
 trap 'shutdown halt' USR1
 
-# --- devices: mdevd ------------------------------------------------------------------
-# mdevd follows /etc/mdev.conf (Alpine's mdev-conf): it loads drivers for new devices and
-# gives /dev files their groups. -O 4 passes each event on to libudev-zero, so simplewm,
-# libinput and PipeWire hear about devices that come and go. mdevd says it's ready on fd 3.
-mkfifo /run/mdevd.ready
-mdevd -O 4 -D 3 3>/run/mdevd.ready >>/var/log/mdevd.log 2>&1 &
-read -r _ < /run/mdevd.ready
-rm /run/mdevd.ready
-# Replay the devices that were there before mdevd started, so their drivers load.
-mdevd-coldplug
+# --- devices: udevd (eudev) ------------------------------------------------------------
+# udevd follows its rules: it loads drivers for new devices, gives /dev files their
+# groups, marks sound cards ready for PipeWire, and tells simplewm, libinput and PipeWire
+# about devices that come and go. --daemon returns once it's listening.
+udevd --daemon
+# Replay the devices that were there before udevd started, so their drivers load, and
+# wait until it has handled them all.
+udevadm trigger --action=add --type=subsystems
+udevadm trigger --action=add --type=devices
+udevadm settle --timeout=10
 
 # --- seat: seatd ---------------------------------------------------------------------
 # seatd opens the GPU and input devices for members of the seat group, and switches
@@ -75,7 +75,7 @@ mkdir -p "$runtime"
 chown "$USER_NAME:$USER_NAME" "$runtime"
 chmod 700 "$runtime"
 
-# The GPU's driver loads during coldplug; give it a moment to show up.
+# udevadm settle should have waited for the GPU's driver; give it a moment more anyway.
 i=0
 while [ ! -e /dev/dri/card0 ] && [ $i -lt 50 ]; do
     sleep 0.1

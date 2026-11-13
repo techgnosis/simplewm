@@ -29,9 +29,8 @@ PACKAGES="
     musl-utils
     kmod
 
-    mdevd
-    mdev-conf
-    libudev-zero
+    eudev
+    eudev-hwids
     seatd
 
     libgcc
@@ -86,10 +85,6 @@ apk --root "$ROOT" --initdb --quiet \
     --cache-dir "$CACHE" \
     add $PACKAGES
 cp /etc/apk/repositories "$ROOT/etc/apk/repositories"
-if apk --root "$ROOT" info -e eudev-libs >/dev/null; then
-    echo "eudev-libs got in; libudev-zero must provide libudev.so.1" >&2
-    exit 1
-fi
 
 # The kernel is unpacked rather than installed: Alpine's kernel packages insist on an
 # initramfs generator (mkinitfs), and we make our own initramfs below.
@@ -103,6 +98,8 @@ rm -f "$ROOT/sbin/init"
 install -m 755 init "$ROOT/sbin/init"
 sed -i "s/^USER_NAME=.*/USER_NAME=$USER_NAME/" "$ROOT/sbin/init"
 echo simplewm > "$ROOT/etc/hostname"
+# udevd reads the hardware database from this compiled file.
+chroot "$ROOT" udevadm hwdb --update
 # dbus-daemon wants a machine ID.
 chroot "$ROOT" dbus-uuidgen --ensure=/etc/machine-id
 
