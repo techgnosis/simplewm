@@ -60,7 +60,7 @@ still growing: the user is open to experiments and new features, within the rule
   systemd host they mask the user units `pipewire.socket pipewire.service
   pipewire-pulse.socket pipewire-pulse.service wireplumber.service dbus.socket`.
 - Long-term goal: boot simplewm in a minimal custom distro, doing as much as it can in one
-  process. `distro/DISTRO.md` records the plan and decisions so far (musl, seatd, eudev (libudev-zero
+  process. `distro/CLAUDE.md` records the plan and decisions so far (musl, seatd, eudev (libudev-zero
   was dropped: PipeWire found no sound cards with it), dbus-daemon started by simplewm, a custom init that runs simplewm as the user with no login, the system
   built from Alpine's binary packages installed by apk into a folder and tested in QEMU);
   keep it current as they're made. The PipeWire tools and the `ip` script are staying.
@@ -143,7 +143,7 @@ Update this list when a change adds or drops one.
 
 ## The distro (`distro/`)
 
-Scripts for building the custom distro from Alpine packages; `distro/DISTRO.md` has the
+Scripts for building the custom distro from Alpine packages; `distro/CLAUDE.md` has the
 plan and describes each script. `distro/build.sh` builds simplewm for musl
 (`build-simplewm.sh`, into `target/alpine/`), the root filesystem, the kernel and the
 disk image (inside an Alpine container, `distro/container.sh`), and `distro/run.sh` (or `make vm`) boots
@@ -172,20 +172,20 @@ The kernel is our own (`distro/kernel.sh`, config in `distro/kernel.config`, kep
 rebuilds just `out/vmlinuz` (seconds when little changed), so a kernel change can be
 boot-tested against the existing `root.img`. After editing `kernel.config`, run
 `distro/kernel.sh refresh` and read its diff: a line that vanishes was ignored by the
-kernel. `DISTRO.md` ("The kernel") records why each change was made and what's left.
+kernel. `distro/CLAUDE.md` ("The kernel") records why each change was made and what's left.
 
 The distro also runs on the user's machine, from its own disk (`/dev/sdb`, found by the
 partition names `distro-esp` and `distro-root`): `sudo distro/install.sh /dev/sdb` writes
 `out/` to it, `sudo distro/efibootmgr.sh` adds the Distro EFI boot entry (the
 firmware starts the kernel directly). Only the user can run these (sudo password). The
 kernel must keep their hardware built in: AMD RX 480/580 (amdgpu, with its firmware in
-`CONFIG_EXTRA_FIRMWARE`), Intel HDA and HDMI audio, e1000e, AHCI, xHCI. `DISTRO.md`
+`CONFIG_EXTRA_FIRMWARE`), Intel HDA and HDMI audio, e1000e, AHCI, xHCI. `distro/CLAUDE.md`
 ("On the user's machine") has the details.
 
 ## Code map (`src/`)
 
 - `main.rs`: picks the backend and runs the calloop event loop.
-- `bin/simplewm-init/`: a second binary, PID 1 of the distro (see `distro/DISTRO.md`).
+- `bin/simplewm-init/`: a second binary, PID 1 of the distro (see `distro/CLAUDE.md`).
   std + libc only: `main.rs` (the boot sequence, and the supervisor that runs
   simplewm, gives the user a shell on tty1 whenever it exits and starts simplewm again
   when that shell exits, and shuts down),

@@ -79,7 +79,7 @@ USER_PASSWORD=simplewm
 USER_GROUPS="seat audio video input wheel"
 
 # What the system doesn't need, removed at the end of the build (see "A smaller
-# filesystem" in DISTRO.md for why each goes). Nothing can bring them back: there's no
+# filesystem" in CLAUDE.md for why each goes). Nothing can bring them back: there's no
 # package manager in the system.
 #
 # REMOVE: files and folders deleted with whatever is in them.

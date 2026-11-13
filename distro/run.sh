@@ -44,7 +44,7 @@ xres=$(( (${host%x*} - 8) / 8 * 8 ))
 yres=$(( (${host#*x} - 30 - 32) / 8 * 8 ))
 
 # A plain virtio GPU, no OpenGL passthrough: Alpine's Mesa has no virgl driver, so the
-# guest draws in software either way (see DISTRO.md). No menu bar (Ctrl+Alt+M shows it).
+# guest draws in software either way (see CLAUDE.md). No menu bar (Ctrl+Alt+M shows it).
 # QEMU scales the picture to the window: the window passes its size to the guest as the
 # preferred mode, which simplewm follows, so simplewm's picture is pixel for pixel. Without
 # scaling, the window snapped to the guest's picture, and after the text console came back

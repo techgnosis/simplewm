@@ -1,4 +1,4 @@
-//! simplewm-init: PID 1 for the simplewm distro (see `distro/DISTRO.md`).
+//! simplewm-init: PID 1 for the simplewm distro (see `distro/CLAUDE.md`).
 //!
 //! It mounts the basic filesystems, starts udevd (devices) and seatd (screen and input
 //! access) as root, then runs simplewm as the user (the account with UID 1000) and keeps
