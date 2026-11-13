@@ -1060,3 +1060,160 @@ impl State {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::portal::Filter;
+
+    /// A scratch folder with a few files and folders, removed on drop.
+    struct Scratch(PathBuf);
+
+    impl Scratch {
+        fn new(name: &str) -> Self {
+            let dir =
+                std::env::temp_dir().join(format!("simplewm-test-{name}-{}", std::process::id()));
+            let _ = std::fs::remove_dir_all(&dir);
+            for d in ["Docs", "apps", ".hidden-dir"] {
+                std::fs::create_dir_all(dir.join(d)).unwrap();
+            }
+            for f in [
+                "notes.txt",
+                "Photo.PNG",
+                "report.txt",
+                ".hidden.txt",
+                "zap.png",
+            ] {
+                std::fs::write(dir.join(f), "").unwrap();
+            }
+            Scratch(dir)
+        }
+    }
+
+    impl Drop for Scratch {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    fn request(folder: &Path) -> PickRequest {
+        PickRequest {
+            id: 1,
+            save: false,
+            multiple: false,
+            directory: false,
+            title: String::new(),
+            accept_label: None,
+            folder: Some(folder.to_path_buf()),
+            name: String::new(),
+            filters: Vec::new(),
+            current_filter: None,
+            reply: PickReply::ScreenshotDir,
+        }
+    }
+
+    fn names(p: &FilePicker) -> Vec<&str> {
+        p.entries.iter().map(|e| e.name.as_str()).collect()
+    }
+
+    #[test]
+    fn lists_folders_first_then_files_ignoring_case() {
+        let s = Scratch::new("list");
+        let mut p = FilePicker::default();
+        p.begin(request(&s.0));
+        assert_eq!(p.title, "Open File");
+        assert_eq!(
+            names(&p),
+            [
+                "apps",
+                "Docs",
+                "notes.txt",
+                "Photo.PNG",
+                "report.txt",
+                "zap.png"
+            ]
+        );
+        // The first entry starts selected.
+        assert_eq!(p.selected, [0]);
+        p.show_hidden = true;
+        p.reload();
+        assert_eq!(names(&p)[0], ".hidden-dir");
+        assert!(names(&p).contains(&".hidden.txt"));
+    }
+
+    #[test]
+    fn search_puts_prefix_matches_first() {
+        let s = Scratch::new("search");
+        let mut p = FilePicker::default();
+        p.begin(request(&s.0));
+        p.search = "p".into();
+        p.apply_search();
+        // Folders-first order is kept within the "starts with" and "contains" groups.
+        assert_eq!(names(&p), ["Photo.PNG", "apps", "report.txt", "zap.png"]);
+        assert_eq!(p.selected, [0]);
+        p.search = "nothing".into();
+        p.apply_search();
+        assert!(p.entries.is_empty() && p.selected.is_empty());
+    }
+
+    #[test]
+    fn filters_and_directory_mode_keep_folders() {
+        let s = Scratch::new("filter");
+        let mut req = request(&s.0);
+        req.filters = vec![Filter {
+            name: "Images".into(),
+            globs: vec!["*.png".into()],
+        }];
+        let mut p = FilePicker::default();
+        p.begin(req);
+        assert_eq!(names(&p), ["apps", "Docs", "Photo.PNG", "zap.png"]);
+
+        let mut req = request(&s.0);
+        req.directory = true;
+        p.begin(req);
+        assert_eq!(names(&p), ["apps", "Docs"]);
+    }
+
+    #[test]
+    fn up_selects_the_folder_we_left() {
+        let s = Scratch::new("up");
+        let mut p = FilePicker::default();
+        p.begin(request(&s.0.join("Docs")));
+        p.up();
+        assert_eq!(p.dir, s.0);
+        assert_eq!(p.selected, [1]);
+    }
+
+    #[test]
+    fn save_mode_starts_with_nothing_selected() {
+        let s = Scratch::new("save");
+        let mut req = request(&s.0);
+        req.save = true;
+        req.name = "new.txt".into();
+        let mut p = FilePicker::default();
+        p.begin(req);
+        assert_eq!(p.title, "Save File");
+        assert_eq!(p.name, "new.txt");
+        assert!(p.selected.is_empty());
+    }
+
+    #[test]
+    fn accept_label_drops_mnemonics() {
+        let mut p = FilePicker::default();
+        let mut req = request(Path::new("/"));
+        req.accept_label = Some("_Open my__file".into());
+        p.request = Some(req);
+        assert_eq!(p.accept_label(), "Open my_file");
+    }
+
+    #[test]
+    fn fit_tail_keeps_the_end() {
+        let text = TextRenderer::new();
+        let s = "/home/someone/a/very/long/path/to/the/folder";
+        assert_eq!(fit_tail(&text, "/tmp", 500), "/tmp");
+        let w = text.measure("…the/folder");
+        let shown = fit_tail(&text, s, w);
+        assert!(shown.starts_with('…') && shown.ends_with("folder"));
+        assert!(text.measure(&shown) <= w);
+    }
+}

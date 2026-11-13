@@ -530,3 +530,40 @@ fn command_output(cmd: &mut Command) -> Result<String, String> {
     }
     Ok(String::from_utf8_lossy(&out.stdout).into_owned())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn desktop_list_matches() {
+        assert!(desktop_matches(Some("simplewm")));
+        assert!(desktop_matches(Some("GNOME:SimpleWM")));
+        assert!(!desktop_matches(Some("GNOME")));
+        assert!(!desktop_matches(None));
+    }
+
+    #[test]
+    fn reads_config_values() {
+        let text = "[preferred]\n# comment\ndefault = simplewm\norg.freedesktop.impl.portal.FileChooser=simplewm\n";
+        assert_eq!(
+            config_values(text),
+            [
+                ("default".to_string(), "simplewm".to_string()),
+                (
+                    "org.freedesktop.impl.portal.FileChooser".to_string(),
+                    "simplewm".to_string()
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn shortens_journal_lines() {
+        assert_eq!(
+            shorten_journal_line("Oct 31 12:00:01 host xdg-desktop-portal[123]: Failed to start"),
+            "12:00:01 Failed to start"
+        );
+        assert_eq!(shorten_journal_line("odd line"), "odd line");
+    }
+}

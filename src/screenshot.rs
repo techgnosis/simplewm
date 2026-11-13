@@ -236,3 +236,39 @@ fn save_png(dir: &Path, image: &Image) -> SaveResult {
     }
     Ok(path)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn saves_a_png_without_overwriting() {
+        let dir = std::env::temp_dir().join(format!("simplewm-test-shots-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        // Two pixels: red, then blue.
+        let image = Image {
+            width: 2,
+            height: 1,
+            rgb: vec![255, 0, 0, 0, 0, 255],
+        };
+        // The folder is created; a second shot in the same second gets a new name.
+        let first = save_png(&dir.join("sub"), &image).unwrap();
+        let second = save_png(&dir.join("sub"), &image).unwrap();
+        assert_ne!(first, second);
+        let name = first.file_name().unwrap().to_string_lossy();
+        assert!(name.starts_with("simplewm-screenshot-") && name.ends_with(".png"));
+
+        let decoder = png::Decoder::new(std::io::BufReader::new(
+            std::fs::File::open(&first).unwrap(),
+        ));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buf = vec![0; reader.output_buffer_size().unwrap()];
+        let info = reader.next_frame(&mut buf).unwrap();
+        assert_eq!(
+            (info.width, info.height, info.color_type),
+            (2, 1, png::ColorType::Rgb)
+        );
+        assert_eq!(&buf[..info.buffer_size()], &image.rgb[..]);
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+}
