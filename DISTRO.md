@@ -18,6 +18,9 @@ made.
   libinput and PipeWire use, with no daemon behind it. mdevd loads drivers, sets
   permissions in `/dev` and passes plug-in events on to libudev-zero. Why, below.
 - **D-Bus: dbus-broker, without its launcher.** Why and how, below.
+- **Boot: a custom init that starts simplewm as you, with no login.** It sets up the bare
+  minimum as root, then runs simplewm as a normal user. No logind, elogind, PAM or login
+  prompt. Details below.
 
 ## Devices: the jobs involved
 
@@ -110,12 +113,50 @@ trouble, dbus-daemon is the drop-in fallback.
 
 Still to check: that dbus-broker builds cleanly with musl.
 
+## Boot and logind's jobs
+
+On a systemd system, logind does several jobs. Here each one is covered separately:
+
+| logind's job | Here |
+|---|---|
+| Giving the session the screen and input devices, taking them back on a VT switch | seatd |
+| Creating `/run/user/<uid>` (where the Wayland, D-Bus and PipeWire sockets live) | init, before starting simplewm |
+| Shutdown, reboot, suspend without being root | Later: simplewm, through the sudo path the Network applet already uses |
+| Tracking who's logged in, starting per-user services | Not needed on a one-user machine |
+| "Inhibit" requests (don't sleep while a video plays) | Nothing; apps carry on without it |
+
+elogind (logind taken out of systemd) was the drop-in alternative, but it overlaps with
+seatd and needs a root-owned D-Bus system bus just for itself.
+
+**The custom init** is PID 1, the first program the kernel runs. It does the bare minimum,
+in order:
+
+1. Mount `/proc`, `/sys`, `/dev` and `/run`.
+2. Start the root services: mdevd (devices) and seatd (screen and input access).
+3. Create `/run/user/<uid>`, owned by the user.
+4. Switch to the user for good (their user ID and groups, such as `seat` and `audio`), set
+   what a login would have set (`HOME`, `USER`, `PATH`, `XDG_RUNTIME_DIR`), send output to
+   a log file, and start simplewm.
+
+simplewm doesn't need to own a terminal: seatd handles the virtual terminal, so Ctrl+Alt+F2
+to a text console still works.
+
+Trade-offs accepted:
+
+- No password at boot: anyone at the keyboard gets the desktop. The password still exists
+  and sudo still asks for it. A lock screen would have to come from simplewm.
+- No PAM, so nothing PAM would do at login happens; the steps above cover what's needed.
+
+If a login prompt is ever wanted, the usual fallback is `getty` with autologin on tty1 and
+`exec simplewm` in the shell profile, which goes through the normal login and PAM path.
+
 ## Open questions
 
-- Init and service supervision (what starts seatd, mdevd, PipeWire and WirePlumber, then
-  simplewm).
-- Who creates `XDG_RUNTIME_DIR` (`/run/user/<uid>`, where the Wayland, D-Bus and PipeWire
-  sockets live). logind does this on a systemd system; seatd doesn't.
+- The init's details: what it does when simplewm exits or crashes (restart it, drop to a
+  text console, or shut down), shutting down cleanly, and whether it supervises seatd and
+  mdevd.
+- What starts the user-level programs (the D-Bus session bus, PipeWire, WirePlumber): init
+  just before simplewm, or simplewm itself.
 - How much of that simplewm could take over itself, and what has to stay a separate
   root process (simplewm runs unprivileged, so loading drivers and changing `/dev`
   permissions can't move into it).
