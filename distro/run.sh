@@ -42,8 +42,11 @@ xres=$(( (${host%x*} - 8) / 8 * 8 ))
 yres=$(( (${host#*x} - 30 - 32) / 8 * 8 ))
 
 # A plain virtio GPU, no OpenGL passthrough: Alpine's Mesa has no virgl driver, so the
-# guest draws in software either way (see DISTRO.md). No menu bar (Ctrl+Alt+M shows it)
-# and no scaling, so the picture is pixel for pixel.
+# guest draws in software either way (see DISTRO.md). No menu bar (Ctrl+Alt+M shows it).
+# QEMU scales the picture to the window: the window passes its size to the guest as the
+# preferred mode, which simplewm follows, so simplewm's picture is pixel for pixel. Without
+# scaling, the window snapped to the guest's picture, and after the text console came back
+# (small) window and guest held each other small.
 gpu="-device virtio-vga,xres=$xres,yres=$yres"
 snapshot=
 if [ "${1:-}" = headless ]; then
@@ -52,7 +55,7 @@ if [ "${1:-}" = headless ]; then
     # thrown away when QEMU exits.
     snapshot=-snapshot
 elif qemu-system-x86_64 -display help 2>/dev/null | grep -qx gtk; then
-    screen="$gpu -display gtk,show-menubar=off,zoom-to-fit=off"
+    screen="$gpu -display gtk,show-menubar=off"
 else
     echo "QEMU has no GTK window; running headless" >&2
     screen="$gpu -display none"
@@ -71,7 +74,7 @@ exec qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 4 -m 2G \
     -kernel "$out/vmlinuz" \
     -initrd "$out/initramfs.cpio.gz" \
-    -append "root=/dev/vda console=tty0 console=ttyS0" \
+    -append "root=/dev/vda console=tty0 console=ttyS0 video=Virtual-1:${xres}x${yres}" \
     -drive "file=$image,format=raw,if=virtio" $snapshot \
     -vga none $screen \
     -device virtio-keyboard-pci -device virtio-tablet-pci \

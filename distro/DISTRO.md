@@ -275,11 +275,16 @@ headless (screenshots through QEMU's monitor).
   only (the kernel's and simplewm-init's messages; Ctrl+A then X quits; Ctrl+A then C switches to QEMU's monitor, where `screendump file.ppm` takes
   a screenshot). The screen is a plain virtio-vga card sized to fill what a window can use
   on the host's monitor (its preferred mode from `/sys/class/drm`, less simplewm's bar and
-  a window's title bar and borders; 3832x2096 on the user's 4K monitor), shown pixel for
-  pixel with no GTK menu bar (Ctrl+Alt+M shows it) and no scaling. QEMU's GTK window
-  passes its own size to the guest as the preferred mode, so the screen really follows the
-  window: it opens small, and simplewm switches mode when the window is resized or
-  maximized (it follows preferred-mode changes since this turned up). In a GTK window
+  a window's title bar and borders; 3832x2096 on the user's 4K monitor), with no GTK menu
+  bar (Ctrl+Alt+M shows it). QEMU's GTK window passes its own size to the guest as the
+  preferred mode, so the screen follows the window: simplewm switches mode when the window
+  is resized or maximized (it follows preferred-mode changes since this turned up), which
+  keeps its picture pixel for pixel. QEMU scales the picture to the window
+  (`zoom-to-fit`, the default): with scaling off, the window snapped to the guest's
+  picture, and once the text console came back after simplewm exited (its framebuffer is
+  sized when the driver loads, at the small boot-time window), window and guest held each
+  other small. The kernel gets `video=Virtual-1:<size>` so the console's framebuffer is
+  full size from the start. In a GTK window
   (`qemu-ui-gtk` and `qemu-hw-display-virtio-vga` on Arch; the user installed
   `qemu-desktop`), or with `run.sh headless` no window, for testing from a script, in QEMU's snapshot
   mode so a test never changes `root.img` (a test once left simplewm's binary renamed in
