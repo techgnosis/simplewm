@@ -17,6 +17,7 @@
 //! Ctrl+Alt+Del does nothing (no keyboard shortcuts).
 
 mod account;
+mod home;
 mod sys;
 
 use std::{
@@ -92,6 +93,18 @@ fn run() -> Result<(), String> {
     mount_basics();
     let console = Console::new();
     console.say("starting");
+    match home::mount() {
+        home::Outcome::NoPartition => {}
+        home::Outcome::Mounted(dev) => {
+            console.say(&format!("home: {} on {}", dev.display(), home::MOUNT_POINT));
+        }
+        home::Outcome::Failed(dev, e) => console.say(&format!(
+            "can't mount the home partition {} on {}: {e}; using the system's {} instead",
+            dev.display(),
+            home::MOUNT_POINT,
+            home::MOUNT_POINT
+        )),
+    }
     if let Ok(name) = std::fs::read_to_string("/etc/hostname")
         && let Err(e) = sys::set_hostname(name.trim())
     {
@@ -430,6 +443,12 @@ impl Supervisor {
             while signals.next().is_some() {}
         }
         sys::sync();
+        if sys::is_mount_point(home::MOUNT_POINT)
+            && let Err(e) = sys::unmount(home::MOUNT_POINT)
+        {
+            self.console
+                .say(&format!("can't unmount {}: {e}", home::MOUNT_POINT));
+        }
         if let Err(e) = sys::remount_root_read_only() {
             self.console.say(&format!("can't remount / read-only: {e}"));
         }

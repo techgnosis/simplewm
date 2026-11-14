@@ -35,6 +35,13 @@ pub fn mount(source: &str, target: &str, fstype: &str, flags: u64, data: &str) -
     })
 }
 
+/// Unmount the filesystem on `target` (at shutdown).
+pub fn unmount(target: &str) -> io::Result<()> {
+    let target = cstr(target);
+    // SAFETY: a valid NUL-terminated string.
+    check(unsafe { libc::umount(target.as_ptr()) })
+}
+
 /// Remount the root filesystem read-only (at shutdown).
 pub fn remount_root_read_only() -> io::Result<()> {
     let root = cstr("/");

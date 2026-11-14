@@ -86,7 +86,7 @@ still growing: the user is open to experiments and new features, within the rule
 - Tests cover the logic that doesn't need a screen: the settings file, text fields, row
   lists, File Picker listing and search, bar tab layout, screenshot PNGs, portal globs and checks, network
   address and DNS parsing, resolv.conf contents, PipeWire output parsing, simplewm-init's
-  account lookup, and the service manager's process handling (exit descriptions, PID handling, output cleaning). A few only do
+  account lookup and home partition lookup, and the service manager's process handling (exit descriptions, PID handling, output cleaning). A few only do
   something on a machine that has the hardware or service.
 - The `#[ignore]`d tests need a setup; each one's doc comment says how to run it. Two
   exercise D-Bus on a scratch bus: `dbus-run-session -- cargo test bus -- --ignored` drives
@@ -175,8 +175,10 @@ boot-tested against the existing `root.img`. After editing `kernel.config`, run
 kernel. `distro/CLAUDE.md` ("The kernel") records why each change was made and what's left.
 
 The distro also runs on the user's machine, from its own disk (`/dev/sdb`, found by the
-partition names `distro-esp` and `distro-root`): `sudo distro/install.sh /dev/sdb` writes
-`out/` to it, `sudo distro/efibootmgr.sh` adds the Distro EFI boot entry (the
+partition names `distro-esp`, `distro-root` and `distro-home`): `sudo distro/install.sh
+/dev/sdb` writes `out/` to it, replacing the system but never the home partition, which
+simplewm-init mounts on `/home` (so the user keeps their home across installs; what the
+build puts in the image's home only reaches a new home partition). `sudo distro/efibootmgr.sh` adds the Distro EFI boot entry (the
 firmware starts the kernel directly). Only the user can run these (sudo password). The
 kernel must keep their hardware built in: AMD RX 480/580 (amdgpu, with its firmware in
 `CONFIG_EXTRA_FIRMWARE`), Intel HDA and HDMI audio, e1000e, AHCI, xHCI. `distro/CLAUDE.md`
@@ -189,7 +191,8 @@ kernel must keep their hardware built in: AMD RX 480/580 (amdgpu, with its firmw
   std + libc only: `main.rs` (the boot sequence, and the supervisor that runs
   simplewm, gives the user a shell on tty1 whenever it exits and starts simplewm again
   when that shell exits, and shuts down),
-  `sys.rs` (system call wrappers), `account.rs` (the UID 1000 user from `/etc/passwd`).
+  `sys.rs` (system call wrappers), `account.rs` (the UID 1000 user from `/etc/passwd`),
+  `home.rs` (mounts the `distro-home` partition on `/home`, if there is one).
 - `state.rs`: `State` holds everything: the Smithay protocol states, the window `Space`,
   `stack` (the stacking order of client windows and panels together), `Ui`, `Panels` and
   the backend.

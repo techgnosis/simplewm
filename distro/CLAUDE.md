@@ -285,8 +285,9 @@ answers that one too, always "server side". Not in the Launcher by default yet.
   `/bin/sh` stays busybox, which Alpine's package scripts and the Network applet's script
   expect. procps-ng replaces busybox's `ps`, `top`, `pgrep` and friends (busybox's `ps`
   has no `ps auxf` tree).
-  Each build starts from an empty root, so simplewm's settings in the user's home start
-  over too. Downloaded packages are kept in `cache/`. `root/`, `out/` and `cache/` are
+  Each build starts from an empty root, so simplewm's settings in the image's home start
+  over too (an install on the user's machine keeps its own home partition: see "On the
+  user's machine"). Downloaded packages are kept in `cache/`. `root/`, `out/` and `cache/` are
   git-ignored. busybox's install script warns it can't create device nodes; harmless.
 - `run.sh` boots `out/` in QEMU with KVM: the serial console is the terminal, output
   only (the kernel's and simplewm-init's messages; Ctrl+A then X quits; Ctrl+A then C switches to QEMU's monitor, where `screendump file.ppm` takes
@@ -318,7 +319,8 @@ answers that one too, always "server side". Not in the Launcher by default yet.
 - **simplewm-init** (`src/bin/simplewm-init/`, built with simplewm) is `/sbin/init`
   (`/sbin/simplewm-init`, `/sbin/init` links to it). It refuses to run unless it's PID 1.
   In order: it mounts `/proc`, `/sys`, `/dev` (unless it's already mounted: our
-  kernel mounts devtmpfs there itself, `DEVTMPFS_MOUNT`), `/dev/pts`, `/dev/shm`, `/run` and `/tmp`; starts udevd (`--daemon`), replays
+  kernel mounts devtmpfs there itself, `DEVTMPFS_MOUNT`), `/dev/pts`, `/dev/shm`, `/run` and `/tmp`; mounts the home partition on `/home` if the disk has
+  one (`home.rs`, see "On the user's machine"); starts udevd (`--daemon`), replays
   the devices already there (`udevadm trigger`, subsystems then devices) and `udevadm
   settle`s; loads the Terminus 16x32 console font on tty1 (`setfont`, only after udev:
   the console may be VGA text mode before the GPU driver loads, which only takes fonts 8
@@ -632,18 +634,38 @@ chipset's AHCI controller: `sda` (1 TB) is the CachyOS host with its systemd-boo
 `sdb` (256 GB Samsung 850 PRO) is the distro's. USB is the chipset's xHCI. All of these
 drivers are built into our kernel.
 
-**The disk** (`install.sh`, run as root on the host): GPT with two partitions, which the
+**The disk** (`install.sh`, run as root on the host): GPT with three partitions, which the
 scripts find by name, never by `sdX` (the disks' letters can swap between boots):
 
 - `distro-esp`, 512 MiB, FAT32 (label DISTRO): the EFI system partition. The kernel is
   `\EFI\distro\vmlinuz.efi`.
-- `distro-root`, the rest: `out/root.img` written over it with `dd`, then checked and
-  grown to fill the partition (`resize2fs`).
+- `distro-root`, 32 GiB (`ROOT_SIZE`): `out/root.img` written over it with `dd`, then
+  checked and grown to fill the partition (`resize2fs`).
+- `distro-home`, the rest (ext4, label home, GPT type Linux /home): the home folders.
+  simplewm-init mounts it on `/home` (`nosuid,nodev`), finding it by its GPT name in
+  `/sys/class/block/*/uevent` (`PARTNAME`), and unmounts it at shutdown before
+  remounting `/` read-only. Without one (the VM) `/home` is the root filesystem's; if
+  it won't mount, simplewm-init says so on the console and carries on with the root's.
 
-The first run erases the disk, after showing what's on it and asking for its name to be
-typed. Later runs replace the root filesystem and kernel without asking, so like every
-build the user's home starts over. It refuses a disk with anything mounted or that holds
+So the user can change the system here and install it again without losing their home:
+the user asked for this. The first run erases the disk, after showing what's on it and
+asking for its name to be typed. Later runs replace the root filesystem and kernel
+without asking and never touch `distro-home`. The home partition is written only when
+it's made, with the build's `/home` (the user's Rust and simplewm's default settings).
+So what the build puts in the home later (a new `RUST_VERSION`, a changed `.profile`)
+doesn't reach an installed home: the user runs `rustup` there themselves, or Claude
+writes them the steps. The user's account must keep UID 1000 (it does: simplewm-init
+looks for that UID) so the files on the home partition stay theirs. A disk from before
+the home partition (esp, and root filling the rest; the user's sdb as of 2026-11-13)
+gets one on the next run, after the same typed confirmation: root's partition shrinks
+in place to 32 GiB, keeping its PARTUUID (so the boot entry still works; checked with
+sfdisk on a copy of the layout), and the home partition takes the rest. The user had
+nothing to keep in the old home. It refuses a disk with anything mounted or that holds
 the host's root filesystem.
+
+Tested in QEMU with a second disk holding a `distro-home` partition: mounted on `/home`,
+the user's files came from it, files written in the session went to it (not to the
+root filesystem), and it was clean after `poweroff`.
 
 **Booting** (`efibootmgr.sh`): no bootloader. The kernel is an EFI program (`EFI_STUB`),
 so an EFI boot entry called Distro starts it directly with the command line

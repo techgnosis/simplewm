@@ -7,7 +7,7 @@
 #   distro/out/root.img           distro/root/ as an ext4 disk image
 #
 # Run it on the host; it re-runs itself inside the Alpine container (container.sh).
-# Each build starts from an empty root, so the user's home (simplewm's settings) starts
+# Each build starts from an empty root, so the image's home (simplewm's settings) starts
 # empty too. Downloaded packages are kept in distro/cache/.
 set -eu
 
