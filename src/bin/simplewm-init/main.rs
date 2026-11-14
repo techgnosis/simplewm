@@ -175,6 +175,15 @@ fn mount_basics() {
             say_now(&format!("can't mount {target}: {e}"));
         }
     }
+    // The firmware's variables, for efibootmgr (only when the machine started through EFI;
+    // not in the VM, which boots the kernel directly).
+    let efivars = "/sys/firmware/efi/efivars";
+    if std::path::Path::new(efivars).is_dir() && !sys::is_mount_point(efivars) {
+        let flags = nosuid_nodev | libc::MS_NOEXEC;
+        if let Err(e) = sys::mount("efivarfs", efivars, "efivarfs", flags, "") {
+            say_now(&format!("can't mount {efivars}: {e}"));
+        }
+    }
 }
 
 /// udevd follows its rules: it loads drivers, gives /dev files their groups, marks sound

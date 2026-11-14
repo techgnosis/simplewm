@@ -26,7 +26,8 @@ cd "$PROJECT/distro"
 # for software rendering in the VM) is for Gram, which draws with Vulkan, or OpenGL if
 # there's none. wayland-utils (wayland-info) is for checking what
 # simplewm offers apps. e2fsprogs (with resize2fs and tune2fs, in -extra), sfdisk and lsblk
-# are for installing the system into its other slot from itself (install.sh). The last
+# are for installing the system into its other slot from itself (install.sh), efibootmgr
+# for the firmware's boot entries (efibootmgr.sh). The last
 # group is for development: Rust (rustup, which the build
 # uses to install RUST_VERSION into the user's home; it needs curl, CA certificates and
 # git, and a C toolchain to link), C (build-base: gcc, musl headers, make, binutils), Go and Python,
@@ -67,6 +68,7 @@ PACKAGES="
     e2fsprogs-extra
     sfdisk
     lsblk
+    efibootmgr
 
     alacritty
     firefox

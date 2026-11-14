@@ -5,8 +5,8 @@
 #
 #   sudo distro/efibootmgr.sh
 #
-# Run once, on the Arch host (the distro doesn't mount efivarfs or have efibootmgr),
-# after make-slots.sh. The entries name partitions by their IDs, which never change, so
+# Run once, on the Arch host or in the distro (images since efibootmgr was added; init
+# mounts efivarfs), after make-slots.sh. The entries name partitions by their IDs, which never change, so
 # installs don't need it again. Older Distro entries (the one for the old install on its
 # own disk too) are replaced. The new entries go last in the boot order, so the machine
 # still starts what it started before; pick Distro A or B in the firmware's boot menu.

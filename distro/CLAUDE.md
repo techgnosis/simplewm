@@ -356,7 +356,7 @@ editor is 228 MB with its symbols kept (for backtraces; 175 MB without).
 - **simplewm-init** (`src/bin/simplewm-init/`, built with simplewm) is `/sbin/init`
   (`/sbin/simplewm-init`, `/sbin/init` links to it). It refuses to run unless it's PID 1.
   In order: it mounts `/proc`, `/sys`, `/dev` (unless it's already mounted: our
-  kernel mounts devtmpfs there itself, `DEVTMPFS_MOUNT`), `/dev/pts`, `/dev/shm`, `/run` and `/tmp`; mounts the home partition on `/home` if the disk has
+  kernel mounts devtmpfs there itself, `DEVTMPFS_MOUNT`), `/dev/pts`, `/dev/shm`, `/run` and `/tmp`, and efivarfs on `/sys/firmware/efi/efivars` when the machine started through EFI; mounts the home partition on `/home` if the disk has
   one (`home.rs`, see "On the user's machine"); starts udevd (`--daemon`), replays
   the devices already there (`udevadm trigger`, subsystems then devices) and `udevadm
   settle`s; loads the Terminus 16x32 console font on tty1 (`setfont`, only after udev:
@@ -871,7 +871,9 @@ the user runs them, e.g. `! sudo distro/install.sh` in Claude Code):
   label), `out/vmlinuz` onto the EFI partition of the slot's disk (mounted for the copy
   unless it already is, as on Arch). Without an argument, the slot not running; refuses
   the running slot and anything mounted. Works on Arch and in the distro.
-- `efibootmgr.sh` (once, on Arch): removes every "Distro…" entry, adds Distro A and B.
+- `efibootmgr.sh` (once, on Arch or in the distro, where simplewm-init mounts efivarfs on
+  `/sys/firmware/efi/efivars` when the machine started through EFI, and `efibootmgr` is in
+  `PACKAGES`): removes every "Distro…" entry, adds Distro A and B.
 - `move-home.sh /var/tmp/distro-home.tar` (once, on Arch): tars the old `distro-home`
   (GNU tar: numeric owners, ACLs, xattrs, sparse; compared with the source before
   anything is erased), makes `sdb` one `distro-home` partition, unpacks and compares
