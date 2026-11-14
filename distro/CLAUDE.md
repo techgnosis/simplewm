@@ -283,7 +283,7 @@ editor is 228 MB with its symbols kept (for backtraces; 175 MB without).
   `target/alpine/release/`, with Rust from rustup (Alpine's is older than simplewm's
   `rust-version`) and `-C target-feature=-crt-static` so it links Alpine's C libraries
   dynamically. Rust and Cargo's downloads are kept in `cache/`.
-- `build-gram.sh` builds Gram for musl in the container into `target/gram/release/`
+- `build-gram.sh` builds Gram for musl (in the container, or natively in the distro) into `target/gram/release/`
   (`gram`, the editor, and `cli`, the `gram` command), linking Alpine's C libraries like
   simplewm. The tarball is pinned (`VERSION`, `SHA256`) and kept unpacked in
   `cache/gram-<version>/`; Gram's `rust-toolchain.toml` picks its Rust (1.99.1), which the
@@ -420,13 +420,23 @@ and findutils, xz, zstd, `elfutils-dev` (objtool, for the ORC unwinder) and `ncu
 vulkan-loader `-dev` packages for Gram. `openssl-dev` isn't needed by our kernel config (no
 trusted keyring or module signing) but stays for the many Rust crates that link
 OpenSSL. simplewm was checked to build and link in the distro against stand-ins for these
-(2026-11-14); the kernel and Gram couldn't be tried there (their tools were missing).
+(2026-11-14), and the kernel natively with `build-kernel.sh` (2026-11-14, 15 minutes
+from scratch): its full config matches the container's except for detected tools (rustc,
+unused; no GCC plugin support, since `REMOVE` drops gcc's `plugin` folder, and no plugin
+is turned on). Gram too, natively with `build-gram.sh` (2026-11-14, 36 minutes from
+scratch, same three libraries linked). Natively git is installed, and Gram's build found
+simplewm's repository above its source and took simplewm's commit as its own;
+`GIT_CEILING_DIRECTORIES` now stops git at `cache/`.
 Rust links statically on musl by default, so the project's `.cargo/config.toml` turns
 that off for the musl target (`-crt-static`) and a plain `cargo build` works in the
-distro. The `build-*.sh` scripts still only run in the container (they re-run themselves
-there when `/etc/alpine-release` is missing, which it is in the distro, and use `apk add`
-and `/work` paths); running the kernel and Gram builds natively would need a mode for
-that, and the kernel's firmware step fetches with apk and unpacks into `/lib/firmware`.
+distro. `build-kernel.sh` and `build-gram.sh` also run natively in the distro, with no
+container (podman isn't in the image: the container was only ever there for apk and
+`/work`, not for musl). Both source `where.sh`, which picks the mode: `/etc/alpine-release`
+means the container (project at `/work`, tools added with apk), `/sbin/simplewm-init`
+means the distro (project wherever the script is, tools checked with `need` instead of
+installed), anything else re-runs the script in the container. Natively Gram uses the
+user's own rustup (`~/.rustup`), not `cache/rustup`. `build.sh` and `build-simplewm.sh`
+still need the container (`build.sh` installs the root filesystem with apk).
 `ca-certificates` also fills `/etc/ssl/certs`, which was empty: until then only Firefox
 (which carries its own) could check HTTPS certificates. The disk image is 16 GB (or twice what's
 installed, if more): rustup failed with "no space left" when it was sized at what's
@@ -644,7 +654,7 @@ writing one-off scripts. It's how the methods below are put together.
 
 ## The kernel
 
-Our own, built from kernel.org's source by `distro/build-kernel.sh` (in the container; source
+Our own, built from kernel.org's source by `distro/build-kernel.sh` (in the container or natively in the distro; source
 and build tree kept in `cache/kernel/`, so a rebuild only redoes what changed: about 13
 minutes from scratch on the user's 4 cores, seconds when nothing changed). The version is
 pinned in `build-kernel.sh` (`VERSION`, with the tarball's `SHA256` from kernel.org's
@@ -702,7 +712,12 @@ WirePlumber all come up, with `/dev/dri`, `/dev/input` and `/dev/snd` in place.
 firmware from it, and without its firmware amdgpu doesn't start. `build-kernel.sh` takes each
 listed file from Alpine's `linux-firmware-<folder>` package (`amdgpu/…` from
 `linux-firmware-amdgpu`), decompresses it (Alpine ships them zstd-compressed, some as
-links to others) into the container's `/lib/firmware`, where the kernel build looks. For
+links to others) into `cache/kernel/firmware/`. `CONFIG_EXTRA_FIRMWARE_DIR` points
+there; the path differs between container and distro, so `build-kernel.sh` appends it to
+the build's `.config` and strips it from what `savedefconfig` writes, and it never
+appears in `kernel.config`. In the container apk fetches the package (checking its
+signature); in the distro, which has no apk, it's downloaded over HTTPS from Alpine's
+mirror, its version read from the package index of `container.sh`'s Alpine release. For
 the RX 480/580 that's the 21 `amdgpu/polaris10_*` files, the ones amdgpu names with
 `MODULE_FIRMWARE` for Polaris 10 plus its video decode and encode (UVD, VCE). Nothing is
 installed in the system's `/lib/firmware`.

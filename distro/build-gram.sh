@@ -2,38 +2,48 @@
 # Build the Gram editor (https://gram-editor.com, a fork of Zed) from source for musl,
 # linking Alpine's C libraries, into target/gram/release/ (gram: the editor, cli: the
 # `gram` command that starts it). build.sh calls it and installs both.
-# Run on the host; it re-runs itself in the Alpine container.
+# Run on the host (it re-runs itself in the Alpine container) or in the distro, where
+# it builds natively with the user's own rustup (see where.sh).
 #
 # The source tarball is pinned by version and checksum and kept, unpacked, in
-# distro/cache/. Rust comes from the same rustup as simplewm's build (cache/rustup);
-# Gram's rust-toolchain.toml picks its own toolchain version, which rustup installs the
+# distro/cache/. In the container Rust comes from the same rustup as simplewm's build
+# (cache/rustup); Gram's rust-toolchain.toml picks its own toolchain version, which rustup installs the
 # first time. Only redone when something changed: a rebuild with nothing new takes
 # seconds, the first build most of an hour.
 set -eu
 
-if [ ! -e /etc/alpine-release ]; then
-    exec "$(dirname "$0")/container.sh" distro/build-gram.sh "$@"
-fi
+. "$(dirname "$0")/where.sh"
 
 VERSION=3.5.0
 SHA256=20fafb030a3646c5fd64727a3c0c801f5a7a9940e3943d661104970b246a26ec
 
-CACHE=/work/distro/cache
+CACHE="$PROJECT/distro/cache"
 SRC="$CACHE/gram-$VERSION"
+mkdir -p "$CACHE"
 
-export RUSTUP_HOME="$CACHE/rustup"
-export CARGO_HOME="$CACHE/cargo"
-export CARGO_TARGET_DIR=/work/target/gram
-export PATH="$CARGO_HOME/bin:$PATH"
+if [ -z "$NATIVE" ]; then
+    export RUSTUP_HOME="$CACHE/rustup"
+    export CARGO_HOME="$CACHE/cargo"
+    export PATH="$CARGO_HOME/bin:$PATH"
+fi
+export CARGO_TARGET_DIR="$PROJECT/target/gram"
+# Gram's build asks git for its commit ID. The source sits inside simplewm's checkout, so
+# where git is installed (the distro) it would find simplewm's repository and report
+# simplewm's commit as Gram's. Stop git's search at the cache folder.
+export GIT_CEILING_DIRECTORIES="$CACHE"
 # Link the C libraries dynamically (Rust's musl target links statically by default):
 # Gram loads Vulkan and libwayland at run time, which a static binary can't.
 export RUSTFLAGS="-C target-feature=-crt-static"
 
 echo "== gram: build tools"
-apk add -q build-base pkgconf curl cmake perl \
-    wayland-dev libxkbcommon-dev fontconfig-dev zstd-dev sqlite-dev vulkan-loader-dev
+if [ -n "$NATIVE" ]; then
+    need cc pkg-config curl cmake perl rustup
+else
+    apk add -q build-base pkgconf curl cmake perl \
+        wayland-dev libxkbcommon-dev fontconfig-dev zstd-dev sqlite-dev vulkan-loader-dev
+fi
 
-if [ ! -x "$CARGO_HOME/bin/rustup" ]; then
+if [ -z "$NATIVE" ] && [ ! -x "$CARGO_HOME/bin/rustup" ]; then
     echo "== gram: installing rustup"
     curl -sSf -o /tmp/rustup-init \
         https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-musl/rustup-init
@@ -79,8 +89,8 @@ if grep -q '"x11"' crates/gram/Cargo.toml Cargo.toml; then
     fi
 fi
 
-# Gram's build scripts watch .git/logs/HEAD (for the commit ID, which stays unset: git
-# isn't in the container). A tarball has no .git, and Cargo counts a missing watched file
+# Gram's build scripts watch .git/logs/HEAD (for the commit ID, which stays unset: the
+# source has no git history). A tarball has no .git, and Cargo counts a missing watched file
 # as changed, so it would recompile the editor on every build. An empty one dated 1970
 # never looks newer than the last build.
 if [ ! -e .git/logs/HEAD ]; then
