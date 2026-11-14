@@ -337,7 +337,11 @@ editor is 228 MB with its symbols kept (for backtraces; 175 MB without).
   OpenGL passthrough: Alpine's Mesa is built without virgl (its gallium driver list for
   x86_64 has no `virgl`; Mesa says "virtio_gpu: driver missing"), so everything in the
   guest draws with llvmpipe whatever QEMU offers. (virtio-vga-gl with `egl-headless` also
-  crashed QEMU on exit and couldn't take screenshots: "no surface".) 4 CPUs, because
+  crashed QEMU on exit and couldn't take screenshots: "no surface".) Venus (`virtio-vga-gl,venus=on`: the guest's Vulkan
+  calls run on the host's GPU, through Alpine's `mesa-vulkan-virtio`) would work with the
+  host's QEMU and virglrenderer, but it also needs QEMU's OpenGL display, which breaks
+  headless test boots; the user chose to keep the VM simple, since it's mainly for
+  testing (2026-11-13). 4 CPUs, because
   llvmpipe at that size is busy. A virtio network card on QEMU's user network (address 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3), and an
   Intel HDA sound card played through the host's PipeWire if QEMU has that driver
   (`qemu-audio-pipewire`).

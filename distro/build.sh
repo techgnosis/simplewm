@@ -62,6 +62,7 @@ PACKAGES="
     vulkan-loader
     mesa-vulkan-ati
     mesa-vulkan-swrast
+    mesa-vulkan-virtio
 
     curl
     ca-certificates
