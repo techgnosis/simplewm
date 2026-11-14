@@ -238,12 +238,13 @@ impl State {
                 pointer.frame(self);
             }
             InputEvent::PointerAxis { event } => {
-                // Scrolling over the Environment, Desktop Portal, Network or File Picker window
+                // Scrolling over the Environment, Desktop Portal, Network, D-Bus or File Picker window
                 // scrolls its list.
                 if let Hit::Panel(
                     id @ (PanelId::Environment
                     | PanelId::Portal
                     | PanelId::Network
+                    | PanelId::Bus
                     | PanelId::FilePicker),
                     _,
                 ) = self.hit_test(self.pointer_location)
@@ -490,6 +491,7 @@ impl State {
                         }
                     }
                     PanelHit::ServiceLog(s) => self.panels.open_log(s),
+                    PanelHit::BusProgram(builtin) => self.panels.set_builtin_bus(builtin),
                     PanelHit::SudoOk => self.panels.sudo_submit(),
                     PanelHit::SudoCancel => self.panels.sudo_cancel(),
                     PanelHit::ChooseShotDir => {

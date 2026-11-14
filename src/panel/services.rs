@@ -1,6 +1,7 @@
 //! The services simplewm runs (see `crate::services`) on screen: the service row the
 //! Sound and D-Bus applets share (name, status, Start/Stop and Log buttons), the D-Bus
-//! applet, and the Log window that shows one service's output.
+//! applet (which program is the bus, and who's connected when it's simplewm's own, see
+//! `crate::bus`), and the Log window that shows one service's output.
 
 use smithay::{
     backend::renderer::{element::solid::SolidColorBuffer, gles::GlesRenderer},
@@ -8,8 +9,8 @@ use smithay::{
 };
 
 use super::{
-    BTN_H, HEADER_H, PAD, PanelHit, PanelId, Rect, SEPARATOR, bufs, button_color,
-    rows::{EnvRow, RowList},
+    BTN_H, HEADER_H, NOTE_H, PAD, PanelHit, PanelId, Rect, SEPARATOR, bufs, button_color,
+    rows::{ENV_ROW_H, EnvRow, RowList},
 };
 use crate::{
     services::{self, Service, ServiceEvent},
@@ -25,8 +26,15 @@ const TOGGLE_W: i32 = 64;
 const LOG_W: i32 = 52;
 const GAP: i32 = 8;
 
-const BUS_W: i32 = 600;
+const BUS_W: i32 = 640;
 const BUS_LINE_H: i32 = 22;
+const CHOICE_W: i32 = 120;
+/// Rows of connected programs shown at once (the list scrolls).
+const BUS_LIST_ROWS: i32 = 12;
+/// The settings key for "simplewm is the bus" ("1", else dbus-daemon).
+pub(super) const BUILTIN_BUS_KEY: &str = "bus_builtin";
+/// The chosen program.
+const CHOICE_SELECTED: [f32; 4] = [0.25, 0.42, 0.70, 1.0];
 
 pub(super) const LOG_WIN_W: i32 = 860;
 pub(super) const LOG_WIN_H: i32 = 500;
@@ -62,8 +70,13 @@ pub(super) fn service_row(x: i32, y: i32, w: i32) -> ServiceRow {
 struct BusLayout {
     header: Rect,
     row: ServiceRow,
+    choice_label: Rect,
+    /// dbus-daemon, then simplewm.
+    choices: [Rect; 2],
+    note: Rect,
     separator: Rect,
     address: Rect,
+    list: Rect,
 }
 
 fn bus_layout(c: Rect) -> BusLayout {
@@ -73,15 +86,32 @@ fn bus_layout(c: Rect) -> BusLayout {
     let header = Rectangle::new((x, y).into(), (w, HEADER_H).into());
     y += HEADER_H;
     let row = service_row(x, y, w);
-    y += SERVICE_ROW_H + PAD;
+    y += SERVICE_ROW_H;
+    let choice_label = Rectangle::new((x, y).into(), (NAME_W, BTN_H).into());
+    let choice = |i: i32| {
+        Rectangle::new(
+            (x + NAME_W + GAP + i * (CHOICE_W + GAP), y).into(),
+            (CHOICE_W, BTN_H).into(),
+        )
+    };
+    let choices = [choice(0), choice(1)];
+    y += BTN_H + 4;
+    let note = Rectangle::new((x, y).into(), (w, NOTE_H).into());
+    y += NOTE_H + PAD;
     let separator = Rectangle::new((x, y).into(), (w, 1).into());
     y += 1 + PAD;
     let address = Rectangle::new((x, y).into(), (w, BUS_LINE_H).into());
+    y += BUS_LINE_H + 4;
+    let list = Rectangle::new((x, y).into(), (w, BUS_LIST_ROWS * ENV_ROW_H).into());
     BusLayout {
         header,
         row,
+        choice_label,
+        choices,
+        note,
         separator,
         address,
+        list,
     }
 }
 
@@ -183,15 +213,74 @@ impl super::Panels {
     // --- D-Bus applet ---------------------------------------------------------
 
     pub(super) fn bus_size(&self) -> (i32, i32) {
-        (
-            BUS_W,
-            PAD + HEADER_H + SERVICE_ROW_H + PAD + 1 + PAD + BUS_LINE_H + PAD,
-        )
+        let c = bus_layout(Rectangle::new((0, 0).into(), (BUS_W, 0).into()));
+        (BUS_W, c.list.loc.y + c.list.size.h + PAD)
     }
 
     pub(super) fn bus_hit(&self, p: Point<f64, Logical>) -> Option<PanelHit> {
         let l = bus_layout(self.content_rect(PanelId::Bus));
+        if let Some(i) = l.choices.iter().position(|r| r.to_f64().contains(p)) {
+            return Some(PanelHit::BusProgram(i == 1));
+        }
         self.service_row_hit(Service::Bus, &l.row, p)
+    }
+
+    /// The dbus-daemon / simplewm choice: remembered, and used the next time the bus starts.
+    pub fn set_builtin_bus(&mut self, builtin: bool) {
+        self.services.builtin_bus = builtin;
+        self.save_settings(&[(BUILTIN_BUS_KEY, if builtin { "1" } else { "" })]);
+    }
+
+    /// The line under the choice.
+    fn bus_note(&self) -> String {
+        let builtin = self.services.builtin_bus;
+        let running = self.services.bus_peers().is_some();
+        let ours = matches!(
+            self.services.status(Service::Bus),
+            services::Status::Starting | services::Status::Running
+        );
+        if ours && builtin != running {
+            "Stop and Start the bus to switch. Programs on it lose their connection.".into()
+        } else if builtin {
+            "simplewm is the bus itself: no dbus-daemon runs.".into()
+        } else {
+            "simplewm starts dbus-daemon as the bus.".into()
+        }
+    }
+
+    /// The connected programs, or why there's no list.
+    fn bus_rows(&self) -> Vec<EnvRow> {
+        let Some(peers) = self.services.bus_peers() else {
+            let why = match self.services.status(Service::Bus) {
+                services::Status::Running | services::Status::Elsewhere(_) => {
+                    "Only simplewm's own bus can list who's connected."
+                }
+                _ => "The bus isn't running.",
+            };
+            return vec![EnvRow::Line(why.into())];
+        };
+        let mut rows = vec![EnvRow::Header(format!(
+            "Connected programs: {}",
+            peers.len()
+        ))];
+        rows.extend(peers.into_iter().map(|p| {
+            let program = std::path::Path::new(&p.program)
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let who = if program.is_empty() {
+                format!("{}  PID {}", p.name, p.pid)
+            } else {
+                format!("{}  {program} ({})", p.name, p.pid)
+            };
+            EnvRow::Item(who, p.names.join(", "))
+        }));
+        rows
+    }
+
+    pub(super) fn scroll_bus(&mut self, amount: f64) {
+        let vp = bus_layout(self.content_rect(PanelId::Bus)).list;
+        self.bus_list.scroll_by(amount, vp);
     }
 
     pub(super) fn render_bus(
@@ -202,8 +291,12 @@ impl super::Panels {
         elems: &mut Vec<CustomElement>,
     ) {
         let l = bus_layout(self.content_rect(PanelId::Bus));
-        // Buffers: Start/Stop, Log, separator.
-        let solids = bufs(&mut self.windows[PanelId::Bus as usize].solids, 3);
+        let rows = self.bus_rows();
+        self.bus_list.set(rows, l.list);
+        let note = self.bus_note();
+        let builtin = self.services.builtin_bus;
+        // Buffers: Start/Stop, Log, the two choices, separator.
+        let solids = bufs(&mut self.bus_solids, 5);
         elems.extend(ui::text_in(
             text,
             renderer,
@@ -221,6 +314,37 @@ impl super::Panels {
             hovered,
             elems,
         );
+        elems.extend(ui::text_in(
+            text,
+            renderer,
+            "Run by",
+            l.choice_label.loc.x,
+            l.choice_label,
+        ));
+        for (i, (label, r)) in ["dbus-daemon", "simplewm"]
+            .iter()
+            .zip(l.choices)
+            .enumerate()
+        {
+            let chosen = (i == 1) == builtin;
+            let hit = PanelHit::BusProgram(i == 1);
+            let color = if chosen {
+                CHOICE_SELECTED
+            } else {
+                button_color(hovered, hit)
+            };
+            elems.extend(ui::text_centered(text, renderer, label, r));
+            elems.push(ui::solid(&mut solids[2 + i], r, color));
+        }
+        let note = text.fit(&note, l.note.size.w);
+        elems.extend(ui::text_in_alpha(
+            text,
+            renderer,
+            &note,
+            l.note.loc.x,
+            l.note,
+            0.7,
+        ));
         let address = services::bus_address().unwrap_or_else(|| "none".into());
         let address = text.fit(&format!("Address: {address}"), l.address.size.w);
         elems.extend(ui::text_in(
@@ -230,7 +354,14 @@ impl super::Panels {
             l.address.loc.x,
             l.address,
         ));
-        elems.push(ui::solid(&mut solids[2], l.separator, SEPARATOR));
+        elems.push(ui::solid(&mut solids[4], l.separator, SEPARATOR));
+        self.bus_list.render(
+            l.list,
+            &mut self.windows[PanelId::Bus as usize].solids,
+            text,
+            renderer,
+            elems,
+        );
     }
 
     // --- Log window -------------------------------------------------------------

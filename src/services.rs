@@ -1,6 +1,7 @@
 //! The user services simplewm runs itself, in place of `systemd --user`: the D-Bus
-//! session bus (`dbus-daemon`), PipeWire, its PulseAudio server (`pipewire-pulse`) and
-//! WirePlumber. No UI here; the Sound and D-Bus applets show and control them.
+//! session bus (`dbus-daemon`, or simplewm's own bus in `crate::bus` when the D-Bus applet
+//! says so), PipeWire, its PulseAudio server (`pipewire-pulse`) and WirePlumber. No UI
+//! here; the Sound and D-Bus applets show and control them.
 //!
 //! This is deliberately small: a fixed list of programs simplewm always needs, started in
 //! order on a TTY, stopped when simplewm quits, with their output kept as a log. Nothing
@@ -160,6 +161,10 @@ impl Default for Proc {
 pub struct Services {
     procs: [Proc; 4],
     notify: Notify,
+    /// Whether the next start of the bus serves it inside simplewm (else `dbus-daemon`).
+    pub builtin_bus: bool,
+    /// simplewm's own bus, while it runs.
+    bus: Option<crate::bus::Bus>,
     /// For the bus's environment, so services it starts can open windows.
     wayland_display: String,
     /// Services still to start at login, each once what it needs is up.
@@ -171,6 +176,8 @@ impl Services {
         Services {
             procs: Default::default(),
             notify,
+            builtin_bus: false,
+            bus: None,
             wayland_display,
             pending: Vec::new(),
         }
@@ -189,11 +196,19 @@ impl Services {
         &self.procs[s.index()].log
     }
 
+    /// The programs connected to simplewm's own bus, if it's running.
+    pub fn bus_peers(&self) -> Option<Vec<crate::bus::PeerInfo>> {
+        self.bus.as_ref().map(|b| b.peers())
+    }
+
     /// One line for the applets: "Running (PID 123)".
     pub fn describe(&self, s: Service) -> String {
         match self.status(s) {
             Status::Stopped => "Stopped".into(),
             Status::Starting => "Starting…".into(),
+            Status::Running if s == Service::Bus && self.bus.is_some() => {
+                "Running inside simplewm".into()
+            }
             Status::Running => match self.pid(s) {
                 Some(pid) => format!("Running (PID {pid})"),
                 None => "Running".into(),
@@ -268,7 +283,12 @@ impl Services {
             self.procs[s.index()].status = Status::Elsewhere(who);
             return;
         }
-        match self.spawn(s, &runtime) {
+        let started = if s == Service::Bus && self.builtin_bus {
+            self.start_bus()
+        } else {
+            self.spawn(s, &runtime)
+        };
+        match started {
             Ok(()) => {}
             Err(why) => {
                 tracing::warn!(service = s.name(), why, "cannot start service");
@@ -396,9 +416,56 @@ impl Services {
         Ok(())
     }
 
+    /// Serve the session bus inside simplewm (see `crate::bus`). It's up as soon as it
+    /// listens, so it's Running straight away.
+    fn start_bus(&mut self) -> Result<(), String> {
+        let address = bus_address().ok_or("no bus address (XDG_RUNTIME_DIR is not set)")?;
+        let path = bus_socket(&address)
+            .ok_or_else(|| format!("the bus address {address} isn't a socket path"))?;
+        let p = &mut self.procs[Service::Bus.index()];
+        p.run += 1;
+        let run = p.run;
+        let notify = self.notify.clone();
+        let send = move |kind| {
+            notify(ServiceEvent {
+                service: Service::Bus,
+                run,
+                kind,
+            })
+        };
+        let bus = crate::bus::Bus::start(
+            &path,
+            Arc::new(move |ev| match ev {
+                crate::bus::Event::Note(line) => send(EventKind::Line(line)),
+                crate::bus::Event::Stopped(how) => send(EventKind::Exited(how)),
+            }),
+        )?;
+        self.bus = Some(bus);
+        self.procs[Service::Bus.index()].status = Status::Running;
+        tracing::info!(?path, "serving the session bus");
+        self.note(
+            Service::Bus,
+            format!(
+                "simplewm: serving the session bus itself on {}",
+                path.display()
+            ),
+        );
+        Ok(())
+    }
+
     /// Ask a service simplewm started to stop: SIGTERM, then SIGKILL after `STOP_GRACE`.
+    /// simplewm's own bus stops at once.
     pub fn stop(&mut self, s: Service) {
         if !matches!(self.status(s), Status::Starting | Status::Running) {
+            return;
+        }
+        if s == Service::Bus
+            && let Some(bus) = self.bus.take()
+        {
+            bus.stop();
+            self.procs[s.index()].status = Status::Stopped;
+            tracing::info!("stopped serving the session bus");
+            self.note(s, "simplewm: stopped serving the session bus".into());
             return;
         }
         let p = &mut self.procs[s.index()];
@@ -444,6 +511,10 @@ impl Services {
         for slot in &slots {
             signal(slot, libc::SIGKILL);
         }
+        // Last, like dbus-daemon above: the others may still be talking on it.
+        if let Some(bus) = self.bus.take() {
+            bus.stop();
+        }
     }
 
     /// Take in an event from a service's threads. Returns whether its status changed.
@@ -464,6 +535,10 @@ impl Services {
                 starting
             }
             EventKind::Exited(how) if current => {
+                if s == Service::Bus {
+                    // simplewm's own bus thread died: let go of its socket too.
+                    self.bus.take();
+                }
                 let p = &mut self.procs[s.index()];
                 let asked = p.status == Status::Stopping;
                 p.status = if asked {
@@ -794,6 +869,23 @@ mod tests {
             "{log:?}"
         );
         assert!(log.iter().any(|l| l.contains("stopping")), "{log:?}");
+
+        // simplewm's own bus: up at once, on the same socket, and gone when stopped.
+        services.builtin_bus = true;
+        services.start(Service::Bus);
+        assert_eq!(services.status(Service::Bus), &Status::Running);
+        assert_eq!(services.describe(Service::Bus), "Running inside simplewm");
+        let mut conn = UnixStream::connect(dir.join("bus")).unwrap();
+        assert_eq!(peer_pid(&conn), Some(std::process::id()));
+        // It answers the D-Bus handshake.
+        use std::io::{Read, Write};
+        conn.write_all(b"\0AUTH EXTERNAL\r\n").unwrap();
+        let mut answer = [0u8; 4];
+        conn.read_exact(&mut answer).unwrap();
+        assert_eq!(&answer, b"DATA");
+        services.stop(Service::Bus);
+        assert_eq!(services.status(Service::Bus), &Status::Stopped);
+        assert!(!dir.join("bus").exists());
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

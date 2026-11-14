@@ -17,8 +17,9 @@
 //! * The Sound applet window chooses PipeWire's sound card and sets its volume
 //!   (see `sound` and `crate::sound`), and starts and stops PipeWire, its Pulse
 //!   server and WirePlumber.
-//! * The D-Bus applet window starts and stops the session bus (see `services` and
-//!   `crate::services`).
+//! * The D-Bus applet window starts and stops the session bus, chooses whether
+//!   dbus-daemon or simplewm itself is the bus, and lists who's connected to
+//!   simplewm's own (see `services`, `crate::services` and `crate::bus`).
 //! * The Log window is not in the Control Panel: a service's Log button opens it on
 //!   that service's output (see `services`).
 //! * The Password window is not in the Control Panel either: it asks for the
@@ -228,6 +229,8 @@ pub enum PanelHit {
     // A service's Start/Stop and Log buttons (Sound and D-Bus applets).
     ServiceToggle(Service),
     ServiceLog(Service),
+    // D-Bus: which program is the bus (true: simplewm itself).
+    BusProgram(bool),
     // Password window
     SudoOk,
     SudoCancel,
@@ -292,6 +295,9 @@ pub struct Panels {
     log_service: Option<Service>,
     log_title: String,
     log_rows: RowList,
+    /// The D-Bus applet's connected programs, and its other buffers.
+    bus_list: RowList,
+    bus_solids: Vec<SolidColorBuffer>,
     /// Environment rows (refreshed when the window is opened).
     env: RowList,
     /// Desktop Portal check results (refreshed on open and by Refresh).
@@ -326,6 +332,8 @@ impl Panels {
             log_service: None,
             log_title: String::new(),
             log_rows: RowList::default(),
+            bus_list: RowList::default(),
+            bus_solids: Vec::new(),
             env: RowList::default(),
             portal_rows: RowList::default(),
             portal_refresh_buf: None,
@@ -337,6 +345,8 @@ impl Panels {
             store,
         };
         panels.load_network();
+        panels.services.builtin_bus =
+            panels.store.setting(services::BUILTIN_BUS_KEY).as_deref() == Some("1");
         panels
     }
 

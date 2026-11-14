@@ -196,7 +196,7 @@ impl super::Panels {
             .then_some(PanelHit::Refresh)
     }
 
-    /// Scroll a row list window (Environment, Desktop Portal, Network, Log) by
+    /// Scroll a row list window (Environment, Desktop Portal, Network, D-Bus, Log) by
     /// `amount` (pointer axis units; positive scrolls down).
     pub fn scroll_rows(&mut self, id: PanelId, amount: f64) {
         match id {
@@ -209,6 +209,7 @@ impl super::Panels {
                 self.portal_rows.scroll_by(amount, vp);
             }
             PanelId::Network => self.scroll_network(amount),
+            PanelId::Bus => self.scroll_bus(amount),
             PanelId::Log => {
                 let vp = self.log_viewport();
                 self.log_rows.scroll_by(amount, vp);

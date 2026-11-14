@@ -44,10 +44,11 @@ rules below.
   queues for the name and sends SIGTERM to a leftover `xdg-desktop-portal`. It starts once
   the bus is up and restarts when the bus comes back (`State::ensure_portal`). Nested, it
   leaves the name alone.
-- **User services** (`services.rs`), in place of `systemd --user`: dbus-daemon, pipewire,
-  pipewire-pulse and wireplumber, started on a TTY in that order, each once the one before
-  answers on its socket. One that's already running is left alone and shown as "Run by PID
-  n (program)". Each keeps its last 2000 output lines as a log. Nothing restarts them: the
+- **User services** (`services.rs`), in place of `systemd --user`: the session bus,
+  pipewire, pipewire-pulse and wireplumber, started on a TTY in that order, each once the
+  one before answers on its socket. The D-Bus applet chooses who the bus is: dbus-daemon
+  (the default) or simplewm itself (`bus.rs`), used from the bus's next start. One
+  that's already running is left alone and shown as "Run by PID n (program)". Each keeps its last 2000 output lines as a log. Nothing restarts them: the
   user presses Start. They're stopped when simplewm quits, and get SIGTERM if it dies
   (`PR_SET_PDEATHSIG`). No unit files, no dependency engine, no other services. Nothing
   uses `systemctl`, and nothing is exported to D-Bus activation.
@@ -59,6 +60,12 @@ rules below.
   doesn't match the saved settings.
 - **Sound applet:** uses `pw-dump` and `wpctl`, and WirePlumber remembers the choices.
   With one output it just names it; with several it lists them to choose from.
+- **simplewm's own bus** (`bus.rs`, `bus/rule.rs`): zbus's server side does each
+  connection's handshake; `bus.rs` does names, queues, match rules, routing and
+  `org.freedesktop.DBus`. Only the user's own uid may connect. No activation
+  (`StartServiceByName` only answers for names already owned), no policy, no monitors
+  (`dbus-monitor` falls back to seeing signals only). It runs on its own threads, and a
+  panic there stops the bus, not simplewm.
 
 ## Checking a change
 
@@ -69,6 +76,8 @@ rules below.
   - After touching `portal.rs`, `portal_check.rs` or zbus:
     `dbus-run-session -- cargo test bus -- --ignored`.
   - After touching `services.rs`: `cargo test runs_the_session_daemon -- --ignored`.
+  - After touching `bus.rs`: `cargo test talks_to_c_clients -- --ignored` (needs
+    `dbus-send` and `gdbus`). The other bus tests run with plain `cargo test`.
   - `network::namespace_test` runs the root `ip` script in a throwaway namespace.
 - Don't start PipeWire in tests: it would fight the running one for HDMI.
 - `make` builds the release with `--locked`. `make install` copies it to `/usr/bin`.
@@ -118,6 +127,8 @@ list when something changes.
   click raises it, right click centers it.
 - `text.rs`: fontdue rasterizing. `clock.rs`: libc `strftime`.
 - `services.rs`: the user services, plus `/proc` helpers and `bus_address`.
+- `bus.rs`: simplewm as the session bus (threads "bus-accept" and "bus"; one future
+  polls every connection, each with its own send queue). `bus/rule.rs`: match rules.
 - Logic behind the applets, with no UI: `network.rs`, `sound.rs`, `screenshot.rs`
   (offscreen render, PNG written on a worker), `portal.rs` (its own thread, answers sent
   later as Response signals), `portal_check.rs`. Workers report back over calloop
@@ -131,7 +142,8 @@ applet's state. `panel.rs` has the shared parts (placement, frame, hit-test/rend
 dispatch, `PanelHit`, sizes and colors). Each window has its own file of
 `impl super::Panels` blocks: `control.rs` (Control Panel and Help), `launcher.rs`,
 `screenshot.rs`, `network.rs`, `sound.rs`, `rows.rs` (Environment, Desktop Portal and the
-shared `RowList`), `services.rs` (the service row, the D-Bus applet, the Log window),
+shared `RowList`), `services.rs` (the service row, the D-Bus applet with its choice of bus and list of
+connected programs, the Log window),
 `picker.rs` (File Picker) and `sudo.rs` (Password window: `ask_password(SudoJob)` →
 `job_finished`). Shared helpers: `text_field.rs` and `store.rs` (to change the settings
 format, bump `VERSION` and keep reading the old one).
