@@ -423,6 +423,11 @@ impl Router {
     fn connected(&mut self, h: Handshake, result: zbus::Result<Connection>) {
         let conn = match result {
             Ok(c) => c,
+            // It hung up before finishing the handshake: someone checking that the bus
+            // listens (`services::other_instance`), not a failure.
+            Err(zbus::Error::InputOutput(err)) if err.kind() == std::io::ErrorKind::BrokenPipe => {
+                return;
+            }
             Err(err) => {
                 (self.notify)(Event::Note(format!(
                     "{} couldn't connect: {err}",
@@ -1539,6 +1544,33 @@ mod tests {
         });
         assert!(!Path::new(&path).exists());
         assert!(!log.lock().unwrap().iter().any(|l| l.starts_with("STOPPED")));
+    }
+
+    /// Checking that something listens (connecting and hanging up at once, as
+    /// `services::other_instance` does) isn't a failed connection worth logging.
+    #[test]
+    fn a_bare_probe_is_not_logged() {
+        let (bus, address, log) = scratch_bus("probe");
+        let path = address.trim_start_matches("unix:path=").to_string();
+        drop(UnixStream::connect(&path).unwrap());
+        // A real client afterwards shows the probe has been dealt with.
+        within(move || {
+            zbus::block_on(async move {
+                let a = client(&address).await;
+                DBusProxy::new(&a)
+                    .await
+                    .unwrap()
+                    .list_names()
+                    .await
+                    .unwrap();
+            });
+        });
+        drop(bus);
+        let log = log.lock().unwrap().clone();
+        assert!(
+            !log.iter().any(|l| l.contains("couldn't connect")),
+            "{log:?}"
+        );
     }
 
     /// libdbus, the way Firefox uses it, loaded with dlopen (the system has the library

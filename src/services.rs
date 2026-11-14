@@ -254,8 +254,14 @@ impl Services {
         let Some(runtime) = runtime_dir() else { return };
         for s in Service::ALL {
             let p = &mut self.procs[s.index()];
+            // Ours: don't knock on its socket (the bus would log the visit).
+            if matches!(
+                p.status,
+                Status::Starting | Status::Running | Status::Stopping
+            ) {
+                continue;
+            }
             match (&p.status, other_instance(s, &runtime)) {
-                (Status::Starting | Status::Running | Status::Stopping, _) => {}
                 (_, Some(who)) => p.status = Status::Elsewhere(who),
                 (Status::Elsewhere(_), None) => p.status = Status::Stopped,
                 _ => {}
