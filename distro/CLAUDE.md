@@ -271,6 +271,8 @@ answers that one too, always "server side". Not in the Launcher by default yet.
 - `where.sh` and `apk.sh`, sourced by the build scripts: where the build runs (container
   or distro) and apk set up for either; `keys/` holds Alpine's signing keys. See
   "Building in the distro".
+- `make-slots.sh`, `install.sh`, `efibootmgr.sh`, `move-home.sh` and the `disk.sh` they
+  share: the disk layout and installs, see "On the user's machine".
 **Gram** (https://gram-editor.com, a fork of Zed with no AI or telemetry; 3.5.0) is in
 the image, built from source for musl because Alpine doesn't package it, and it's in the
 Launcher by default (simplewm's first-run entries). `/usr/bin/gram` is its command-line
@@ -501,7 +503,9 @@ since there's no package manager.
     simplewm starts it).
   - Programs nobody here would run: PulseAudio's X11 helpers (`start-pulseaudio-x11`,
     `pax11publish`), GTK's HTML5 display server `broadwayd`, sudo's log-server tools
-    (`sudo_logsrvd`, `sudo_sendlog`, `sudoreplay`), `libcamera-bug-report`. Kept on
+    (`sudo_logsrvd`, `sudo_sendlog`, `sudoreplay`), `libcamera-bug-report`, e2fsprogs'
+    `e2scrub`, `e2scrub_all` and `e2scrub.conf` (they check LVM snapshots; no LVM here)
+    and `e2initrd_helper` (for initramfs). Kept on
     purpose although a first pass listed them: `pkgconf`/`pkg-config` (Rust crates that
     link C libraries need it), the `spirv-*`, `gi-*` and gdk-pixbuf developer tools,
     GObject typelibs (`/usr/lib/girepository-1.0`, for Python or JavaScript GTK
@@ -594,7 +598,7 @@ wc -l`), empty folders, and links that point nowhere, checked from inside the ro
 busybox's links are absolute, so a check from outside sees them all as dangling).
 
 After trimming, `/etc` holds: bash, dbus-1 (session.conf), fonts, group, hostname,
-hosts, inputrc, machine-id, mtab, passwd, profile, profile.d, protocols, services, shadow,
+hosts, inputrc, machine-id, mke2fs.conf, mtab, passwd, profile, profile.d, protocols, services, shadow,
 shells, ssl, sudoers, sudoers.d, terminfo, udev. Kept on purpose: `/var/tmp`, `/var/run`
 and `/var/lock` (programs expect them). sudo's first-use lecture is turned off (`Defaults lecture=never`). The only setuid program left is
 `sudo` (the Network applet needs it).
@@ -822,53 +826,76 @@ The hardware (`lspci -k` on the host): Intel Core i5-6500 (Skylake), AMD Radeon 
 chipset's Intel HDA (Realtek ALC662 codec) and HDMI audio on the AMD card (both
 snd_hda_intel), an Intel I219-V network card (e1000e), and two SATA SSDs on the
 chipset's AHCI controller: `sda` (1 TB) is the CachyOS host with its systemd-boot,
-`sdb` (256 GB Samsung 850 PRO) is the distro's. USB is the chipset's xHCI. All of these
+`sdb` (256 GB Samsung 850 PRO) is the distro's (its old install, and its home; see
+below for the move to slots on `sda`). USB is the chipset's xHCI. All of these
 drivers are built into our kernel, and must stay built in when it's trimmed.
 
-**The disk** (`install.sh`, run as root on the host): GPT with three partitions, which the
-scripts find by name, never by `sdX` (the disks' letters can swap between boots):
+**The disks: two system slots and a shared home** (the user's plan, 2026-11-14). No
+bootloader; the firmware starts a kernel directly. The user keeps two copies of the
+distro so the running one can build and install the next into the other, then boots
+that one:
 
-- `distro-esp`, 512 MiB, FAT32 (label DISTRO): the EFI system partition. The kernel is
-  `\EFI\distro\vmlinuz.efi`.
-- `distro-root`, 32 GiB (`ROOT_SIZE`): `out/root.img` written over it with `dd`, then
-  checked and grown to fill the partition (`resize2fs`).
-- `distro-home`, the rest (ext4, label home, GPT type Linux /home): the home folders.
-  simplewm-init mounts it on `/home` (`nosuid,nodev`), finding it by its GPT name in
-  `/sys/class/block/*/uevent` (`PARTNAME`), and unmounts it at shutdown before
-  remounting `/` read-only. Without one (the VM) `/home` is the root filesystem's; if
-  it won't mount, simplewm-init says so on the console and carries on with the root's.
+- `sda` (1 TB): 1 the EFI system partition (CachyOS's, 2 GB, with systemd-boot, which we
+  don't use; our kernels go in `\EFI\simplewm\a.efi` and `b.efi`), 2 Arch (CachyOS,
+  ext4, GPT name `root`), 3 `distro-a` and 4 `distro-b` (150 GiB each, `SLOT_SIZE_GIB`,
+  type Linux root x86-64).
+- `sdb` (256 GB): one partition, `distro-home` (ext4, label home), mounted on `/home` by
+  whichever slot runs (simplewm-init finds it by its GPT name on any disk).
+- Firmware boot entries "Distro A" and "Distro B": each starts its kernel with
+  `root=PARTUUID=<its slot> rw rootwait`, last in the boot order (the machine still
+  starts CachyOS; the user picks one in the firmware's boot menu; they asked for no
+  bootloader and no one-time-boot option). Made once by `efibootmgr.sh`; partition IDs
+  never change, so installs don't touch them.
+- The cycle: on A, `distro/build.sh`, then `sudo distro/install.sh` (it picks the slot
+  that isn't running, B), reboot and pick Distro B; on B the same installs into A. The
+  home, with the project, its `cache/` and `target/` (Gram's 40-minute build), is the
+  same in both.
+- Partitions are found by GPT name, never by `sdX` (the disks' letters can swap between
+  boots), and mounts by device number (the distro's `/` shows as `/dev/root`); all in
+  `disk.sh`. Each slot's filesystem gets its own UUID and label (`simplewm-a`/`-b`) at
+  install, so the two don't look like one filesystem to Arch's udev.
 
-So the user can change the system here and install it again without losing their home:
-the user asked for this. The first run erases the disk, after showing what's on it and
-asking for its name to be typed. Later runs replace the root filesystem and kernel
-without asking and never touch `distro-home`. The home partition is written only when
-it's made, with the build's `/home` (the user's Rust and simplewm's default settings).
-So what the build puts in the home later (a new `RUST_VERSION`, a changed `.profile`)
-doesn't reach an installed home: the user runs `rustup` there themselves, or Claude
-writes them the steps. The user's account must keep UID 1000 (it does: simplewm-init
-looks for that UID) so the files on the home partition stay theirs. A disk from before
-the home partition (esp, and root filling the rest; the user's sdb as of 2026-11-13)
-gets one on the next run, after the same typed confirmation: root's partition shrinks
-in place to 32 GiB, keeping its PARTUUID (so the boot entry still works; checked with
-sfdisk on a copy of the layout), and the home partition takes the rest. The user had
-nothing to keep in the old home. It refuses a disk with anything mounted or that holds
-the host's root filesystem.
+The scripts (all need root; Claude can't run them, since sudo needs the user's password:
+the user runs them, e.g. `! sudo distro/install.sh` in Claude Code):
 
-Tested in QEMU with a second disk holding a `distro-home` partition: mounted on `/home`,
-the user's files came from it, files written in the session went to it (not to the
-root filesystem), and it was clean after `poweroff`.
+- `make-slots.sh /dev/sda` (once, from the distro: ext4 shrinks only unmounted):
+  checks Arch's filesystem, refuses unless resize2fs's minimum plus `SPARE_GIB` (50)
+  fits, shrinks the filesystem 1 GiB under the new size, shrinks partition 2 with sfdisk
+  `-N 2` (start, type, partition ID and name kept; `--wipe-partitions never`), appends
+  the two slots at the end of the disk (1 MiB aligned), grows the filesystem to fill and
+  checks again. Shows the plan and wants the disk's name typed. Rehearsed 2026-11-14 on
+  files (a 2 GiB disk image, a filled ext4 whose last file had to move): the partition
+  table came out as planned (`sfdisk --verify` clean), the file moved and every checked
+  file was intact, e2fsck clean before and after. Not run on the real disk yet.
+- `install.sh [a|b]`: `out/root.img` onto the slot (dd, e2fsck, resize2fs, new UUID and
+  label), `out/vmlinuz` onto the EFI partition of the slot's disk (mounted for the copy
+  unless it already is, as on Arch). Without an argument, the slot not running; refuses
+  the running slot and anything mounted. Works on Arch and in the distro.
+- `efibootmgr.sh` (once, on Arch): removes every "Distro…" entry, adds Distro A and B.
+- `move-home.sh /var/tmp/distro-home.tar` (once, on Arch): tars the old `distro-home`
+  (GNU tar: numeric owners, ACLs, xattrs, sparse; compared with the source before
+  anything is erased), makes `sdb` one `distro-home` partition, unpacks and compares
+  again, keeps the tar until the user deletes it. Refuses a disk with partitions other
+  than distro-esp/root/home, or anything mounted.
+- In a distro whose image lacks e2fsprogs/sfdisk/lsblk (the install on `sdb2`, from
+  before they were added to `PACKAGES`), `disk.sh` takes them from `cache/tools/`, which
+  `build.sh` fills (as the user) with apk.static.
 
-**Booting** (`efibootmgr.sh`): no bootloader. The kernel is an EFI program (`EFI_STUB`),
-so an EFI boot entry called Distro starts it directly with the command line
-`root=PARTUUID=<distro-root's ID> rw rootwait`. The entry goes last in the boot order, so
-the machine still starts CachyOS; the user picks Distro from the firmware's boot menu
-(they asked for no one-time-boot option). Running it again
-replaces the entry; it only needs to after the disk is partitioned again (the entry and
-`root=` name the partitions by their IDs). No `console=` for the serial port: messages go
-to the screen (simpledrm on the firmware's framebuffer until amdgpu takes over).
+**Where the move stands** (2026-11-14): the distro still runs from the old layout on
+`sdb` (`distro-esp`, `distro-root` 32 GiB, `distro-home`; installed by the old whole-disk
+`install.sh`, now replaced; the old firmware entry is called "Distro"). Steps, the user
+running each:
 
-Claude can't run either script (sudo needs the user's password). The user runs them,
-e.g. `! sudo distro/install.sh /dev/sdb` in Claude Code, or in a terminal.
+1. Back up anything on Arch they can't lose (a power cut during the shrink can wreck it).
+2. In the distro (`sdb`): `distro/build.sh` (puts the disk tools in `cache/tools/` and
+   makes an image that has them), then `sudo distro/make-slots.sh /dev/sda`.
+3. Still there: `sudo distro/install.sh a`, then `sudo distro/install.sh b`.
+4. Reboot into Arch: check it boots and works (the shrink), `git pull` (these scripts
+   are on Arch's copy only after that), `sudo distro/efibootmgr.sh`, then
+   `sudo distro/move-home.sh /var/tmp/distro-home.tar`. Also the checks in "Next steps,
+   on the Arch host" above (the native build).
+5. Boot Distro A from the firmware menu: the home should be there unchanged (Gram built).
+   Then delete the tar on Arch, and update this section.
 
 ## Open questions
 

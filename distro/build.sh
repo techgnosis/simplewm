@@ -25,7 +25,9 @@ cd "$PROJECT/distro"
 # What goes into the root filesystem. Vulkan (the loader, radv for AMD cards, lavapipe
 # for software rendering in the VM) is for Gram, which draws with Vulkan, or OpenGL if
 # there's none. wayland-utils (wayland-info) is for checking what
-# simplewm offers apps. The last group is for development: Rust (rustup, which the build
+# simplewm offers apps. e2fsprogs (with resize2fs and tune2fs, in -extra), sfdisk and lsblk
+# are for installing the system into its other slot from itself (install.sh). The last
+# group is for development: Rust (rustup, which the build
 # uses to install RUST_VERSION into the user's home; it needs curl, CA certificates and
 # git, and a C toolchain to link), C (build-base: gcc, musl headers, make, binutils), Go and Python,
 # plus GNU grep and sed (busybox's lack options people and LLMs use, like grep -P).
@@ -60,6 +62,11 @@ PACKAGES="
     iproute2
     sudo
     shared-mime-info
+
+    e2fsprogs
+    e2fsprogs-extra
+    sfdisk
+    lsblk
 
     alacritty
     firefox
@@ -306,6 +313,11 @@ REMOVE="
     /usr/lib/udev/rules.d/75-probe_mtd.rules
     /usr/lib/udev/mtd_probe
     /usr/lib/udev/rules.d/81-net-dhcp.rules
+
+    /etc/e2scrub.conf
+    /usr/sbin/e2scrub
+    /usr/sbin/e2scrub_all
+    /usr/lib/e2initrd_helper
 "
 # BUSYBOX: busybox commands for what this system doesn't do (kernel modules, other init
 # systems and logins, cron, syslog, mail, DHCP, ifupdown, initramfs, NAND flash, …) or
@@ -562,7 +574,9 @@ sh build-simplewm.sh
 sh build-gram.sh
 
 echo "== tools"
-alpine_tools e2fsprogs
+# e2fsprogs for the image; with sfdisk and lsblk, also the disk tools make-slots.sh and
+# install.sh use in a distro whose image lacks them (see disk.sh).
+alpine_tools e2fsprogs e2fsprogs-extra sfdisk lsblk
 # The one console font the system gets (unpacked in the root part).
 alpine_fetch "$CACHE" font-terminus
 

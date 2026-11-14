@@ -1,52 +1,46 @@
 #!/bin/sh
-# Add a "Distro" entry to the machine's EFI boot menu that starts the distro's kernel on
-# the disk install.sh set up (it finds the partitions by their names, distro-esp and
-# distro-root, on whichever disk has them: /dev/sdb on the user's machine).
+# Add "Distro A" and "Distro B" to the machine's EFI boot menu: each starts its slot's
+# kernel (\EFI\simplewm\a.efi or b.efi, which install.sh puts on the EFI system
+# partition of the slots' disk) with root= naming its slot, distro-a or distro-b.
 #
-#   sudo distro/efibootmgr.sh          add it (replacing an older Distro entry)
+#   sudo distro/efibootmgr.sh
 #
-# The entry goes last in the boot order, so the machine still starts what it started
-# before; pick Distro in the firmware's boot menu. No bootloader: the
-# firmware starts the kernel itself (an EFI program) and hands it the command line
-# below. The entry names the partitions by their IDs, which only change if install.sh
-# partitions the disk again; then run this again.
+# Run once, on the Arch host (the distro doesn't mount efivarfs or have efibootmgr),
+# after make-slots.sh. The entries name partitions by their IDs, which never change, so
+# installs don't need it again. Older Distro entries (the one for the old install on its
+# own disk too) are replaced. The new entries go last in the boot order, so the machine
+# still starts what it started before; pick Distro A or B in the firmware's boot menu.
+# No bootloader: the firmware starts the kernel itself (an EFI program).
 set -eu
 
-die() {
-    echo "efibootmgr.sh: $*" >&2
-    exit 1
-}
+. "$(dirname "$0")/disk.sh"
 
-[ "$(id -u)" = 0 ] || die "needs root: sudo distro/efibootmgr.sh"
+need_root
 [ -d /sys/firmware/efi ] || die "this machine didn't start through EFI"
-[ $# = 0 ] || die "usage: sudo distro/efibootmgr.sh"
+[ $# = 0 ] || die "usage: sudo $0"
 
-label() {
-    lsblk -lnpo NAME,PARTLABEL | awk -v want="$1" '$2 == want { print $1 }'
-}
-esp=$(label distro-esp)
-root=$(label distro-root)
-[ -n "$esp" ] && [ -n "$root" ] || die "no disk with distro-esp and distro-root; run distro/install.sh first"
-[ "$(echo "$esp" | wc -l)" = 1 ] || die "more than one distro-esp partition: $esp"
-
-disk=/dev/$(lsblk -no PKNAME "$esp")
-partnum=$(cat "/sys/class/block/$(basename "$esp")/partition")
-rootuuid=$(lsblk -no PARTUUID "$root")
-[ -n "$rootuuid" ] || die "can't read $root's partition ID"
-cmdline="root=PARTUUID=$rootuuid rw rootwait"
-
-# Remove older Distro entries, keeping the boot order otherwise as it is.
+# Remove older Distro entries (Distro, Distro A, Distro B), keeping the order otherwise.
 for num in $(efibootmgr | sed -n 's/^Boot\([0-9A-F]\{4\}\)\*\{0,1\} Distro\b.*/\1/p'); do
     efibootmgr -q -b "$num" -B
 done
-order=$(efibootmgr | sed -n 's/^BootOrder: //p')
 
-efibootmgr -q --create --disk "$disk" --part "$partnum" --label Distro \
-    --loader '\EFI\distro\vmlinuz.efi' --unicode "$cmdline"
-num=$(efibootmgr | sed -n 's/^Boot\([0-9A-F]\{4\}\)\*\{0,1\} Distro\b.*/\1/p' | head -n 1)
-[ -n "$num" ] || die "the entry didn't show up"
-# efibootmgr puts a new entry first; put it last.
-efibootmgr -q -o "${order:+$order,}$num"
+for slot in a b; do
+    part=$(one_part "distro-$slot")
+    [ -n "$part" ] || die "no distro-$slot partition; run distro/make-slots.sh first"
+    disk=$(disk_of "$part")
+    esp=$(esp_of "$disk")
+    uuid=$(sfdisk --part-uuid "$disk" "$(part_number "$part")")
+    [ -n "$uuid" ] || die "can't read $part's partition ID"
+    label="Distro $(echo "$slot" | tr ab AB)"
+    cmdline="root=PARTUUID=$uuid rw rootwait"
 
-echo "Boot$num: Distro on $esp ($disk), root $root, command line: $cmdline"
+    order=$(efibootmgr | sed -n 's/^BootOrder: //p')
+    efibootmgr -q --create --disk "$disk" --part "$(part_number "$esp")" --label "$label" \
+        --loader "\\EFI\\simplewm\\$slot.efi" --unicode "$cmdline"
+    num=$(efibootmgr | sed -n "s/^Boot\\([0-9A-F]\\{4\\}\\)\\*\\{0,1\\} $label\\b.*/\\1/p" | head -n 1)
+    [ -n "$num" ] || die "the $label entry didn't show up"
+    # efibootmgr puts a new entry first; put it last.
+    efibootmgr -q -o "${order:+$order,}$num"
+    echo "Boot$num: $label, kernel \\EFI\\simplewm\\$slot.efi on $esp, command line: $cmdline"
+done
 efibootmgr | grep '^BootOrder:'
