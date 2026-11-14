@@ -184,6 +184,30 @@ impl Drop for Bus {
     }
 }
 
+/// For tests that use "the session bus" as apps find it (`Connection::session()`): one
+/// bus on a scratch socket for the whole run, named in `DBUS_SESSION_BUS_ADDRESS`. Only
+/// ignored tests call it, because it changes the environment.
+#[cfg(test)]
+pub fn scratch_session() {
+    static BUS: std::sync::OnceLock<Bus> = std::sync::OnceLock::new();
+    BUS.get_or_init(|| {
+        let dir = std::env::temp_dir().join(format!("simplewm-session-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("bus");
+        let bus = Bus::start(&path, Arc::new(|_| {})).unwrap();
+        // SAFETY: only std reads the environment in these tests (zbus through
+        // `std::env::var`, child processes through `Command`), and std serializes its
+        // own reads and writes.
+        unsafe {
+            std::env::set_var(
+                "DBUS_SESSION_BUS_ADDRESS",
+                format!("unix:path={}", path.display()),
+            )
+        };
+        bus
+    });
+}
+
 fn panic_text(panic: &Box<dyn std::any::Any + Send>) -> String {
     panic
         .downcast_ref::<&str>()
@@ -1517,8 +1541,90 @@ mod tests {
         assert!(!log.lock().unwrap().iter().any(|l| l.starts_with("STOPPED")));
     }
 
-    /// Real C clients: libdbus (`dbus-send`) and GLib (`gdbus`) against a scratch bus.
-    /// Needs both: `cargo test talks_to_c_clients -- --ignored`.
+    /// libdbus, the way Firefox uses it, loaded with dlopen (the system has the library
+    /// but not its headers or tools). On its own thread, it connects to `address`, says
+    /// Hello, calls org.simplewm.Test.Echo with `text` and returns the answer, then
+    /// sends the org.simplewm.Sig.Pong signal with `text`.
+    fn libdbus_echo_and_pong(
+        address: &str,
+        text: &str,
+    ) -> impl std::future::Future<Output = String> + use<> {
+        use std::ffi::{CStr, CString, c_char, c_int, c_void};
+        type Ptr = *mut c_void;
+        const TYPE_STRING: c_int = b's' as c_int;
+        const TYPE_INVALID: c_int = 0;
+        let address = CString::new(address).unwrap();
+        let text = CString::new(text).unwrap();
+        let (tx, rx) = futures_channel::oneshot::channel();
+        std::thread::spawn(move || {
+            // SAFETY: each symbol is cast to its signature in dbus/dbus-*.h; every
+            // pointer passed is a live C string, a libdbus object or null (for the
+            // optional DBusError).
+            let answer = unsafe {
+                let lib = libc::dlopen(c"libdbus-1.so.3".as_ptr(), libc::RTLD_NOW);
+                assert!(!lib.is_null(), "libdbus-1.so.3 isn't installed");
+                macro_rules! sym {
+                    ($name:literal: $ty:ty) => {{
+                        let f = libc::dlsym(lib, $name.as_ptr());
+                        assert!(!f.is_null(), "no {:?} in libdbus", $name);
+                        std::mem::transmute::<*mut c_void, $ty>(f)
+                    }};
+                }
+                let open = sym!(c"dbus_connection_open_private": unsafe extern "C" fn(*const c_char, Ptr) -> Ptr);
+                let register = sym!(c"dbus_bus_register": unsafe extern "C" fn(Ptr, Ptr) -> u32);
+                let new_call = sym!(c"dbus_message_new_method_call": unsafe extern "C" fn(*const c_char, *const c_char, *const c_char, *const c_char) -> Ptr);
+                let new_signal = sym!(c"dbus_message_new_signal": unsafe extern "C" fn(*const c_char, *const c_char, *const c_char) -> Ptr);
+                let append =
+                    sym!(c"dbus_message_append_args": unsafe extern "C" fn(Ptr, c_int, ...) -> u32);
+                let get = sym!(c"dbus_message_get_args": unsafe extern "C" fn(Ptr, Ptr, c_int, ...) -> u32);
+                let call = sym!(c"dbus_connection_send_with_reply_and_block": unsafe extern "C" fn(Ptr, Ptr, c_int, Ptr) -> Ptr);
+                let send =
+                    sym!(c"dbus_connection_send": unsafe extern "C" fn(Ptr, Ptr, *mut u32) -> u32);
+                let flush = sym!(c"dbus_connection_flush": unsafe extern "C" fn(Ptr));
+                let unref = sym!(c"dbus_message_unref": unsafe extern "C" fn(Ptr));
+                let close = sym!(c"dbus_connection_close": unsafe extern "C" fn(Ptr));
+                let unref_conn = sym!(c"dbus_connection_unref": unsafe extern "C" fn(Ptr));
+                let null = std::ptr::null_mut();
+
+                let conn = open(address.as_ptr(), null);
+                assert!(!conn.is_null(), "libdbus couldn't connect");
+                assert_ne!(register(conn, null), 0, "libdbus couldn't say Hello");
+                let msg = new_call(
+                    c"org.simplewm.Test".as_ptr(),
+                    c"/test".as_ptr(),
+                    c"org.simplewm.Test".as_ptr(),
+                    c"Echo".as_ptr(),
+                );
+                let arg = text.as_ptr();
+                assert_ne!(append(msg, TYPE_STRING, &arg, TYPE_INVALID), 0);
+                let reply = call(conn, msg, 5000, null);
+                unref(msg);
+                assert!(!reply.is_null(), "libdbus got no answer to Echo");
+                let mut out: *const c_char = std::ptr::null();
+                assert_ne!(get(reply, null, TYPE_STRING, &mut out, TYPE_INVALID), 0);
+                let answer = CStr::from_ptr(out).to_string_lossy().into_owned();
+                unref(reply);
+
+                let msg = new_signal(
+                    c"/x".as_ptr(),
+                    c"org.simplewm.Sig".as_ptr(),
+                    c"Pong".as_ptr(),
+                );
+                assert_ne!(append(msg, TYPE_STRING, &arg, TYPE_INVALID), 0);
+                assert_ne!(send(conn, msg, std::ptr::null_mut()), 0);
+                unref(msg);
+                flush(conn);
+                close(conn);
+                unref_conn(conn);
+                answer
+            };
+            let _ = tx.send(answer);
+        });
+        async move { rx.await.expect("the libdbus thread failed") }
+    }
+
+    /// Real C clients: libdbus (loaded directly) and GLib (`gdbus`) against a scratch
+    /// bus. Needs both: `cargo test talks_to_c_clients -- --ignored`.
     #[test]
     #[ignore]
     fn talks_to_c_clients() {
@@ -1552,16 +1658,6 @@ mod tests {
                 let a = client(&address).await;
                 a.object_server().at("/test", Test).await.unwrap();
                 a.request_name("org.simplewm.Test").await.unwrap();
-                let names = run(&[
-                    "dbus-send",
-                    "--session",
-                    "--print-reply",
-                    "--dest=org.freedesktop.DBus",
-                    "/org/freedesktop/DBus",
-                    "org.freedesktop.DBus.ListNames",
-                ])
-                .await;
-                assert!(names.contains("org.simplewm.Test"), "{names}");
                 let names = run(&[
                     "gdbus",
                     "call",
@@ -1600,17 +1696,6 @@ mod tests {
                 ])
                 .await;
                 assert_eq!(echo.trim(), "('hi',)");
-                let echo = run(&[
-                    "dbus-send",
-                    "--session",
-                    "--print-reply",
-                    "--dest=org.simplewm.Test",
-                    "/test",
-                    "org.simplewm.Test.Echo",
-                    "string:there",
-                ])
-                .await;
-                assert!(echo.contains("\"there\""), "{echo}");
 
                 let mut stream = MessageStream::from(&a);
                 add_match(&a, "type='signal',interface='org.simplewm.Sig'").await;
@@ -1629,14 +1714,8 @@ mod tests {
                     next_signal(&mut stream, "org.simplewm.Sig").await,
                     ("Ping".into(), "from glib".into())
                 );
-                run(&[
-                    "dbus-send",
-                    "--session",
-                    "/x",
-                    "org.simplewm.Sig.Pong",
-                    "string:from libdbus",
-                ])
-                .await;
+                let echo = libdbus_echo_and_pong(&address, "from libdbus").await;
+                assert_eq!(echo, "from libdbus");
                 assert_eq!(
                     next_signal(&mut stream, "org.simplewm.Sig").await,
                     ("Pong".into(), "from libdbus".into())

@@ -17,11 +17,11 @@ changing it. This file covers what the scripts don't make obvious.
   at build time. Don't switch to libudev-zero: with it PipeWire finds no sound cards,
   because nothing sets `SOUND_INITIALIZED`. The network card is `eth0`
   (`eudev-netifnames` isn't installed).
-- **Session bus:** simplewm itself. The `dbus` package stays for libdbus (Firefox) and
-  the tools the tests use (`dbus-send`, `dbus-run-session`), but nothing starts its
-  dbus-daemon. There's no system bus and no D-Bus activation:
-  `/usr/share/dbus-1/services` is in `REMOVE_DIRS`, so the build stops if a package adds
-  a service there.
+- **Session bus:** simplewm itself. The `dbus` package (dbus-daemon and its tools) isn't
+  installed; only `dbus-libs` comes in, for Firefox. `gdbus` (GLib) is the command-line
+  client. `/etc/machine-id` is written by `build.sh`. There's no system bus and no D-Bus
+  activation: `/usr/share/dbus-1` is in `REMOVE_DIRS`, so the build stops if a package
+  adds a service there.
 - **Apps:** Firefox (`firefox.js` turns off tabs in the title bar and sends file dialogs
   to simplewm's portal), alacritty, and Gram (built from source by `build-gram.sh`).
 - **Development tools are in the image:** rustup with `RUST_VERSION` in the user's home,

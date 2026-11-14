@@ -54,7 +54,6 @@ PACKAGES="
     mesa-gles
     mesa-dri-gallium
 
-    dbus
     pipewire
     pipewire-pulse
     pipewire-tools
@@ -164,7 +163,6 @@ REMOVE="
     /etc/xdg/Xwayland-session.d
     /etc/profile.d/README
     /etc/profile.d/color_prompt.sh.disabled
-    /etc/dbus-1/system.conf
 
     /usr/lib/udev/hwdb.d
     /usr/libexec/pipewire-launcher
@@ -185,9 +183,6 @@ REMOVE="
     /usr/bin/libcamera-bug-report
     /usr/share/paxrelabel.d
 
-    /usr/share/dbus-1/system.conf
-    /usr/share/dbus-1/system.d
-    /usr/share/dbus-1/system-services
     /usr/share/dbus-1/services/org.a11y.Bus.service
     /usr/share/dbus-1/accessibility-services
     /usr/libexec/at-spi-bus-launcher
@@ -296,8 +291,6 @@ REMOVE="
     /usr/bin/bomtool
     /usr/bin/econftool
     /usr/bin/cvtsudoers
-    /usr/bin/dbus-test-tool
-    /usr/bin/dbus-cleanup-sockets
     /usr/bin/scmp_sys_resolver
     /usr/bin/yuvconvert
     /usr/bin/fribidi
@@ -386,11 +379,9 @@ REMOVE_DIRS="
     /var/db
     /var/empty
     /var/lib/misc
-    /var/lib/dbus
     /var/cache/misc
     /var/lib/sudo/lectured
-    /usr/share/dbus-1/session.d
-    /usr/share/dbus-1/services
+    /usr/share/dbus-1
     /usr/lib/gio/modules
     /lib/firmware
 "
@@ -432,8 +423,10 @@ strip --strip-debug "$ROOT/usr/bin/gram" "$ROOT/usr/libexec/gram-editor"
 install -m 644 firefox.js "$ROOT/usr/lib/firefox/defaults/pref/simplewm.js"
 # udevd reads the hardware database from this compiled file.
 chroot "$ROOT" udevadm hwdb --update
-# The session bus answers GetMachineId from this.
-chroot "$ROOT" dbus-uuidgen --ensure=/etc/machine-id
+# The session bus answers GetMachineId from this, and libdbus (Firefox) reads it: 32
+# random hex digits, as dbus-uuidgen would write (there's no dbus package to run it).
+od -An -N16 -tx1 /dev/urandom | tr -d ' \n' > "$ROOT/etc/machine-id"
+echo >> "$ROOT/etc/machine-id"
 
 # bash is the login shell (root's too); /bin/sh stays busybox for scripts.
 sed -i 's|^root:\(.*\):/bin/sh$|root:\1:/bin/bash|' "$ROOT/etc/passwd"
@@ -447,10 +440,8 @@ printf '%%wheel ALL=(ALL:ALL) ALL\nDefaults lecture=never\n' > "$ROOT/etc/sudoer
 chmod 440 "$ROOT/etc/sudoers.d/wheel"
 
 # Only the accounts the system uses: root and the user. Alpine's base layout adds ones for
-# services that don't run here (mail, news, cron, sshd, …), and dbus adds messagebus for
-# the system bus, which doesn't run either (simplewm runs the session bus). Its setuid
-# helper for starting system-bus services goes too. The tools' backup copies (passwd-,
-# shadow-, group-) go as well.
+# services that don't run here (mail, news, cron, sshd, …). The tools' backup copies
+# (passwd-, shadow-, group-) go as well.
 KEEP_ACCOUNTS="root $USER_NAME"
 for file in passwd shadow; do
     awk -F: -v keep=" $KEEP_ACCOUNTS " 'index(keep, " " $1 " ")' \
@@ -462,7 +453,6 @@ rm -f "$ROOT/etc/passwd-" "$ROOT/etc/shadow-" "$ROOT/etc/group-"
 # Alpine ships root with an empty password: anything running as the user could `su` to
 # root without one. Lock it; the user gets root through sudo, with their own password.
 sed -i 's/^root:[^:]*:/root:*:/' "$ROOT/etc/shadow"
-rm -f "$ROOT/usr/libexec/dbus-daemon-launch-helper"
 
 echo "== Rust $RUST_VERSION for $USER_NAME"
 cp -a "$RUST_HOME/.rustup" "$RUST_HOME/.cargo" "$ROOT/home/$USER_NAME/"

@@ -211,11 +211,12 @@ async fn file_chooser_version(conn: &Connection) -> Result<u32, String> {
 mod tests {
     use super::*;
 
-    /// Needs a scratch session bus:
-    /// `dbus-run-session -- cargo test reads_an_empty_bus -- --ignored`.
+    /// On simplewm's own bus, on a scratch socket:
+    /// `cargo test reads_an_empty_bus -- --ignored`.
     #[test]
     #[ignore]
     fn reads_an_empty_bus() {
+        crate::bus::scratch_session();
         let mut rows = Vec::new();
         let mut problems = Problems::default();
         zbus::block_on(bus_rows(false, &mut rows, &mut problems));

@@ -73,11 +73,11 @@ rules below.
   `cargo fmt` whenever you like.
 - Tests cover the logic that doesn't need a screen. `#[ignore]`d tests need a setup, which
   each one's doc comment explains:
-  - After touching `portal.rs`, `portal_check.rs` or zbus:
-    `dbus-run-session -- cargo test bus -- --ignored`.
+  - After touching `bus.rs`, `portal.rs`, `portal_check.rs` or zbus:
+    `cargo test bus -- --ignored`. It runs them on simplewm's own bus on a scratch
+    socket (`bus::scratch_session`), and talks to it with libdbus (dlopened) and
+    `gdbus`. The other bus tests run with plain `cargo test`.
   - After touching `services.rs`: `cargo test runs_the_session_service -- --ignored`.
-  - After touching `bus.rs`: `cargo test talks_to_c_clients -- --ignored` (needs
-    `dbus-send` and `gdbus`). The other bus tests run with plain `cargo test`.
   - `network::namespace_test` runs the root `ip` script in a throwaway namespace.
 - Don't start PipeWire in tests: it would fight the running one for HDMI.
 - `make` builds the release with `--locked`. `make install` copies it to `/usr/bin`.

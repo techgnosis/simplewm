@@ -5,7 +5,7 @@ sleep 20
 {
 echo "== uname"; uname -a
 echo "== procs"; for p in simplewm seatd udevd pipewire pipewire-pulse wireplumber; do printf '%s: ' $p; pgrep -x $p >/dev/null && echo yes || echo NO; done
-echo "== bus"; dbus-send --session --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.ListNames 2>&1 | head -20
+echo "== bus"; gdbus call --session --dest org.freedesktop.DBus --object-path /org/freedesktop/DBus --method org.freedesktop.DBus.ListNames 2>&1 | head -20
 echo "== devs"; ls /dev/dri /dev/input /dev/snd
 echo "== wpctl"; wpctl status 2>&1 | sed -n '1,40p'
 echo "== ip"; ip -br link; ip -br addr

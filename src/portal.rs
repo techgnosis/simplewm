@@ -833,8 +833,8 @@ mod tests {
     }
 }
 
-/// The portal over a real (private) session bus, called the way apps call it. Run inside
-/// a scratch bus: `dbus-run-session -- cargo test portal_bus_test -- --ignored`.
+/// The portal over a real session bus (simplewm's own, on a scratch socket), called the
+/// way apps call it: `cargo test portal_bus_test -- --ignored`.
 #[cfg(test)]
 mod portal_bus_test {
     use std::time::{Duration, Instant};
@@ -937,6 +937,7 @@ mod portal_bus_test {
     #[test]
     #[ignore]
     fn serves_file_dialogs() {
+        crate::bus::scratch_session();
         // Someone else has the name first: simplewm waits, and takes over when it's let go.
         let holder = zbus::block_on(async {
             let conn = Connection::session().await.unwrap();
