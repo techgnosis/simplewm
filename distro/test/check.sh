@@ -8,6 +8,7 @@ echo "== procs"; for p in simplewm seatd udevd dbus-daemon pipewire pipewire-pul
 echo "== devs"; ls /dev/dri /dev/input /dev/snd
 echo "== wpctl"; wpctl status 2>&1 | sed -n '1,40p'
 echo "== ip"; ip -br link; ip -br addr
+echo "== interrupts (MSI should be in use)"; grep -E "MSI|IO-APIC" /proc/interrupts | awk '{print $(NF-2), $(NF-1), $NF}'
 echo "== mounts"; cat /proc/mounts
 echo "== userns"; unshare -U -r id 2>&1
 echo "== bwrap"; bwrap --unshare-all --ro-bind / / --dev /dev --proc /proc true 2>&1 && echo bwrap ok
