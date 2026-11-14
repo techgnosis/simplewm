@@ -1,0 +1,4 @@
+# Copied into a test image by distro/test-boot.sh: the login shell that starts simplewm
+# reads it first, so check.sh runs alongside simplewm.
+. ~/.profile
+setsid bash ~/check.sh </dev/null >/dev/null 2>&1 &

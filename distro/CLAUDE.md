@@ -590,6 +590,15 @@ the VM through QEMU's monitor (pipe Ctrl+A C, a command, Ctrl+A C into run.sh):
 `screendump distro/out/x.ppm` for screenshots (convert PPM to PNG to view), `sendkey` to
 type (one key per command: `spc`, `dot`, `shift-4` for `$`…), and `quit` at the end.
 
+**`distro/test-boot.sh [name]`** does a whole check in one go (about 2.5 minutes): boots a
+throwaway copy of `out/root.img` with `out/vmlinuz`, whose `~/.bash_profile`
+(`test/bash_profile`) runs `test/check.sh` next to simplewm, then leaves in `out/test/`
+`<name>-check.log` (services running, `/dev/dri`, `/dev/input`, `/dev/snd`, `wpctl status`,
+network cards, mounts, a user namespace, bubblewrap, a headless Firefox screenshot, kernel
+warnings and the whole dmesg; it ends with `== END`), `<name>-serial.log` and
+`<name>.png` (the screen). Use it for every kernel change; extend `check.sh` rather than
+writing one-off scripts. It's how the methods below are put together.
+
 - **Changing a test image:** boot a copy of `out/root.img` changed with `debugfs -w` in
   the container (e2fsprogs-extra), e.g. with a stub `/usr/bin/simplewm` to test failures.
   Run `e2fsck -fy` on the copy first: if QEMU was quit while the image was mounted, its
