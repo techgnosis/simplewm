@@ -23,7 +23,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::DEFAULT_LAUNCHER_ENTRY;
+use super::DEFAULT_LAUNCHER_ENTRIES;
 
 const MAGIC: &[u8; 8] = b"simplewm";
 const VERSION: u32 = 1;
@@ -41,11 +41,11 @@ pub(super) struct Data {
 }
 
 impl Default for Data {
-    /// First run: the default launcher entry. After the first save it can be
-    /// removed and stays removed.
+    /// First run: the default launcher entries. After the first save they can be
+    /// removed and stay removed.
     fn default() -> Self {
         Data {
-            entries: vec![DEFAULT_LAUNCHER_ENTRY.to_string()],
+            entries: DEFAULT_LAUNCHER_ENTRIES.map(String::from).to_vec(),
             settings: BTreeMap::new(),
         }
     }

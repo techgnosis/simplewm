@@ -72,7 +72,9 @@ use rows::{ENV_H, ENV_ROW_H, ENV_W, PORTAL_H, PORTAL_W, RowList};
 use services::{LOG_WIN_H, LOG_WIN_W};
 use text_field::{field_char_at, render_field};
 
-pub const DEFAULT_LAUNCHER_ENTRY: &str = "/usr/bin/alacritty";
+/// The launcher's entries on first run: a terminal and the Gram editor (both in the
+/// distro).
+pub const DEFAULT_LAUNCHER_ENTRIES: [&str; 2] = ["/usr/bin/alacritty", "/usr/bin/gram"];
 
 /// simplewm's own windows. The order is `PanelId::ALL`'s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

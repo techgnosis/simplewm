@@ -268,16 +268,43 @@ answers that one too, always "server side". Not in the Launcher by default yet.
   user needs `podman unshare rm -rf` to delete. It passes `--cgroup-manager=cgroupfs
   --events-backend=file`, because when simplewm runs the session bus on a TTY, systemd
   isn't on it and podman's default (asking systemd over D-Bus) fails.
+**Gram** (https://gram-editor.com, a fork of Zed with no AI or telemetry; 3.5.0) is in
+the image, built from source for musl because Alpine doesn't package it, and it's in the
+Launcher by default (simplewm's first-run entries). `/usr/bin/gram` is its command-line
+tool, which starts the editor at `/usr/libexec/gram-editor`. It draws with Vulkan
+(OpenGL if there's none): `vulkan-loader`, `mesa-vulkan-ati` (radv, for the user's RX
+580) and `mesa-vulkan-swrast` (lavapipe, for the VM) are in `PACKAGES`. In the VM it
+runs on lavapipe and shows an "Unsupported GPU" warning (software rendering is slow),
+which Skip dismisses. Checked in the VM: it opens a file, gets simplewm's title bar and
+bar tab. It doesn't download language servers unless allowed in its settings. The
+editor is 228 MB with its symbols kept (for backtraces; 175 MB without).
+
 - `build-simplewm.sh` builds simplewm for musl in the container into
   `target/alpine/release/`, with Rust from rustup (Alpine's is older than simplewm's
   `rust-version`) and `-C target-feature=-crt-static` so it links Alpine's C libraries
   dynamically. Rust and Cargo's downloads are kept in `cache/`.
+- `build-gram.sh` builds Gram for musl in the container into `target/gram/release/`
+  (`gram`, the editor, and `cli`, the `gram` command), linking Alpine's C libraries like
+  simplewm. The tarball is pinned (`VERSION`, `SHA256`) and kept unpacked in
+  `cache/gram-<version>/`; Gram's `rust-toolchain.toml` picks its Rust (1.99.1), which the
+  shared rustup in `cache/` installs. Two changes to Gram's build: its optional
+  `mimalloc` allocator is turned on (musl's malloc is slow for an editor), and X11 is
+  taken out of its `Cargo.toml` files and one `Cargo.lock` line (Gram always turns X11
+  on; simplewm has none), so it links only libxkbcommon and loads Wayland and Vulkan at
+  run time. The edits are made only when a file still needs them, and an empty
+  `.git/logs/HEAD` dated 1970 is put in the source (Gram's build scripts watch it, and a
+  missing watched file made Cargo recompile the editor every time): a build with nothing
+  new takes seconds, the first one about 35 minutes on the user's 4 cores (most of it the
+  editor's final, link-time-optimized step, about 15 minutes). Raising `VERSION`: new
+  `SHA256`, and if the X11 edit no longer fits the build stops and says so. Don't edit
+  `build-gram.sh` while a build runs: the shell reads it as it goes, and an edit
+  mid-build ran a fragment of the new text.
 - `build.sh` (run on the host; it re-runs itself in the container) runs
-  `build-simplewm.sh`, then builds everything else from scratch: `root/` (from `PACKAGES`
+  `build-simplewm.sh` and `build-gram.sh`, then builds everything else from scratch: `root/` (from `PACKAGES`
   via `apk --root … --initdb`; afterwards apk's records, `/etc/apk` and `/lib/apk`,
   are deleted, so the system has no package manager and is changed only by rebuilding
   it; then the folders in `REMOVE_DIRS` are removed, see "A smaller filesystem"), and in `out/`
-  `root.img` (ext4) and the kernel (`kernel.sh`, see "The kernel"). It adds simplewm, the init, udev's compiled hardware database
+  `root.img` (ext4) and the kernel (`build-kernel.sh`, see "The kernel"). It adds simplewm, the init, udev's compiled hardware database
   (`udevadm hwdb --update`), a machine ID for
   dbus-daemon, and the user (`USER_NAME`, uid 1000, in seat, audio, video, input and
   wheel, with the development password `USER_PASSWORD` for sudo; wheel may use sudo).
@@ -314,7 +341,7 @@ answers that one too, always "server side". Not in the Launcher by default yet.
   llvmpipe at that size is busy. A virtio network card on QEMU's user network (address 10.0.2.15/24, gateway 10.0.2.2, DNS 10.0.2.3), and an
   Intel HDA sound card played through the host's PipeWire if QEMU has that driver
   (`qemu-audio-pipewire`).
-- `kernel.sh` builds the kernel from `kernel.config` into `out/vmlinuz` (see "The
+- `build-kernel.sh` builds the kernel from `kernel.config` into `out/vmlinuz` (see "The
   kernel"). `run.sh` hands it `root=/dev/vda rw`; there's no initramfs.
 - **simplewm-init** (`src/bin/simplewm-init/`, built with simplewm) is `/sbin/init`
   (`/sbin/simplewm-init`, `/sbin/init` links to it). It refuses to run unless it's PID 1.
@@ -401,7 +428,7 @@ rustc.
 **A smaller filesystem.** The user wants as few files in the filesystem as possible, to
 lighten the load on whoever looks around it: the measure is the number of files, not
 bytes (a 40 MB binary and a one-line config file count the same). But it stays a normal userland a developer
-can work in (rustup and Rust, Go, Zed, alacritty, curl, pkg-config, the usual tools): only
+can work in (rustup and Rust, Go, Gram, alacritty, curl, pkg-config, the usual tools): only
 obscure things nobody would use go. `build.sh` trims at the end of the build
 with four lists (`REMOVE`, `BUSYBOX`, `KEEP_ONLY`, `REMOVE_DIRS`); add to them to trim
 more. Afterwards it rebuilds the caches that listed removed files (GTK's input methods,
@@ -574,22 +601,22 @@ type (one key per command: `spc`, `dot`, `shift-4` for `$`…), and `quit` at th
 - Copy test images on the host with `cp --sparse=always` (the image is a 16 GB sparse
   file; busybox's `cp` in the container can't keep it sparse). `build.sh` empties `out/`,
   so keep test images elsewhere or remake them.
-- A kernel change can be tested against the existing `root.img`: `kernel.sh` alone
-  rebuilds just `out/vmlinuz`. After editing `kernel.config`, run `kernel.sh refresh` and
+- A kernel change can be tested against the existing `root.img`: `build-kernel.sh` alone
+  rebuilds just `out/vmlinuz`. After editing `kernel.config`, run `build-kernel.sh refresh` and
   read its diff: a line that vanishes was ignored by the kernel.
 
 ## The kernel
 
-Our own, built from kernel.org's source by `distro/kernel.sh` (in the container; source
+Our own, built from kernel.org's source by `distro/build-kernel.sh` (in the container; source
 and build tree kept in `cache/kernel/`, so a rebuild only redoes what changed: about 13
 minutes from scratch on the user's 4 cores, seconds when nothing changed). The version is
-pinned in `kernel.sh` (`VERSION`, with the tarball's `SHA256` from kernel.org's
+pinned in `build-kernel.sh` (`VERSION`, with the tarball's `SHA256` from kernel.org's
 `sha256sums.asc`): 7.3.4, the newest stable kernel, picked by the user on 2026-11-13
 over staying on the 6.18 long-term kernel (the first pick, 6.18.63, the same one Alpine's
 `linux-virt` was). A stable series stops getting fixes a few months after the next one
 comes out, so move up with each release: 7.4 when it's final (it was at rc2), not its
 release candidates. To move: new `VERSION` and `SHA256` (from
-`https://cdn.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc`), `kernel.sh refresh`,
+`https://cdn.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc`), `build-kernel.sh refresh`,
 read the diff, boot-test. The move from 6.18 changed one choice: x86 no longer offers
 `PREEMPT_VOLUNTARY` (the defconfig's), so it's lazy preemption (`PREEMPT_LAZY`, the new
 default) with `PREEMPT_DYNAMIC`.
@@ -603,10 +630,10 @@ modules now: no `/lib/modules` and no kmod tools.
 
 **`distro/kernel.config`** is the config in the form `make savedefconfig` writes: only
 the lines that differ from the kernel's defaults (about 240), so each line is a choice.
-Change it with `distro/kernel.sh menuconfig` (the kernel's menus; saved back on exit) or
+Change it with `distro/build-kernel.sh menuconfig` (the kernel's menus; saved back on exit) or
 by hand. A build first checks that the file comes back unchanged from the kernel's config
 tools, and stops with a diff if not: that catches options that don't exist or whose
-dependencies are off, which the kernel would otherwise drop without a word. `kernel.sh
+dependencies are off, which the kernel would otherwise drop without a word. `build-kernel.sh
 refresh` rewrites the file in its proper form (after hand edits, or after raising
 `VERSION`) and shows what moved or dropped out.
 
@@ -635,7 +662,7 @@ WirePlumber all come up, with `/dev/dri`, `/dev/input` and `/dev/snd` in place.
 
 **Firmware** is compiled into the kernel (`CONFIG_EXTRA_FIRMWARE`, a list of files in
 `kernel.config`): a built-in driver starts before the disk is mounted, so it can't load
-firmware from it, and without its firmware amdgpu doesn't start. `kernel.sh` takes each
+firmware from it, and without its firmware amdgpu doesn't start. `build-kernel.sh` takes each
 listed file from Alpine's `linux-firmware-<folder>` package (`amdgpu/…` from
 `linux-firmware-amdgpu`), decompresses it (Alpine ships them zstd-compressed, some as
 links to others) into the container's `/lib/firmware`, where the kernel build looks. For

@@ -2,8 +2,9 @@
 # Build the distro from Alpine packages:
 #
 #   target/alpine/release/          simplewm and simplewm-init for musl (build-simplewm.sh)
+#   target/gram/release/            the Gram editor for musl (build-gram.sh)
 #   distro/root/                  the root filesystem (apk installs into it)
-#   distro/out/vmlinuz            the kernel, built from distro/kernel.config (kernel.sh)
+#   distro/out/vmlinuz            the kernel, built from distro/kernel.config (build-kernel.sh)
 #   distro/out/root.img           distro/root/ as an ext4 disk image
 #
 # Run it on the host; it re-runs itself inside the Alpine container (container.sh).
@@ -17,7 +18,9 @@ fi
 
 cd /work/distro
 
-# What goes into the root filesystem. wayland-utils (wayland-info) is for checking what
+# What goes into the root filesystem. Vulkan (the loader, radv for AMD cards, lavapipe
+# for software rendering in the VM) is for Gram, which draws with Vulkan, or OpenGL if
+# there's none. wayland-utils (wayland-info) is for checking what
 # simplewm offers apps. The last group is for development: Rust (rustup, which the build
 # uses to install RUST_VERSION into the user's home; it needs curl, CA certificates and
 # git, and a C toolchain to link), C (build-base: gcc, musl headers, make, binutils), Go and Python,
@@ -56,6 +59,9 @@ PACKAGES="
 
     alacritty
     firefox
+    vulkan-loader
+    mesa-vulkan-ati
+    mesa-vulkan-swrast
 
     curl
     ca-certificates
@@ -342,6 +348,7 @@ OUT=/work/distro/out
 CACHE=/work/distro/cache
 
 sh build-simplewm.sh
+sh build-gram.sh
 
 echo "== tools"
 apk add -q e2fsprogs
@@ -365,6 +372,11 @@ install -m 755 /work/target/alpine/release/simplewm "$ROOT/usr/bin/simplewm"
 install -m 755 /work/target/alpine/release/simplewm-init "$ROOT/sbin/simplewm-init"
 ln -sf simplewm-init "$ROOT/sbin/init"
 echo simplewm > "$ROOT/etc/hostname"
+# Gram: the `gram` command finds the editor at ../libexec/gram-editor.
+install -m 755 /work/target/gram/release/cli "$ROOT/usr/bin/gram"
+install -D -m 755 /work/target/gram/release/gram "$ROOT/usr/libexec/gram-editor"
+# Without its debug info (as Gram's own packages do; symbols stay, for backtraces).
+strip --strip-debug "$ROOT/usr/bin/gram" "$ROOT/usr/libexec/gram-editor"
 install -m 644 firefox.js "$ROOT/usr/lib/firefox/defaults/pref/simplewm.js"
 # udevd reads the hardware database from this compiled file.
 chroot "$ROOT" udevadm hwdb --update
@@ -503,6 +515,6 @@ size=16384
 [ "$size" -gt $((used * 2)) ] || size=$((used * 2))
 mkfs.ext4 -q -L simplewm -d "$ROOT" "$OUT/root.img" "${size}M"
 
-sh kernel.sh
+sh build-kernel.sh
 
 echo "== done: root ${used} MB, image ${size} MB"

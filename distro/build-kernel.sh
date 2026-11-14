@@ -2,10 +2,10 @@
 # Build the distro's kernel from kernel.org's source and distro/kernel.config, into
 # distro/out/vmlinuz.
 #
-#   distro/kernel.sh              build it (build.sh does this too)
-#   distro/kernel.sh menuconfig   change the config in the kernel's own menus; kernel.config
+#   distro/build-kernel.sh              build it (build.sh does this too)
+#   distro/build-kernel.sh menuconfig   change the config in the kernel's own menus; kernel.config
 #                                 is rewritten when you exit them
-#   distro/kernel.sh refresh      rewrite kernel.config in its short form (after a new
+#   distro/build-kernel.sh refresh      rewrite kernel.config in its short form (after a new
 #                                 VERSION, or to tidy hand edits) and show what changed
 #
 # Everything the system needs is built in: no modules and no initramfs. The kernel finds
@@ -21,7 +21,7 @@
 set -eu
 
 if [ ! -e /etc/alpine-release ]; then
-    exec "$(dirname "$0")/container.sh" distro/kernel.sh "$@"
+    exec "$(dirname "$0")/container.sh" distro/build-kernel.sh "$@"
 fi
 
 # The newest stable kernel when it was picked, and its checksum from kernel.org's
@@ -97,7 +97,7 @@ case ${1:-build} in
         kmake menuconfig
         kmake savedefconfig
         cp "$BUILD/defconfig" "$CONFIG"
-        echo "== kernel: kernel.config saved; distro/kernel.sh builds it"
+        echo "== kernel: kernel.config saved; distro/build-kernel.sh builds it"
         ;;
     refresh)
         kmake savedefconfig
@@ -110,7 +110,7 @@ case ${1:-build} in
             cat "$BUILD/config.diff" >&2
             echo "kernel.config doesn't come back the same from the kernel's config tools" \
                 "(- is kernel.config, + what the kernel makes of it). Fix the lines, or run" \
-                "distro/kernel.sh refresh to accept what the kernel makes of it." >&2
+                "distro/build-kernel.sh refresh to accept what the kernel makes of it." >&2
             exit 1
         fi
         echo "== kernel: building $VERSION"
@@ -120,7 +120,7 @@ case ${1:-build} in
         echo "== kernel: $(kmake kernelrelease) in distro/out/vmlinuz"
         ;;
     *)
-        echo "usage: distro/kernel.sh [menuconfig | refresh]" >&2
+        echo "usage: distro/build-kernel.sh [menuconfig | refresh]" >&2
         exit 2
         ;;
 esac
