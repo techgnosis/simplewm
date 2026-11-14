@@ -75,6 +75,34 @@ PACKAGES="
     go
     python3
     py3-pip
+
+    pkgconf
+    linux-headers
+    eudev-dev
+    libseat-dev
+    libinput-dev
+    libxkbcommon-dev
+    mesa-dev
+
+    bison
+    flex
+    perl
+    gawk
+    diffutils
+    findutils
+    xz
+    zstd
+    elfutils-dev
+    openssl-dev
+    ncurses-dev
+
+    cmake
+    wayland-dev
+    fontconfig-dev
+    zstd-dev
+    sqlite-dev
+    vulkan-loader-dev
+
     font-dejavu
     wayland-utils
 "

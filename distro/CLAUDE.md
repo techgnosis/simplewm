@@ -409,6 +409,24 @@ fixed it (see "eudev vs libudev-zero").
 binutils; Rust needs a C linker), Go (`go`), Python (`python3`, `py3-pip`), and GNU
 `grep` and `sed` (busybox's lack options people and LLMs use, like `grep -P`). That
 roughly 530 MB took the root filesystem from 753 to 1281 MB, most of it Go and gcc.
+Alpine puts headers, `.pc` files and the `libfoo.so` link names in separate `-dev`
+packages; without them nothing that links a C library builds (found building simplewm in
+the distro: libudev-sys failed in pkg-config). So `PACKAGES` also has what simplewm,
+the kernel and Gram build with, the same lists their `build-*.sh` scripts install in the
+container: `linux-headers` and the `-dev` packages for simplewm (eudev, libseat,
+libinput, libxkbcommon, mesa for `libgbm.so`); bison, flex, perl, gawk, GNU diffutils
+and findutils, xz, zstd, `elfutils-dev` (objtool, for the ORC unwinder) and `ncurses-dev`
+(menuconfig) for the kernel; cmake and the wayland, fontconfig, zstd, sqlite and
+vulkan-loader `-dev` packages for Gram. `openssl-dev` isn't needed by our kernel config (no
+trusted keyring or module signing) but stays for the many Rust crates that link
+OpenSSL. simplewm was checked to build and link in the distro against stand-ins for these
+(2026-11-14); the kernel and Gram couldn't be tried there (their tools were missing).
+Rust links statically on musl by default, so the project's `.cargo/config.toml` turns
+that off for the musl target (`-crt-static`) and a plain `cargo build` works in the
+distro. The `build-*.sh` scripts still only run in the container (they re-run themselves
+there when `/etc/alpine-release` is missing, which it is in the distro, and use `apk add`
+and `/work` paths); running the kernel and Gram builds natively would need a mode for
+that, and the kernel's firmware step fetches with apk and unpacks into `/lib/firmware`.
 `ca-certificates` also fills `/etc/ssl/certs`, which was empty: until then only Firefox
 (which carries its own) could check HTTPS certificates. The disk image is 16 GB (or twice what's
 installed, if more): rustup failed with "no space left" when it was sized at what's

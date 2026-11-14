@@ -6,3 +6,9 @@
 #   CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update <crate> --precise <version>
 [registry]
 global-min-publish-age = "21 days"
+
+# Rust links statically on musl by default, which can't use the system's C libraries
+# (libudev, libinput…). Building inside the distro needs dynamic linking, like
+# distro/build-simplewm.sh. Doesn't affect the glibc build on the Arch host.
+[target.x86_64-unknown-linux-musl]
+rustflags = ["-C", "target-feature=-crt-static"]
