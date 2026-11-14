@@ -685,9 +685,21 @@ installed in the system's `/lib/firmware`.
 
 Still to do:
 
-- Trim the defaults that come along from `x86_64_defconfig` and that nothing here uses
-  (many network drivers, cgroup controllers, hibernation, kexec, IPv4 multicast routing,
-  tracing and the remaining debug options). One group at a time, with a boot test each.
+- Trimmed on 2026-11-13, in three rounds, each checked with `test-boot.sh` (18.2 to 14.6
+  MB): debugging and tracing, kexec and crash dumps, hibernation, 32-bit programs
+  (`IA32_EMULATION`), NUMA, cgroups and task accounting (nothing mounts cgroups),
+  PCMCIA, PCI hotplug, Mac/Eee PC bits, advanced routing, netfilter, traffic control,
+  IPsec, sit, netconsole, network cards other than virtio/e1000/e1000e/r8169, CD-ROM,
+  IDE/PATA, `ATA_SFF`, RAID/LVM, quota, autofs, ISO 9660, joystick/tablet/touchscreen,
+  odd HID drivers (`HID_SONY` kept for game controllers), USB 1/2 host controllers
+  (xHCI handles USB 1/2 devices; the Skylake chipset has only xHCI), the MIDI sequencer,
+  serial extras, AGP, watchdog, AMD IOMMU. Kernel crypto went with them (nothing uses it).
+  Watch for options another one was `select`ing: `AMD_IOMMU` was what turned on
+  `PCI_MSI`, so it's now set explicitly (check.sh lists interrupts). To review a round,
+  compare the `=y` lines of the full `.config` before and after.
+- What's left is mostly amdgpu (~10 MB), the built-in firmware (~2.4 MB) and core
+  kernel. Ideas not done yet: zstd compression (`KERNEL_ZSTD`, the default is gzip),
+  dropping `CONFIG_SECURITY` (no LSM is actually built in), and i915 (below, 2.7 MB).
 - Intel CPU microcode (`intel-ucode`, also loadable as built-in firmware) isn't
   included; the motherboard firmware's copy is what runs.
 - The Skylake CPU's own GPU is disabled on the user's machine, so `DRM_I915` could go.
