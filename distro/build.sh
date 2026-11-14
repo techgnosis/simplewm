@@ -71,6 +71,7 @@ PACKAGES="
 
     alacritty
     firefox
+    hicolor-icon-theme
     vulkan-loader
     mesa-vulkan-ati
     mesa-vulkan-swrast
