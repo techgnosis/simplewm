@@ -8,11 +8,12 @@
 # In the container apk is Alpine's own. The distro has no apk, so there it's apk.static
 # (Alpine's apk-tools-static package: one self-contained program), downloaded into
 # distro/cache/ and pinned by version and checksum: it's the one download apk can't check
-# itself. Native installs of tools go into cache/tools/ (apk's --usermode, no root), and
-# fetches use that folder's package database (apk wants one to work from).
+# itself. Natively, fetches use an empty package database in cache/tools/ (made with
+# apk's --usermode, no root), since apk.static won't fetch without one.
 #
 #   alpine_apk ARGS…        apk with our keys, repositories and download cache
-#   alpine_tools PACKAGE…   build tools: into the container itself, or into cache/tools/
+#   alpine_tools PACKAGE…   build tools, into the container itself (natively, no packages:
+#                           it only makes cache/tools/'s database)
 #   alpine_fetch DIR PKG…   download packages into DIR (prints nothing)
 
 ALPINE=$(sed -n 's/^ALPINE=//p' "$PROJECT/distro/container.sh")

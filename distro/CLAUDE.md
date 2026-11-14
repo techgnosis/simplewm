@@ -260,7 +260,7 @@ installed as `/usr/lib/firefox/defaults/pref/simplewm.js`: `browser.tabs.inTitle
 the menu bar) and `widget.use-xdg-desktop-portal.file-picker = 1` (Ctrl+O and File → Open
 File… open simplewm's File Picker; checked). With tabs out of the title bar, GTK 3 drew a
 title bar of its own: it only asks KDE's older server-decoration protocol, so simplewm now
-answers that one too, always "server side". Not in the Launcher by default yet.
+answers that one too, always "server side".
 
 - `container.sh [command…]` runs a command (a shell by default) in an Alpine 3.24
   container with the project root mounted at `/work`. Root in the container is the host
@@ -271,8 +271,8 @@ answers that one too, always "server side". Not in the Launcher by default yet.
 - `where.sh` and `apk.sh`, sourced by the build scripts: where the build runs (container
   or distro) and apk set up for either; `keys/` holds Alpine's signing keys. See
   "Building in the distro".
-- `make-slots.sh`, `install.sh`, `efibootmgr.sh`, `move-home.sh` and the `disk.sh` they
-  share: the disk layout and installs, see "On the user's machine".
+- `install.sh`, `efibootmgr.sh` and the `disk.sh` they share: installs and boot entries,
+  see "On the user's machine".
 **Gram** (https://gram-editor.com, a fork of Zed with no AI or telemetry; 3.5.0) is in
 the image, built from source for musl because Alpine doesn't package it, and it's in the
 Launcher by default (simplewm's first-run entries). `/usr/bin/gram` is its command-line
@@ -634,10 +634,9 @@ needed: the container was only ever there for apk, a fake root and `/work`, not 
   package is checked against keys in git rather than ones fetched at build time. In the
   container apk is the container's own; natively it's `apk.static` from
   apk-tools-static, pinned by version and SHA256 (`APK_STATIC_*`; apk can't check the
-  download that brings apk) and kept in `cache/`. Natively, build tools go into
-  `cache/tools/` with `--usermode` (no root; e2fsprogs for `mkfs.ext4`, run with that
-  folder's libraries), and `apk fetch` uses that folder's package database (apk.static
-  won't fetch without one). The keys came from the alpine-keys 2.6 package (the three
+  download that brings apk) and kept in `cache/`. Natively, `apk fetch` uses an empty
+  package database in `cache/tools/` (made with `--usermode`, no root; apk.static won't
+  fetch without one); `mkfs.ext4` is the image's own (e2fsprogs is in `PACKAGES`). The keys came from the alpine-keys 2.6 package (the three
   in `usr/share/apk/keys/x86_64`) and matched aports' `main/alpine-keys` on Alpine's
   GitLab; the apk-tools-static and alpine-keys packages passed `apk.static verify`
   against them. A new Alpine signing key will stop the build with "UNTRUSTED signature":
@@ -658,12 +657,11 @@ needed: the container was only ever there for apk, a fake root and `/work`, not 
   container build.
 - Checked natively on 2026-11-14: the user part, the root part (run by the user through
   sudo, Claude can't type the password), the kernel, and the result's owners and modes
-  (only `sudo` setuid, `/etc/shadow` root:shadow 640, the home the user's). Not booted
-  (no QEMU in the image: `test-boot.sh` and `run.sh` still need the host). A list of
-  the native `root/` (mode, uid, gid, type, path; made as the user, so `/root` and
-  `/etc/sudoers.d` are unlisted inside) is in `out/native-manifest.txt`; it was made
-  before the `cache/home/` setgid fix, so `/home/user/.rustup` and `.cargo` folders
-  still show 2755 there.
+  (only `sudo` setuid, `/etc/shadow` root:shadow 640, the home the user's). Native
+  builds have since been installed and booted on the real machine: the user builds,
+  installs and reboots between the slots this way (see "On the user's machine"). Boot
+  tests in QEMU (`test-boot.sh`, `run.sh`) still need the host: there's no QEMU in the
+  image.
 
 ### Next steps, on the Arch host (written 2026-11-14 from the distro)
 
@@ -678,19 +676,16 @@ The native build was never compared with a container build, and the container mo
    own keys): `distro/container.sh sh -c 'apk fetch -q -o /tmp apk-tools-static=3.0.9-r0 && sha256sum /tmp/apk-tools-static-3.0.9-r0.apk'`
    must print `APK_STATIC_SHA256` from `apk.sh`.
 3. Run `distro/build.sh` (container mode) end to end, then `distro/test-boot.sh` on it.
-4. Compare it with the native build: make the same list of the container-built root
-   (`podman unshare` so owners read as in the image, e.g. `podman unshare sh -c 'cd
-   distro/root && find . -xdev | sort | while IFS= read -r f; do stat -c "%a %u %g %F %n" "$f"; done' > /tmp/container-manifest.txt`; uids come out as
-   in the container) and diff it with `out/native-manifest.txt` from the distro's copy
-   of the project. That's on the distro's home partition (GPT name `distro-home`, the
-   user's second disk): mount it read-only, e.g. `sudo mount -o ro
-   /dev/disk/by-partlabel/distro-home /mnt`, the file is
-   `/mnt/user/code/simplewm/distro/out/native-manifest.txt`. Expected differences:
-   the Rust setgid folders noted above, the unlisted insides of `/root` and
-   `/etc/sudoers.d`. Anything else is a bug in one mode.
-5. Optionally boot the native image: copy `/mnt/user/code/simplewm/distro/out/root.img`
-   (sparse, 16 GB: `cp --sparse=always`) into `distro/out/` and run `test-boot.sh`.
-6. Then delete this section and note the results above.
+4. Compare it with a native build. In the distro, after a native `distro/build.sh`, list
+   its root as the user (`/root` and `/etc/sudoers.d` stay unlisted inside):
+   `cd distro/root && find . -xdev | sort | while IFS= read -r f; do stat -c "%a %u %g %F %n" "$f"; done > ~/native-manifest.txt`
+   (not in `out/`, which every build empties). On Arch, make the same list of the
+   container-built root with `podman unshare sh -c '…' > /tmp/container-manifest.txt`
+   (so owners read as in the image) and diff the two. The distro's home is the
+   `distro-home` partition on `sdb`: `sudo mount -o ro /dev/disk/by-partlabel/distro-home
+   /mnt`, the file is `/mnt/user/native-manifest.txt`. Expected differences: the
+   unlisted insides of `/root` and `/etc/sudoers.d`. Anything else is a bug in one mode.
+5. Then delete this section and note the results above.
 
 ## Testing a boot
 
@@ -825,20 +820,19 @@ The hardware (`lspci -k` on the host): Intel Core i5-6500 (Skylake), AMD Radeon 
 480/580 (Polaris 10, "Ellesmere"; amdgpu) with the monitor on its HDMI, sound from the
 chipset's Intel HDA (Realtek ALC662 codec) and HDMI audio on the AMD card (both
 snd_hda_intel), an Intel I219-V network card (e1000e), and two SATA SSDs on the
-chipset's AHCI controller: `sda` (1 TB) is the CachyOS host with its systemd-boot,
-`sdb` (256 GB Samsung 850 PRO) is the distro's (its old install, and its home; see
-below for the move to slots on `sda`). USB is the chipset's xHCI. All of these
+chipset's AHCI controller: `sda` (1 TB) holds the CachyOS host and the distro's two
+system slots, `sdb` (256 GB Samsung 850 PRO) the distro's home. USB is the chipset's xHCI. All of these
 drivers are built into our kernel, and must stay built in when it's trimmed.
 
-**The disks: two system slots and a shared home** (the user's plan, 2026-11-14). No
+**The disks: two system slots and a shared home** (set up 2026-11-14). No
 bootloader; the firmware starts a kernel directly. The user keeps two copies of the
 distro so the running one can build and install the next into the other, then boots
 that one:
 
 - `sda` (1 TB): 1 the EFI system partition (CachyOS's, 2 GB, with systemd-boot, which we
   don't use; our kernels go in `\EFI\simplewm\a.efi` and `b.efi`), 2 Arch (CachyOS,
-  ext4, GPT name `root`), 3 `distro-a` and 4 `distro-b` (150 GiB each, `SLOT_SIZE_GIB`,
-  type Linux root x86-64).
+  ext4, GPT name `root`), 3 `distro-a` and 4 `distro-b` (150 GiB each, type Linux
+  root x86-64).
 - `sdb` (256 GB): one partition, `distro-home` (ext4, label home), mounted on `/home` by
   whichever slot runs (simplewm-init finds it by its GPT name on any disk).
 - Firmware boot entries "Distro A" and "Distro B": each starts its kernel with
@@ -858,46 +852,18 @@ that one:
 The scripts (all need root; Claude can't run them, since sudo needs the user's password:
 the user runs them, e.g. `! sudo distro/install.sh` in Claude Code):
 
-- `make-slots.sh /dev/sda` (once, from the distro: ext4 shrinks only unmounted):
-  checks Arch's filesystem, refuses unless resize2fs's minimum plus `SPARE_GIB` (50)
-  fits, shrinks the filesystem 1 GiB under the new size, shrinks partition 2 with sfdisk
-  `-N 2` (start, type, partition ID and name kept; `--wipe-partitions never`), appends
-  the two slots at the end of the disk (1 MiB aligned), grows the filesystem to fill and
-  checks again. Shows the plan and wants the disk's name typed. Rehearsed 2026-11-14 on
-  files (a 2 GiB disk image, a filled ext4 whose last file had to move): the partition
-  table came out as planned (`sfdisk --verify` clean), the file moved and every checked
-  file was intact, e2fsck clean before and after. Not run on the real disk yet.
 - `install.sh [a|b]`: `out/root.img` onto the slot (dd, e2fsck, resize2fs, new UUID and
   label), `out/vmlinuz` onto the EFI partition of the slot's disk (mounted for the copy
   unless it already is, as on Arch). Without an argument, the slot not running; refuses
   the running slot and anything mounted. Works on Arch and in the distro.
-- `efibootmgr.sh` (once, on Arch or in the distro, where simplewm-init mounts efivarfs on
+- `efibootmgr.sh` (run once already; on Arch or in the distro, where simplewm-init mounts efivarfs on
   `/sys/firmware/efi/efivars` when the machine started through EFI, and `efibootmgr` is in
   `PACKAGES`): removes every "Distro…" entry, adds Distro A and B.
-- `move-home.sh /var/tmp/distro-home.tar` (once, on Arch): tars the old `distro-home`
-  (GNU tar: numeric owners, ACLs, xattrs, sparse; compared with the source before
-  anything is erased), makes `sdb` one `distro-home` partition, unpacks and compares
-  again, keeps the tar until the user deletes it. Refuses a disk with partitions other
-  than distro-esp/root/home, or anything mounted.
-- In a distro whose image lacks e2fsprogs/sfdisk/lsblk (the install on `sdb2`, from
-  before they were added to `PACKAGES`), `disk.sh` takes them from `cache/tools/`, which
-  `build.sh` fills (as the user) with apk.static.
 
-**Where the move stands** (2026-11-14): the distro still runs from the old layout on
-`sdb` (`distro-esp`, `distro-root` 32 GiB, `distro-home`; installed by the old whole-disk
-`install.sh`, now replaced; the old firmware entry is called "Distro"). Steps, the user
-running each:
-
-1. Back up anything on Arch they can't lose (a power cut during the shrink can wreck it).
-2. In the distro (`sdb`): `distro/build.sh` (puts the disk tools in `cache/tools/` and
-   makes an image that has them), then `sudo distro/make-slots.sh /dev/sda`.
-3. Still there: `sudo distro/install.sh a`, then `sudo distro/install.sh b`.
-4. Reboot into Arch: check it boots and works (the shrink), `git pull` (these scripts
-   are on Arch's copy only after that), `sudo distro/efibootmgr.sh`, then
-   `sudo distro/move-home.sh /var/tmp/distro-home.tar`. Also the checks in "Next steps,
-   on the Arch host" above (the native build).
-5. Boot Distro A from the firmware menu: the home should be there unchanged (Gram built).
-   Then delete the tar on Arch, and update this section.
+**Done** (2026-11-14): the slots were made on `sda` by shrinking Arch (`make-slots.sh`),
+the old three-partition install on `sdb` became the one `distro-home` partition
+(`move-home.sh`), and the user now builds, installs and reboots between A and B. Both
+one-time scripts were deleted afterwards (they're in git history).
 
 ## Open questions
 

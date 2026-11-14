@@ -142,8 +142,8 @@ Update this list when a change adds or drops one.
 ## The distro (`distro/`)
 
 Scripts that build a musl distro from Alpine packages, with our own kernel and
-simplewm-init as PID 1, booted in QEMU (`make vm`) or installed on the user's second
-disk. Read `distro/CLAUDE.md` before working on it: it has the decisions, each script,
+simplewm-init as PID 1, booted in QEMU (`make vm`) or installed on the user's machine (two system slots on
+the first disk, so each can install the other, and the home on the second). Read `distro/CLAUDE.md` before working on it: it has the decisions, each script,
 how Claude tests a boot itself, and the user's hardware. Keep it current.
 
 ## Code map (`src/`)

@@ -396,16 +396,6 @@ OUT="$PROJECT/distro/out"
 CACHE="$PROJECT/distro/cache"
 RUST_HOME="$CACHE/home"
 
-# mkfs.ext4 from e2fsprogs: the container's own, or cache/tools/ in the distro (whose
-# image doesn't have it), run with that folder's libraries.
-mkfs_ext4() {
-    if [ -n "$NATIVE" ]; then
-        LD_LIBRARY_PATH="$APK_TOOLS/usr/lib" "$APK_TOOLS/sbin/mkfs.ext4" "$@"
-    else
-        mkfs.ext4 "$@"
-    fi
-}
-
 # Everything that needs root: the root filesystem and its disk image.
 root_part() {
 echo "== root filesystem"
@@ -557,7 +547,7 @@ used=$(du -sm "$ROOT" | cut -f1)
 # file: space the system never writes takes nothing on the host's disk.
 size=16384
 [ "$size" -gt $((used * 2)) ] || size=$((used * 2))
-mkfs_ext4 -q -L simplewm -d "$ROOT" "$OUT/root.img" "${size}M"
+mkfs.ext4 -q -L simplewm -d "$ROOT" "$OUT/root.img" "${size}M"
 echo "== root ${used} MB, image ${size} MB"
 
 # Through sudo in the distro: give out/ (the image) and cache/ (apk's downloads) back to
@@ -576,9 +566,12 @@ sh build-simplewm.sh
 sh build-gram.sh
 
 echo "== tools"
-# e2fsprogs for the image; with sfdisk and lsblk, also the disk tools make-slots.sh and
-# install.sh use in a distro whose image lacks them (see disk.sh).
-alpine_tools e2fsprogs e2fsprogs-extra sfdisk lsblk
+# mkfs.ext4 for the image: the container adds it, the distro has it (e2fsprogs).
+if [ -n "$NATIVE" ]; then
+    need mkfs.ext4
+else
+    alpine_tools e2fsprogs
+fi
 # The one console font the system gets (unpacked in the root part).
 alpine_fetch "$CACHE" font-terminus
 

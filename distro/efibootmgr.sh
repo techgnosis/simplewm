@@ -6,9 +6,9 @@
 #   sudo distro/efibootmgr.sh
 #
 # Run once, on the Arch host or in the distro (images since efibootmgr was added; init
-# mounts efivarfs), after make-slots.sh. The entries name partitions by their IDs, which never change, so
-# installs don't need it again. Older Distro entries (the one for the old install on its
-# own disk too) are replaced. The new entries go last in the boot order, so the machine
+# mounts efivarfs). The entries name partitions by their IDs, which never change, so
+# installs don't need it again. Older Distro entries are
+# replaced. The new entries go last in the boot order, so the machine
 # still starts what it started before; pick Distro A or B in the firmware's boot menu.
 # No bootloader: the firmware starts the kernel itself (an EFI program).
 set -eu
@@ -26,7 +26,7 @@ done
 
 for slot in a b; do
     part=$(one_part "distro-$slot")
-    [ -n "$part" ] || die "no distro-$slot partition; run distro/make-slots.sh first"
+    [ -n "$part" ] || die "no distro-$slot partition on this machine"
     disk=$(disk_of "$part")
     esp=$(esp_of "$disk")
     uuid=$(sfdisk --part-uuid "$disk" "$(part_number "$part")")

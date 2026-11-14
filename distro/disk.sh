@@ -1,13 +1,9 @@
-# Sourced by the disk scripts (make-slots.sh, install.sh, efibootmgr.sh, move-home.sh):
+# Sourced by the disk scripts (install.sh, efibootmgr.sh):
 # finding partitions and what's mounted, the same way on the Arch host and in the distro.
 #
 # Partitions are found by their GPT names (PARTNAME in /sys/class/block/*/uevent), never
 # by sdX: the disks' letters can swap between boots. Mounts are matched by device number
 # (/proc/self/mountinfo), since the distro's / shows up as /dev/root.
-#
-# The distro's image may lack e2fsprogs, sfdisk or lsblk (older builds did); then they
-# come from distro/cache/tools/, where build.sh's apk.static puts them (see "Disk tools"
-# in CLAUDE.md).
 
 DISTRO=$(cd "$(dirname "$0")" && pwd)
 
@@ -24,18 +20,6 @@ die() {
 need_root() {
     [ "$(id -u)" = 0 ] || die "needs root: sudo $0 $*"
 }
-
-# Tools missing from the system come from cache/tools/ (with its libraries).
-tools="$DISTRO/cache/tools"
-for t in e2fsck resize2fs dumpe2fs tune2fs mkfs.ext4 sfdisk; do
-    command -v "$t" >/dev/null 2>&1 && continue
-    if [ -e "$tools/lib/apk/db/installed" ]; then
-        PATH="$PATH:$tools/sbin:$tools/usr/sbin:$tools/bin:$tools/usr/bin"
-        export LD_LIBRARY_PATH="$tools/usr/lib"
-        break
-    fi
-    die "no $t; in the distro, run distro/build.sh once (as you) to put the disk tools in cache/tools/"
-done
 
 # The partitions called $1, one /dev path per line.
 part_by_name() {

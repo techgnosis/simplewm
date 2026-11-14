@@ -1,6 +1,6 @@
 #!/bin/sh
 # Install the distro (what build.sh made in distro/out/) into one of its two slots, the
-# partitions distro-a and distro-b that make-slots.sh made.
+# partitions distro-a and distro-b at the end of the first disk.
 #
 #   sudo distro/install.sh        into the slot that isn't running (from the distro)
 #   sudo distro/install.sh a      into distro-a (from Arch, say which)
@@ -25,7 +25,7 @@ done
 
 a=$(one_part distro-a)
 b=$(one_part distro-b)
-[ -n "$a" ] && [ -n "$b" ] || die "no distro-a and distro-b partitions; run distro/make-slots.sh first"
+[ -n "$a" ] && [ -n "$b" ] || die "no distro-a and distro-b partitions on this machine"
 running=
 [ "$(dev_number "$a")" = "$(root_dev_number)" ] && running=a
 [ "$(dev_number "$b")" = "$(root_dev_number)" ] && running=b
