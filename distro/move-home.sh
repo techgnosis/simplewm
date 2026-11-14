@@ -60,17 +60,20 @@ umount "$src"
 
 echo "== partitioning $disk"
 wipefs -q -a "$disk"
-sfdisk -q "$disk" <<PARTITIONS
+# The new partition starts where the old ESP did, so its FAT boot sector would still be
+# there: wipe the old signatures from the new partition, or mount sees vfat and ext4.
+sfdisk -q --wipe always --wipe-partitions always "$disk" <<PARTITIONS
 label: gpt
 type=$TYPE_HOME, name="distro-home"
 PARTITIONS
 udevadm settle
 home=$(one_part distro-home)
 [ -n "$home" ] || die "the new partition didn't show up; the copy is in $tarball"
+wipefs -q -a "$home"
 mkfs.ext4 -q -F -L home "$home"
 
 echo "== unpacking the copy"
-mount "$home" "$src"
+mount -t ext4 "$home" "$src"
 # shellcheck disable=SC2086
 tar -C "$src" $TAR_OPTS -xpf "$tarball"
 # shellcheck disable=SC2086
