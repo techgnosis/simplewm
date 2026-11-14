@@ -24,10 +24,10 @@ if [ ! -e /etc/alpine-release ]; then
     exec "$(dirname "$0")/container.sh" distro/kernel.sh "$@"
 fi
 
-# The newest long-term kernel when it was picked, and its checksum from kernel.org's
+# The newest stable kernel when it was picked, and its checksum from kernel.org's
 # sha256sums.asc.
-VERSION=6.18.63
-SHA256=81764a545072d160748beff4d9de2e7d95aa9f16e8261110288f067a2cc61d71
+VERSION=7.3.4
+SHA256=b11b6df8295e8e991ff040b71aaa4994a8b55caa23b6b092907f195b5840fd1f
 
 CONFIG=/work/distro/kernel.config
 CACHE=/work/distro/cache/kernel

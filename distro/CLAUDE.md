@@ -30,7 +30,7 @@ made.
   system ourselves; Alpine's musl packages become the root filesystem. Tested in QEMU
   first. Details below.
 - **Kernel: our own, with no modules and no initramfs.** Built from kernel.org's
-  long-term source with the config in `distro/kernel.config`, which we keep improving.
+  stable source with the config in `distro/kernel.config`, which we keep improving.
   Every driver is built in. Details in "The kernel" below.
 
 ## Devices: the jobs involved
@@ -554,8 +554,15 @@ Our own, built from kernel.org's source by `distro/kernel.sh` (in the container;
 and build tree kept in `cache/kernel/`, so a rebuild only redoes what changed: about 13
 minutes from scratch on the user's 4 cores, seconds when nothing changed). The version is
 pinned in `kernel.sh` (`VERSION`, with the tarball's `SHA256` from kernel.org's
-`sha256sums.asc`): 6.18.63, the newest long-term kernel when it was picked, the same one
-Alpine's `linux-virt` was.
+`sha256sums.asc`): 7.3.4, the newest stable kernel, picked by the user on 2026-11-13
+over staying on the 6.18 long-term kernel (the first pick, 6.18.63, the same one Alpine's
+`linux-virt` was). A stable series stops getting fixes a few months after the next one
+comes out, so move up with each release: 7.4 when it's final (it was at rc2), not its
+release candidates. To move: new `VERSION` and `SHA256` (from
+`https://cdn.kernel.org/pub/linux/kernel/v7.x/sha256sums.asc`), `kernel.sh refresh`,
+read the diff, boot-test. The move from 6.18 changed one choice: x86 no longer offers
+`PREEMPT_VOLUNTARY` (the defconfig's), so it's lazy preemption (`PREEMPT_LAZY`, the new
+default) with `PREEMPT_DYNAMIC`.
 
 **No modules, no initramfs.** Every driver the system needs is built in
 (`CONFIG_MODULES` is off), so the kernel finds the disk, mounts `root=` itself and runs
@@ -588,7 +595,7 @@ changes, then `savedefconfig`. Our changes:
   and Wi-Fi drivers; the machine is wired), kernel IP autoconfiguration, 9p and network
   filesystems, the floppy driver, and the defconfig's debug options (CGROUP_DEBUG,
   PM_DEBUG, DEBUG_DEVRES, DEBUG_STACK_USAGE, DEBUG_BOOT_PARAMS, DEBUG_ENTRY).
-- Release name `6.18.63-simplewm` (`uname -r`).
+- Release name `<VERSION>-simplewm` (`uname -r`), e.g. `7.3.4-simplewm`.
 
 Checked in QEMU: before the switch, the old kernel loaded these modules, all now built
 in: virtio_blk, virtio_net, virtio_gpu, virtio_input, ext4, snd_hda_intel and its codec,
