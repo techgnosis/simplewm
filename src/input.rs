@@ -491,7 +491,6 @@ impl State {
                         }
                     }
                     PanelHit::ServiceLog(s) => self.panels.open_log(s),
-                    PanelHit::BusProgram(builtin) => self.panels.set_builtin_bus(builtin),
                     PanelHit::SudoOk => self.panels.sudo_submit(),
                     PanelHit::SudoCancel => self.panels.sudo_cancel(),
                     PanelHit::ChooseShotDir => {

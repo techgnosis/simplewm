@@ -17,9 +17,8 @@
 //! * The Sound applet window chooses PipeWire's sound card and sets its volume
 //!   (see `sound` and `crate::sound`), and starts and stops PipeWire, its Pulse
 //!   server and WirePlumber.
-//! * The D-Bus applet window starts and stops the session bus, chooses whether
-//!   dbus-daemon or simplewm itself is the bus, and lists who's connected to
-//!   simplewm's own (see `services`, `crate::services` and `crate::bus`).
+//! * The D-Bus applet window starts and stops the session bus simplewm serves, and
+//!   lists who's connected to it (see `services`, `crate::services` and `crate::bus`).
 //! * The Log window is not in the Control Panel: a service's Log button opens it on
 //!   that service's output (see `services`).
 //! * The Password window is not in the Control Panel either: it asks for the
@@ -229,8 +228,6 @@ pub enum PanelHit {
     // A service's Start/Stop and Log buttons (Sound and D-Bus applets).
     ServiceToggle(Service),
     ServiceLog(Service),
-    // D-Bus: which program is the bus (true: simplewm itself).
-    BusProgram(bool),
     // Password window
     SudoOk,
     SudoCancel,
@@ -345,8 +342,6 @@ impl Panels {
             store,
         };
         panels.load_network();
-        panels.services.builtin_bus =
-            panels.store.setting(services::BUILTIN_BUS_KEY).as_deref() == Some("1");
         panels
     }
 

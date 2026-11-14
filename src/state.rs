@@ -164,14 +164,11 @@ impl State {
         // The services' threads report back here.
         let service_tx = report_to(event_loop, State::service_event);
         let service_tx = Mutex::new(service_tx);
-        let services = Services::new(
-            Arc::new(move |ev| {
-                if let Ok(tx) = service_tx.lock() {
-                    let _ = tx.send(ev);
-                }
-            }),
-            socket_name.to_string_lossy().into_owned(),
-        );
+        let services = Services::new(Arc::new(move |ev| {
+            if let Ok(tx) = service_tx.lock() {
+                let _ = tx.send(ev);
+            }
+        }));
 
         // The Password window's sudo workers report back here.
         let mut panels = Panels::new(services);

@@ -17,9 +17,9 @@ changing it. This file covers what the scripts don't make obvious.
   at build time. Don't switch to libudev-zero: with it PipeWire finds no sound cards,
   because nothing sets `SOUND_INITIALIZED`. The network card is `eth0`
   (`eudev-netifnames` isn't installed).
-- **Session bus:** dbus-daemon, started by simplewm, or simplewm itself when the D-Bus
-  applet says so (dbus-daemon stays in the image until that's the default). Not
-  dbus-broker: its launcher needs systemd. There's no system bus and no D-Bus activation:
+- **Session bus:** simplewm itself. The `dbus` package stays for libdbus (Firefox) and
+  the tools the tests use (`dbus-send`, `dbus-run-session`), but nothing starts its
+  dbus-daemon. There's no system bus and no D-Bus activation:
   `/usr/share/dbus-1/services` is in `REMOVE_DIRS`, so the build stops if a package adds
   a service there.
 - **Apps:** Firefox (`firefox.js` turns off tabs in the title bar and sends file dialogs

@@ -46,10 +46,10 @@ rules below.
   leaves the name alone.
 - **User services** (`services.rs`), in place of `systemd --user`: the session bus,
   pipewire, pipewire-pulse and wireplumber, started on a TTY in that order, each once the
-  one before answers on its socket. The D-Bus applet chooses who the bus is: dbus-daemon
-  (the default) or simplewm itself (`bus.rs`), used from the bus's next start. One
-  that's already running is left alone and shown as "Run by PID n (program)". Each keeps its last 2000 output lines as a log. Nothing restarts them: the
-  user presses Start. They're stopped when simplewm quits, and get SIGTERM if it dies
+  one before answers on its socket. The session bus is simplewm itself (`bus.rs`); the
+  rest are programs it runs. One that's already running is left alone and shown as "Run
+  by PID n (program)". Each keeps its last 2000 output lines as a log. Nothing restarts
+  them: the user presses Start. They're stopped when simplewm quits, and get SIGTERM if it dies
   (`PR_SET_PDEATHSIG`). No unit files, no dependency engine, no other services. Nothing
   uses `systemctl`, and nothing is exported to D-Bus activation.
 - **Network applet:** a static IPv4 address, gateway and DNS server (no DHCP), set only
@@ -75,7 +75,7 @@ rules below.
   each one's doc comment explains:
   - After touching `portal.rs`, `portal_check.rs` or zbus:
     `dbus-run-session -- cargo test bus -- --ignored`.
-  - After touching `services.rs`: `cargo test runs_the_session_daemon -- --ignored`.
+  - After touching `services.rs`: `cargo test runs_the_session_service -- --ignored`.
   - After touching `bus.rs`: `cargo test talks_to_c_clients -- --ignored` (needs
     `dbus-send` and `gdbus`). The other bus tests run with plain `cargo test`.
   - `network::namespace_test` runs the root `ip` script in a throwaway namespace.
@@ -102,7 +102,7 @@ list when something changes.
 - To start: libseat (seatd or logind), libudev, libinput, libgbm, `libEGL.so.1`,
   libxkbcommon with xkeyboard-config data (it panics without it), and the C library.
   Nested also needs the host's Wayland client libraries, which winit loads.
-- By feature, starting without them: `dbus-daemon`, `pipewire`, `pipewire-pulse` and
+- By feature, starting without them: `pipewire`, `pipewire-pulse` and
   `wireplumber` on `PATH`; `pw-dump` and `wpctl` (Sound); a session bus (portal);
   `/usr/share/mime/globs2` (File Picker filters); `/usr/bin/sudo`, `/bin/sh`, `ip`,
   `mktemp`, `chmod`, `mv` and `rm` (Network Apply); and whatever the Launcher lists (on
@@ -142,9 +142,8 @@ applet's state. `panel.rs` has the shared parts (placement, frame, hit-test/rend
 dispatch, `PanelHit`, sizes and colors). Each window has its own file of
 `impl super::Panels` blocks: `control.rs` (Control Panel and Help), `launcher.rs`,
 `screenshot.rs`, `network.rs`, `sound.rs`, `rows.rs` (Environment, Desktop Portal and the
-shared `RowList`), `services.rs` (the service row, the D-Bus applet with its choice of bus and list of
-connected programs, the Log window),
-`picker.rs` (File Picker) and `sudo.rs` (Password window: `ask_password(SudoJob)` →
+shared `RowList`), `services.rs` (the service row, the D-Bus applet with its list of
+connected programs, the Log window), `picker.rs` (File Picker) and `sudo.rs` (Password window: `ask_password(SudoJob)` →
 `job_finished`). Shared helpers: `text_field.rs` and `store.rs` (to change the settings
 format, bump `VERSION` and keep reading the old one).
 

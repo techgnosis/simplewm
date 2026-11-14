@@ -1,7 +1,7 @@
 //! The user services simplewm runs itself, in place of `systemd --user`: the D-Bus
-//! session bus (`dbus-daemon`, or simplewm's own bus in `crate::bus` when the D-Bus applet
-//! says so), PipeWire, its PulseAudio server (`pipewire-pulse`) and WirePlumber. No UI
-//! here; the Sound and D-Bus applets show and control them.
+//! session bus (served inside simplewm, see `crate::bus`), PipeWire, its PulseAudio server
+//! (`pipewire-pulse`) and WirePlumber. No UI here; the Sound and D-Bus applets show and
+//! control them.
 //!
 //! This is deliberately small: a fixed list of programs simplewm always needs, started in
 //! order on a TTY, stopped when simplewm quits, with their output kept as a log. Nothing
@@ -12,7 +12,7 @@
 //! (the kernel says who's listening), or for WirePlumber, which has no socket, a process
 //! of that name owned by us.
 //!
-//! Each started program gets three threads: one reads its output (stdout and stderr share
+//! Each started program (all but the bus) gets three threads: one reads its output (stdout and stderr share
 //! one pipe), one waits for it to exit, and one waits for its socket to answer. They report
 //! back through `Notify`, which `State` wires to a calloop channel. Each start gets a new
 //! `run` number, so events from a previous run of the same service are told apart.
@@ -70,9 +70,11 @@ impl Service {
         }
     }
 
+    /// The program simplewm runs, or for the bus, which simplewm serves itself, what
+    /// messages call it.
     pub fn program(self) -> &'static str {
         match self {
-            Service::Bus => "dbus-daemon",
+            Service::Bus => "the session bus",
             Service::PipeWire => "pipewire",
             Service::Pulse => "pipewire-pulse",
             Service::WirePlumber => "wireplumber",
@@ -161,24 +163,18 @@ impl Default for Proc {
 pub struct Services {
     procs: [Proc; 4],
     notify: Notify,
-    /// Whether the next start of the bus serves it inside simplewm (else `dbus-daemon`).
-    pub builtin_bus: bool,
     /// simplewm's own bus, while it runs.
     bus: Option<crate::bus::Bus>,
-    /// For the bus's environment, so services it starts can open windows.
-    wayland_display: String,
     /// Services still to start at login, each once what it needs is up.
     pending: Vec<Service>,
 }
 
 impl Services {
-    pub fn new(notify: Notify, wayland_display: String) -> Self {
+    pub fn new(notify: Notify) -> Self {
         Services {
             procs: Default::default(),
             notify,
-            builtin_bus: false,
             bus: None,
-            wayland_display,
             pending: Vec::new(),
         }
     }
@@ -283,7 +279,7 @@ impl Services {
             self.procs[s.index()].status = Status::Elsewhere(who);
             return;
         }
-        let started = if s == Service::Bus && self.builtin_bus {
+        let started = if s == Service::Bus {
             self.start_bus()
         } else {
             self.spawn(s, &runtime)
@@ -303,23 +299,8 @@ impl Services {
 
     fn spawn(&mut self, s: Service, runtime: &Path) -> Result<(), String> {
         let mut cmd = Command::new(s.program());
-        let bus = bus_address();
-        if let Some(bus) = &bus {
+        if let Some(bus) = bus_address() {
             cmd.env("DBUS_SESSION_BUS_ADDRESS", bus);
-        }
-        if s == Service::Bus {
-            let bus = bus.ok_or("no bus address (XDG_RUNTIME_DIR is not set)")?;
-            // Nothing answered on the socket (see other_instance), so a file left there
-            // is stale, and dbus-daemon won't listen over it.
-            if let Some(path) = bus_socket(&bus) {
-                let _ = std::fs::remove_file(path);
-            }
-            cmd.args(["--session", "--nofork", "--nopidfile", "--nosyslog"])
-                .arg(format!("--address={bus}"))
-                // Programs the bus starts on demand get these.
-                .env("WAYLAND_DISPLAY", &self.wayland_display)
-                .env("XDG_CURRENT_DESKTOP", "simplewm")
-                .env_remove("DISPLAY");
         }
 
         let (reader, writer) = std::io::pipe().map_err(|e| format!("cannot make a pipe: {e}"))?;
@@ -511,7 +492,7 @@ impl Services {
         for slot in &slots {
             signal(slot, libc::SIGKILL);
         }
-        // Last, like dbus-daemon above: the others may still be talking on it.
+        // Last: the others may still be talking on it.
         if let Some(bus) = self.bus.take() {
             bus.stop();
         }
@@ -741,11 +722,10 @@ pub fn describe_pid(pid: u32) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::mpsc;
 
     #[test]
     fn starts_in_dependency_order() {
-        let mut services = Services::new(Arc::new(|_| {}), String::new());
+        let mut services = Services::new(Arc::new(|_| {}));
         services.pending = Service::ALL.to_vec();
         let next = |services: &Services| services.next_ready().map(|i| services.pending[i]);
 
@@ -822,13 +802,13 @@ mod tests {
         assert_eq!(signal(&slot, libc::SIGTERM), None);
     }
 
-    /// Starts a real dbus-daemon on a scratch socket and stops it again.
-    /// Needs dbus-daemon: `cargo test runs_the_session_daemon -- --ignored`. Not named
-    /// "bus": `cargo test bus` runs the portal tests, and this one changes the
-    /// environment they read.
+    /// Serves the session bus on a scratch socket and stops it again.
+    /// `cargo test runs_the_session_service -- --ignored`. Ignored, and not named "bus"
+    /// (`cargo test bus` runs the portal tests), because it changes the environment
+    /// other tests read.
     #[test]
     #[ignore]
-    fn runs_the_session_daemon() {
+    fn runs_the_session_service() {
         let dir = std::env::temp_dir().join(format!("simplewm-services-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         // SAFETY: this test runs alone (it's ignored by default); nothing reads the
@@ -840,38 +820,8 @@ mod tests {
                 format!("unix:path={}/bus", dir.display()),
             );
         }
-        let (tx, rx) = mpsc::channel::<ServiceEvent>();
-        let tx = Mutex::new(tx);
-        let notify: Notify = Arc::new(move |ev| {
-            let _ = tx.lock().unwrap().send(ev);
-        });
-        let mut services = Services::new(notify, "wayland-test".into());
-        services.start(Service::Bus);
-        assert_eq!(services.status(Service::Bus), &Status::Starting);
-        let until = |services: &mut Services, want: Status| {
-            let deadline = Instant::now() + Duration::from_secs(10);
-            while services.status(Service::Bus) != &want {
-                let left = deadline.saturating_duration_since(Instant::now());
-                let ev = rx.recv_timeout(left).expect("no event in time");
-                services.handle(ev);
-            }
-        };
-        until(&mut services, Status::Running);
-        assert!(dir.join("bus").exists());
-        // A second start sees it running.
-        let elsewhere = other_instance(Service::Bus, &dir);
-        assert!(elsewhere.unwrap().contains("dbus-daemon"));
-        services.stop(Service::Bus);
-        until(&mut services, Status::Stopped);
-        let log: Vec<_> = services.log(Service::Bus).iter().cloned().collect();
-        assert!(
-            log.iter().any(|l| l.contains("started dbus-daemon")),
-            "{log:?}"
-        );
-        assert!(log.iter().any(|l| l.contains("stopping")), "{log:?}");
-
-        // simplewm's own bus: up at once, on the same socket, and gone when stopped.
-        services.builtin_bus = true;
+        let mut services = Services::new(Arc::new(|_| {}));
+        // Up at once, and gone when stopped.
         services.start(Service::Bus);
         assert_eq!(services.status(Service::Bus), &Status::Running);
         assert_eq!(services.describe(Service::Bus), "Running inside simplewm");

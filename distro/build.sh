@@ -432,7 +432,7 @@ strip --strip-debug "$ROOT/usr/bin/gram" "$ROOT/usr/libexec/gram-editor"
 install -m 644 firefox.js "$ROOT/usr/lib/firefox/defaults/pref/simplewm.js"
 # udevd reads the hardware database from this compiled file.
 chroot "$ROOT" udevadm hwdb --update
-# dbus-daemon wants a machine ID.
+# The session bus answers GetMachineId from this.
 chroot "$ROOT" dbus-uuidgen --ensure=/etc/machine-id
 
 # bash is the login shell (root's too); /bin/sh stays busybox for scripts.

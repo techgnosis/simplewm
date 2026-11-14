@@ -1,5 +1,5 @@
-//! simplewm as the D-Bus session bus, in place of `dbus-daemon` when the D-Bus applet
-//! says so (see `services`, which starts and stops it like the other services).
+//! simplewm as the D-Bus session bus, in place of `dbus-daemon` (see `services`, which
+//! starts and stops it like the other services).
 //!
 //! zbus does each connection's handshake and message framing (its server side, with the
 //! `bus-impl` feature). This module is the bus on top: unique names, well-known names with
