@@ -59,11 +59,8 @@ still growing: the user is open to experiments and new features, within the rule
   systemd: no unit files, no dependency engine, no other services. To try it on their
   systemd host they mask the user units `pipewire.socket pipewire.service
   pipewire-pulse.socket pipewire-pulse.service wireplumber.service dbus.socket`.
-- Long-term goal: boot simplewm in a minimal custom distro, doing as much as it can in one
-  process. `distro/CLAUDE.md` records the plan and decisions so far (musl, seatd, eudev (libudev-zero
-  was dropped: PipeWire found no sound cards with it), dbus-daemon started by simplewm, a custom init that runs simplewm as the user with no login, the system
-  built from Alpine's binary packages installed by apk into a folder and tested in QEMU);
-  keep it current as they're made. The PipeWire tools and the `ip` script are staying.
+- Long-term goal: boot simplewm in a minimal custom distro (`distro/`), doing as much as
+  it can in one process. The PipeWire tools and the `ip` script are staying.
 - simplewm runs with no special privileges. The Network applet sets a static IPv4 address,
   gateway and DNS server (no DHCP) only when the user presses Apply: the Password window
   asks for their password and runs one fixed `ip` script through `sudo -k -S` on a worker
@@ -137,52 +134,16 @@ linked libraries with `readelf -d target/release/simplewm | grep NEEDED`.
   - File Picker filters by MIME type: `/usr/share/mime/globs2` (shared-mime-info).
   - Network applet Apply: `/usr/bin/sudo`, `/bin/sh`, `ip` (iproute2), and `mktemp`,
     `chmod`, `mv`, `rm`. Reading the card uses only `/sys`, `/proc` and netlink.
-  - Launcher: whatever is listed (default `/usr/bin/alacritty`).
+  - Launcher: whatever is listed (on first run `/usr/bin/alacritty` and `/usr/bin/gram`).
 
 Update this list when a change adds or drops one.
 
 ## The distro (`distro/`)
 
-Scripts for building the custom distro from Alpine packages; `distro/CLAUDE.md` has the
-plan and describes each script. `distro/build.sh` builds simplewm for musl
-(`build-simplewm.sh`, into `target/alpine/`), the root filesystem, the kernel and the
-disk image (inside an Alpine container, `distro/container.sh`), and `distro/run.sh` (or `make vm`) boots
-them in QEMU, which starts straight into simplewm (`/sbin/init` is simplewm-init). Claude can test a boot itself with
-`distro/run.sh headless [image]` (no window, and changes to the disk are thrown away).
-There's no shell on the serial port (it's output only), so drive the VM through QEMU's
-monitor (pipe Ctrl+A C, a command, Ctrl+A C into run.sh): `screendump distro/out/x.ppm`
-for screenshots (convert PPM to PNG to view), `sendkey` to type (one key per command:
-`spc`, `dot`, `shift-4` for `$`…), and `quit` at the end. To test failures, boot a copy
-of `out/root.img` changed with `debugfs -w` in the container (e2fsprogs-extra), e.g. with
-a stub `/usr/bin/simplewm`. Run `e2fsck -fy` on a copy before changing it: if QEMU
-was quit while the image was mounted, its journal still holds unwritten changes, which
-the kernel writes at boot over whatever debugfs changed (corrupting it). Make all the
-changes in one `debugfs -w -f <commands>` run; when simplewm exits, simplewm-init gives a user shell on tty1 to
-type into. To check what a screenshot can't show, give the test copy a
-`/home/user/.bash_profile` (simplewm is started through the login shell) that runs checks in
-the background and writes a report ending with `sync` (new data otherwise waits up to 30 s
-to reach the disk); test copies are written to, so read the report afterwards with
-`debugfs -c -R "cat /home/user/check.log"` (`-c`: QEMU's `quit` leaves the filesystem
-unclean). Copy test images on the host with `cp --sparse=always` (the image is a 16 GB
-sparse file; busybox's `cp` in the container can't keep it sparse). `build.sh` empties
-`out/`, so keep test images elsewhere or remake them. The outputs (`distro/root/`, `out/`, `cache/`) are git-ignored.
-
-The kernel is our own (`distro/kernel.sh`, config in `distro/kernel.config`, kept in
-`savedefconfig` form): everything built in, no modules, no initramfs. `kernel.sh` alone
-rebuilds just `out/vmlinuz` (seconds when little changed), so a kernel change can be
-boot-tested against the existing `root.img`. After editing `kernel.config`, run
-`distro/kernel.sh refresh` and read its diff: a line that vanishes was ignored by the
-kernel. `distro/CLAUDE.md` ("The kernel") records why each change was made and what's left.
-
-The distro also runs on the user's machine, from its own disk (`/dev/sdb`, found by the
-partition names `distro-esp`, `distro-root` and `distro-home`): `sudo distro/install.sh
-/dev/sdb` writes `out/` to it, replacing the system but never the home partition, which
-simplewm-init mounts on `/home` (so the user keeps their home across installs; what the
-build puts in the image's home only reaches a new home partition). `sudo distro/efibootmgr.sh` adds the Distro EFI boot entry (the
-firmware starts the kernel directly). Only the user can run these (sudo password). The
-kernel must keep their hardware built in: AMD RX 480/580 (amdgpu, with its firmware in
-`CONFIG_EXTRA_FIRMWARE`), Intel HDA and HDMI audio, e1000e, AHCI, xHCI. `distro/CLAUDE.md`
-("On the user's machine") has the details.
+Scripts that build a musl distro from Alpine packages, with our own kernel and
+simplewm-init as PID 1, booted in QEMU (`make vm`) or installed on the user's second
+disk. Read `distro/CLAUDE.md` before working on it: it has the decisions, each script,
+how Claude tests a boot itself, and the user's hardware. Keep it current.
 
 ## Code map (`src/`)
 

@@ -550,6 +550,34 @@ password is locked (`*`): Alpine ships it empty. busybox `su` isn't setuid, so i
 usable, but nothing should be able to log in as root without a password; the user gets
 root through sudo with their own password (checked).
 
+## Testing a boot
+
+`distro/run.sh` (or `make vm`) boots `out/` in QEMU, straight into simplewm. Claude can
+test a boot itself with `distro/run.sh headless [image]` (no window, and changes to the
+disk are thrown away). There's no shell on the serial port (it's output only), so drive
+the VM through QEMU's monitor (pipe Ctrl+A C, a command, Ctrl+A C into run.sh):
+`screendump distro/out/x.ppm` for screenshots (convert PPM to PNG to view), `sendkey` to
+type (one key per command: `spc`, `dot`, `shift-4` for `$`…), and `quit` at the end.
+
+- **Changing a test image:** boot a copy of `out/root.img` changed with `debugfs -w` in
+  the container (e2fsprogs-extra), e.g. with a stub `/usr/bin/simplewm` to test failures.
+  Run `e2fsck -fy` on the copy first: if QEMU was quit while the image was mounted, its
+  journal still holds unwritten changes, which the kernel writes at boot over whatever
+  debugfs changed (corrupting it). Make all the changes in one `debugfs -w -f <commands>`
+  run. When simplewm exits, simplewm-init gives a user shell on tty1 to type into.
+- **Checking what a screenshot can't show:** give the test copy a
+  `/home/user/.bash_profile` (simplewm is started through the login shell) that runs
+  checks in the background and writes a report ending with `sync` (new data otherwise
+  waits up to 30 s to reach the disk). Test copies are written to, so read the report
+  afterwards with `debugfs -c -R "cat /home/user/check.log"` (`-c`: QEMU's `quit` leaves
+  the filesystem unclean).
+- Copy test images on the host with `cp --sparse=always` (the image is a 16 GB sparse
+  file; busybox's `cp` in the container can't keep it sparse). `build.sh` empties `out/`,
+  so keep test images elsewhere or remake them.
+- A kernel change can be tested against the existing `root.img`: `kernel.sh` alone
+  rebuilds just `out/vmlinuz`. After editing `kernel.config`, run `kernel.sh refresh` and
+  read its diff: a line that vanishes was ignored by the kernel.
+
 ## The kernel
 
 Our own, built from kernel.org's source by `distro/kernel.sh` (in the container; source
@@ -632,7 +660,7 @@ chipset's Intel HDA (Realtek ALC662 codec) and HDMI audio on the AMD card (both
 snd_hda_intel), an Intel I219-V network card (e1000e), and two SATA SSDs on the
 chipset's AHCI controller: `sda` (1 TB) is the CachyOS host with its systemd-boot,
 `sdb` (256 GB Samsung 850 PRO) is the distro's. USB is the chipset's xHCI. All of these
-drivers are built into our kernel.
+drivers are built into our kernel, and must stay built in when it's trimmed.
 
 **The disk** (`install.sh`, run as root on the host): GPT with three partitions, which the
 scripts find by name, never by `sdX` (the disks' letters can swap between boots):
