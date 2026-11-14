@@ -17,13 +17,6 @@ use crate::{
 };
 
 const FILE_CHOOSER: &str = "org.freedesktop.portal.FileChooser";
-/// Portal programs simplewm doesn't need (they're for Flatpak apps). As `comm` names,
-/// which the kernel cuts to 15 bytes.
-const PROGRAMS: [(&str, &str); 3] = [
-    ("xdg-desktop-portal", "xdg-desktop-por"),
-    ("xdg-document-portal", "xdg-document-po"),
-    ("xdg-permission-store", "xdg-permission-"),
-];
 
 /// Run the checks on a worker thread and send the rows to `tx`.
 pub fn spawn(tx: Sender<Vec<EnvRow>>) {
@@ -64,9 +57,6 @@ fn run() -> Vec<EnvRow> {
     let nested = matches!(status.state, portal::State::Off);
     portal_rows(&status, &mut rows, &mut problems);
     zbus::block_on(bus_rows(nested, &mut rows, &mut problems));
-    if !nested {
-        program_rows(&mut rows);
-    }
 
     let checked = crate::clock::now("%H:%M:%S");
     let mut out = vec![EnvRow::Header("Summary".into())];
@@ -215,24 +205,6 @@ async fn file_chooser_version(conn: &Connection) -> Result<u32, String> {
         .map_err(|e| e.to_string())?;
     let value: OwnedVariant = reply.body().deserialize().map_err(|e| e.to_string())?;
     u32::try_from(value).map_err(|e| e.to_string())
-}
-
-// --- portal programs ---------------------------------------------------------------
-
-/// Whether the portal programs simplewm replaces are running. Not problems: simplewm
-/// stops an xdg-desktop-portal that holds the name, and the others only matter to
-/// Flatpak apps. The session bus can still start them on demand.
-fn program_rows(rows: &mut Vec<EnvRow>) {
-    rows.push(EnvRow::Header(
-        "Portal programs simplewm doesn't need".into(),
-    ));
-    for (name, comm) in PROGRAMS {
-        let state = match services::find_process(comm) {
-            Some(pid) => format!("running (PID {pid})"),
-            None => "not running".into(),
-        };
-        rows.push(item(name, state));
-    }
 }
 
 #[cfg(test)]
