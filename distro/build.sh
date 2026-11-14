@@ -88,8 +88,6 @@ RUST_VERSION=1.100
 #
 # REMOVE: files and folders deleted with whatever is in them.
 REMOVE="
-    /boot
-
     /etc/inittab
     /etc/fstab
     /etc/motd
@@ -148,6 +146,162 @@ REMOVE="
     /var/spool
     /var/log/apk.log
     /dev/null
+
+    /etc/modprobe.d
+    /etc/pulse
+    /etc/gtk-3.0
+    /usr/lib/sysctl.d
+
+    /etc/ssl1.1
+    /etc/ssl/*.dist
+    /etc/ssl/ct_log_list.cnf
+    /etc/ca-certificates
+    /etc/ca-certificates.conf
+    /usr/share/ca-certificates
+    /usr/sbin/update-ca-certificates
+    /usr/bin/c_rehash
+
+    /etc/terminfo/g
+    /etc/terminfo/k
+    /etc/terminfo/p
+    /etc/terminfo/r
+    /etc/terminfo/s/st-*
+    /etc/terminfo/s/sun
+    /etc/terminfo/t/terminator
+    /etc/terminfo/t/terminology*
+    /etc/terminfo/v/vt52
+    /etc/terminfo/v/vt200
+    /etc/terminfo/v/vte*
+
+    /usr/bin/lto-dump
+    /usr/lib/gcc/*/*/plugin
+    /usr/lib/gcc/*/*/install-tools
+    /usr/lib/gcc/*/*/libcaf_single.a
+    /usr/libexec/gcc/*/*/plugin
+    /usr/libexec/gcc/*/*/install-tools
+
+    /usr/share/X11/Xcms.txt
+    /usr/share/X11/XErrorDB
+    /usr/share/X11/xkb/geometry
+
+    /usr/lib/bash
+    /usr/lib/gtk-2.0
+    /usr/lib/vdpau
+    /usr/lib/cairo
+    /usr/lib/engines-3
+    /usr/lib/gtk-3.0/*/printbackends/libprintbackend-cups.so
+    /usr/lib/gtk-3.0/*/printbackends/libprintbackend-lpr.so
+    /usr/share/glib-2.0/schemas/org.gtk.exampleapp.gschema.xml
+    /usr/share/gtk-3.0
+    /usr/share/gettext
+    /usr/share/libcamera/pipeline
+    /usr/bin/libcamerify
+    /usr/lib/python3.14/turtledemo
+    /usr/lib/python3.14/turtle.py
+    /usr/lib/python3.14/__pycache__/turtle.*
+
+    /usr/bin/pacmd
+    /usr/bin/padsp
+    /usr/bin/pa-info
+    /usr/lib/pulseaudio/libpulsedsp.so
+    /usr/lib/pulseaudio/libpulsecore-*.so
+    /usr/bin/pipewire-aes67
+    /usr/bin/pipewire-avb
+    /usr/bin/pipewire-vulkan
+    /usr/share/pipewire/pipewire-aes67.conf
+    /usr/share/pipewire/pipewire-avb.conf
+    /usr/share/pipewire/pipewire-vulkan.conf
+    /usr/share/pipewire/minimal.conf
+    /usr/share/spa-0.2
+    /usr/bin/aserver
+    /usr/bin/sndfile-*
+
+    /usr/bin/chvt
+    /usr/bin/deallocvt
+    /usr/bin/dumpkeys
+    /usr/bin/fgconsole
+    /usr/bin/getkeycodes
+    /usr/bin/kbdinfo
+    /usr/bin/kbdrate
+    /usr/bin/loadkeys
+    /usr/bin/loadunimap
+    /usr/bin/mapscrn
+    /usr/bin/open
+    /usr/bin/openvt
+    /usr/bin/psf*table
+    /usr/bin/resizecons
+    /usr/bin/setkeycodes
+    /usr/bin/setleds
+    /usr/bin/setmetamode
+    /usr/bin/setvtrgb
+    /usr/bin/showconsolefont
+    /usr/bin/showkey
+    /usr/bin/unicode_start
+    /usr/bin/unicode_stop
+    /bin/kbd_mode
+
+    /usr/bin/bomtool
+    /usr/bin/econftool
+    /usr/bin/cvtsudoers
+    /usr/bin/dbus-test-tool
+    /usr/bin/dbus-cleanup-sockets
+    /usr/bin/scmp_sys_resolver
+    /usr/bin/yuvconvert
+    /usr/bin/fribidi
+    /usr/bin/git-shell
+    /bin/hugetop
+    /bin/tload
+    /sbin/dpll
+    /sbin/netshaper
+    /sbin/genl
+    /sbin/ifstat
+    /sbin/lnstat
+    /sbin/ctstat
+    /sbin/rtstat
+    /sbin/rtacct
+    /sbin/rtmon
+    /sbin/routel
+
+    /usr/lib/udev/rules.d/60-persistent-storage-tape.rules
+    /usr/lib/udev/rules.d/75-probe_mtd.rules
+    /usr/lib/udev/mtd_probe
+    /usr/lib/udev/rules.d/81-net-dhcp.rules
+"
+# BUSYBOX: busybox commands for what this system doesn't do (kernel modules, other init
+# systems and logins, cron, syslog, mail, DHCP, ifupdown, initramfs, NAND flash, …) or
+# that duplicate a real tool (busybox's `ip` shortcuts). Only the links go; the build
+# stops if one turns out to be a real program.
+BUSYBOX="
+    /bin/bbconfig /bin/dumpkmap /bin/fatattr /bin/fdflush /bin/linux32 /bin/linux64
+    /bin/login /bin/lzop /bin/makemime /bin/reformime /bin/pipe_progress /bin/run-parts
+    /bin/setserial /bin/usleep
+    /sbin/acpid /sbin/depmod /sbin/insmod /sbin/lsmod /sbin/modinfo /sbin/modprobe
+    /sbin/rmmod /sbin/fbsplash /sbin/getty /sbin/ifdown /sbin/ifup /sbin/ifenslave
+    /sbin/klogd /sbin/syslogd /sbin/logread /sbin/mdev /sbin/nameif /sbin/raidautorun
+    /sbin/setconsole /sbin/slattach /sbin/tunctl /sbin/udhcpc /sbin/vconfig
+    /sbin/watchdog /sbin/zcip /sbin/loadkmap /sbin/ipaddr /sbin/iplink /sbin/ipneigh
+    /sbin/iproute /sbin/iprule /sbin/iptunnel /sbin/switch_root /sbin/fsck
+    /usr/bin/beep /usr/bin/crontab /usr/bin/last /usr/bin/mesg /usr/bin/pscan
+    /usr/bin/udhcpc6 /usr/bin/vlock /usr/bin/volname /usr/bin/ttysize
+    /usr/sbin/crond /usr/sbin/sendmail /usr/sbin/nanddump /usr/sbin/nandwrite
+    /usr/sbin/nbd-client /usr/sbin/rdev /usr/sbin/readahead /usr/sbin/setlogcons
+    /usr/sbin/loadfont /usr/sbin/fbset /usr/sbin/add-shell /usr/sbin/remove-shell
+    /usr/sbin/killall5
+"
+# KEEP_ONLY: one folder per line, then the only names in it that stay; everything else
+# in it is deleted. The build stops if a kept name is missing.
+KEEP_ONLY="
+    /etc/ssl/certs ca-certificates.crt
+    /usr/share/mime aliases generic-icons globs globs2 icons magic mime.cache packages subclasses treemagic types version XMLnamespaces
+    /usr/share/X11/locale compose.dir locale.alias locale.dir en_US.UTF-8
+    /usr/share/X11/xkb/rules evdev
+    /usr/share/X11/xkb/keycodes evdev aliases
+    /usr/share/X11/xkb/symbols pc us inet srvr_ctrl keypad
+    /usr/share/X11/xkb/types complete basic pc iso9995 extra level5 numpad mousekeys
+    /usr/share/X11/xkb/compat complete basic ledcaps lednum ledscroll iso9995 mousekeys accessx misc xfree86 level5 caps
+    /usr/lib/gtk-3.0/3.0.0/immodules im-wayland.so
+    /usr/lib/dri libdril_dri.so kms_swrast_dri.so swrast_dri.so zink_dri.so radeonsi_dri.so r600_dri.so r300_dri.so iris_dri.so crocus_dri.so i915_dri.so nouveau_dri.so virtio_gpu_dri.so vmwgfx_dri.so vkms_dri.so udl_dri.so
+    /usr/share/alsa/cards aliases.conf HDA-Intel.conf USB-Audio.conf
 "
 # REMOVE_DIRS: folders that should be empty (or hold only empty folders). If a package
 # ever puts files in one, the build stops and lists them instead of deleting them.
@@ -180,6 +334,7 @@ REMOVE_DIRS="
     /usr/share/dbus-1/session.d
     /usr/share/dbus-1/services
     /usr/lib/gio/modules
+    /lib/firmware
 "
 
 ROOT=/work/distro/root
@@ -268,9 +423,50 @@ echo '. "$HOME/.cargo/env"' > "$ROOT/home/$USER_NAME/.profile"
 chroot "$ROOT" chown "$USER_NAME:$USER_NAME" "/home/$USER_NAME/.profile"
 
 echo "== trimming"
+# REMOVE entries may be patterns (gcc's folders are named after its version). One that
+# matches nothing is reported: the package dropped it, or the list has a typo.
+# Patterns are only matched inside the root: `set -f` keeps the shell from matching them
+# against the container's own files while the list is split.
+set -f
 for path in $REMOVE; do
-    rm -rf "${ROOT:?}$path"
+    set +f
+    set -- "${ROOT:?}"$path
+    set -f
+    found=
+    for file in "$@"; do
+        [ -e "$file" ] || [ -L "$file" ] || continue
+        rm -rf "$file"
+        found=1
+    done
+    [ -n "$found" ] || echo "REMOVE: nothing matches $path" >&2
 done
+set +f
+for path in $BUSYBOX; do
+    if [ "$(readlink "$ROOT$path")" != /bin/busybox ]; then
+        echo "BUSYBOX: $path isn't a link to busybox" >&2
+        exit 1
+    fi
+    rm "$ROOT$path"
+done
+echo "$KEEP_ONLY" | while read -r dir keep; do
+    [ -n "$dir" ] || continue
+    for name in $keep; do
+        if [ ! -e "$ROOT$dir/$name" ]; then
+            echo "KEEP_ONLY: $dir/$name is missing" >&2
+            exit 1
+        fi
+    done
+    for file in "$ROOT$dir"/* "$ROOT$dir"/.[!.]*; do
+        [ -e "$file" ] || [ -L "$file" ] || continue
+        case " $keep " in
+            *" ${file##*/} "*) ;;
+            *) rm -rf "$file" ;;
+        esac
+    done
+done
+# Caches that listed what was just removed: GTK's input methods and GSettings schemas.
+chroot "$ROOT" gtk-query-immodules-3.0 --update-cache
+chroot "$ROOT" glib-compile-schemas /usr/share/glib-2.0/schemas
 # The one console font simplewm-init loads, unpacked from font-terminus (the rest of
 # that package, 238 more console fonts and Terminus for apps, isn't wanted).
 apk fetch --quiet --output "$CACHE" font-terminus
@@ -286,6 +482,18 @@ for dir in $REMOVE_DIRS; do
         exit 1
     fi
 done
+# Every program and library must still find the libraries it links.
+missing=$(find "$ROOT/bin" "$ROOT/sbin" "$ROOT/lib" "$ROOT/usr" -xdev -type f \
+        \( -name '*.so*' -o -perm -u+x \) | while read -r file; do
+    [ "$(head -c 4 "$file" | tail -c 3)" = ELF ] || continue
+    chroot "$ROOT" ldd "${file#"$ROOT"}" 2>&1 | grep 'Error loading shared library' |
+        sed "s|^|${file#"$ROOT"}: |"
+done)
+if [ -n "$missing" ]; then
+    echo "Libraries missing after trimming:" >&2
+    echo "$missing" >&2
+    exit 1
+fi
 
 echo "== disk image"
 used=$(du -sm "$ROOT" | cut -f1)

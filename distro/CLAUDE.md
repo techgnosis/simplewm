@@ -396,17 +396,20 @@ from outside: an apk install script once left its error message in a plain-file
 `/dev/null` (now in `REMOVE`; at boot devtmpfs covers `/dev` anyway), which cargo fed to
 rustc.
 
-**A smaller filesystem.** The user wants as little in the filesystem as possible, to
-lighten the load on whoever looks around it. But it stays a normal userland a developer
+**A smaller filesystem.** The user wants as few files in the filesystem as possible, to
+lighten the load on whoever looks around it: the measure is the number of files, not
+bytes (a 40 MB binary and a one-line config file count the same). But it stays a normal userland a developer
 can work in (rustup and Rust, Go, Zed, alacritty, curl, pkg-config, the usual tools): only
 obscure things nobody would use go. `build.sh` trims at the end of the build
-with two lists; add to them to trim more. Nothing in the system can bring anything back,
+with four lists (`REMOVE`, `BUSYBOX`, `KEEP_ONLY`, `REMOVE_DIRS`); add to them to trim
+more. Afterwards it rebuilds the caches that listed removed files (GTK's input methods,
+GSettings schemas) and checks with `ldd` that every program and library still finds the
+libraries it links; the build stops if one doesn't. Nothing in the system can bring anything back,
 since there's no package manager.
 
-- `REMOVE`: deleted with their contents. So far:
-  - `/boot`: the kernel, its config and System.map. `build.sh` copies the kernel to
-    `out/` first; QEMU boots that. (The real machine's boot setup will decide what it
-    needs.)
+- `REMOVE`: deleted with their contents. Entries may be shell patterns (gcc's folders
+  carry its version); one that matches nothing is reported as `REMOVE: nothing matches`
+  in the build output (the package dropped it, or a typo). So far:
   - What only OpenRC, busybox init or a login would read: `inittab`, `fstab` (it only
     listed a CD-ROM and USB stick under `/media`), `motd`, `securetty`, `modules`,
     `sysctl.conf`, and `busybox-paths.d` (a list for apk's busybox trigger).
@@ -419,8 +422,8 @@ since there's no package manager.
   - Files nothing reads here: `nsswitch.conf` (musl doesn't use it), `sudo.conf` (all
     comments), `/etc/pam.d` and `/etc/security` (sudo is built without PAM; only vlock's
     file was there), `pkcs11.conf.example`, `vdpau_wrapper.cfg` (Flash Player settings),
-    `profile.d/README` and the disabled `color_prompt.sh.disabled`, the `aclocal` and
-    and `/var/log/apk.log`.
+    `profile.d/README` and the disabled `color_prompt.sh.disabled`, and
+    `/var/log/apk.log`.
   - Data only something else would read: udev's hardware database sources
     (`/usr/lib/udev/hwdb.d`, 7.6 MB; the build compiles them into `/etc/udev/hwdb.bin`
     first, which is all udevd reads; checked with `udevadm hwdb --test` in a chroot),
@@ -449,27 +452,86 @@ since there's no package manager.
   - `font-terminus` isn't installed at all: the build unpacks the one console font
     simplewm-init loads (`ter-132n.psf.gz`) from its package. The rest
     was 238 more console fonts and Terminus fonts that apps would have listed.
+  - (Second pass, counting files: about 14,050 before.) Things only another setup would
+    read: `/etc/modprobe.d` (no modules), `/etc/pulse/client.conf` (all comments),
+    `/usr/lib/sysctl.d` (OpenRC's), GTK's multipress input method config and GTK 2's
+    accessibility module, the CUPS and lpr print backends (Print to File stays),
+    valgrind's `gtk.supp`, gcc's Fortran coarray library (no gfortran), gettext's shared-mime-info rules, the GTK example app's
+    schema, libcamera's example config and the broken `libcamerify` (its library isn't
+    shipped), the bluez config (no Bluetooth), Python's `turtle` and `turtledemo` (need
+    tkinter, which isn't installed), X11-only data (`Xcms.txt`, `XErrorDB`, xkb
+    `geometry`, which xkbcommon ignores), OpenSSL's engines (deprecated; nothing loads
+    them), the vdpau tracer, cairo's trace recorder, bash's loadable builtins, and the
+    udev rules for tape drives, NAND flash and IBM mainframe network cards.
+  - Certificates: only `/etc/ssl/certs/ca-certificates.crt` stays (with `cert.pem`
+    linking to it), which is what curl, git, Go, Python and OpenSSL read. The ~150
+    single certificates, their hash links, `/usr/share/ca-certificates`,
+    `update-ca-certificates`, `c_rehash` and `/etc/ssl1.1` went (the bundle is made at
+    build time; nothing here rebuilds it). Firefox has its own store.
+  - gcc's plugin headers and GDB's compile plugins (`plugin/`, ~570 files, for writing
+    GCC plugins), its `install-tools` (fixincludes), and `lto-dump` (an LTO debugging
+    tool). gcc, g++, LTO and the sanitizers all stay.
+  - Terminal descriptions for terminals that aren't installed (GNOME, Konsole, PuTTY,
+    rxvt, st, Sun, Terminator, Terminology, VTE, vt52, vt200); alacritty, linux, xterm,
+    screen, tmux, vt100/102/220, ansi and dumb stay.
+  - kbd's tools except `setfont` (simplewm-init's): one VT, no keymaps, so `chvt`,
+    `openvt`, `loadkeys`, `showkey`, `setleds` and the rest have nothing to do.
+  - Sound leftovers: `pacmd`, `pa-info` (both need a real PulseAudio daemon), `padsp`
+    with its library and `libpulsecore` (nothing links it), PipeWire's AES67, AVB,
+    Vulkan and minimal daemon setups (`pipewire-aes67` etc. and their configs), alsa's
+    `aserver`, libsndfile's `sndfile-*` tools.
+  - Other tools nobody here would run: `bomtool` (pkgconf's SBOM tool), `econftool`,
+    `cvtsudoers`, `dbus-test-tool`, `dbus-cleanup-sockets`, `scmp_sys_resolver`,
+    `yuvconvert`, `fribidi`, `git-shell` (a login shell for git servers), procps's
+    `hugetop` and `tload`, and iproute2's rarely used extras (`dpll`, `netshaper`,
+    `genl`, `ifstat`, `lnstat`/`ctstat`/`rtstat`, `rtacct`, `rtmon`, `routel`; `ip`,
+    `ss`, `tc`, `bridge` and `nstat` stay).
+- `BUSYBOX`: busybox command links for what this system doesn't do: kernel modules
+  (`modprobe`, `insmod`…), other inits and logins (`getty`, `login`, `switch_root`,
+  `mdev`, `run-parts`), cron, syslog, mail, DHCP, ifupdown, NAND flash, VT tools
+  (`vlock`, `loadkmap`), `fsck` (no checkers installed), and busybox's `ipaddr`/`iplink`…
+  shortcuts (iproute2's `ip` is there). The build stops if one isn't a busybox link.
+  `poweroff`, `reboot`, `halt` stay (they're how to shut down).
+- `KEEP_ONLY`: a folder and the only names in it that stay (the build stops if one is
+  missing). So far:
+  - `/usr/share/mime`: only the files programs read (`mime.cache`, `globs2`, `magic`…)
+    and `packages/` (the source). The ~900 per-type XML files, which only give
+    descriptions like "PDF document", went (Firefox uses simplewm's File Picker).
+  - xkb: only what the US layout compiles from (rules `evdev`, keycodes `evdev` and
+    `aliases`, symbols `pc us inet srvr_ctrl keypad`, and the types and compat files it
+    includes), 293 files down to 28. Found by compiling with `xkbcli compile-keymap`
+    against a trimmed copy until the keymap was byte for byte the same as with the full
+    set. Apps don't read xkb files: they get the keymap from simplewm.
+  - `/usr/share/X11/locale`: `compose.dir`, `locale.alias`, `locale.dir` and
+    `en_US.UTF-8` (the Compose table xkbcommon uses; X11's other locales only matter
+    to X).
+  - GTK input methods: only `im-wayland.so` (the others were X, Broadway and
+    single-language ones); the build regenerates `immodules.cache`.
+  - Mesa's `/usr/lib/dri`: drivers for PC GPUs (AMD, Intel, NVIDIA, virtio, VMware,
+    DisplayLink) and software rendering; the ~35 names for ARM display controllers
+    went.
+  - ALSA card configs: `aliases.conf`, `HDA-Intel.conf` (the user's sound and HDMI,
+    and QEMU's) and `USB-Audio.conf`; the rest were for old PCI sound cards.
 - `REMOVE_DIRS`: folders that should be empty (or hold only empty folders). If a package
   ever puts files in one, the build stops and lists them instead of deleting them. So
   far: `/media`, `/mnt`, `/opt`, `/srv`, `/usr/local`, `/etc/opt`, `/etc/alsa`,
   `/etc/udev/rules.d`, the `modules-load.d` and `sysctl.d` folders, and `/var/mail`,
   `/var/opt`, `/var/local`, `/var/db`, `/var/empty`, `/var/lib/misc`, `/var/lib/dbus`,
   `/var/cache/misc`, `/var/lib/sudo/lectured`,
-  `/usr/share/dbus-1/session.d`, `/usr/share/dbus-1/services`, `/usr/lib/gio/modules`. (`make install` and the like
+  `/usr/share/dbus-1/session.d`, `/usr/share/dbus-1/services`, `/usr/lib/gio/modules`,
+  `/lib/firmware` (firmware is built into the kernel). (`make install` and the like
   make `/usr/local` again when they need it.) `/usr/share/misc` was on the list until the
   development tools brought libmagic's `magic.mgc` into it; the safety stop caught that.
 
-How to look for more, from the host: sizes (`du` over `usr/lib`, `usr/share`), empty
-folders, and links that point nowhere, checked from inside the root
+How to look for more, from the host: file counts per folder (`find <dir> -not -type d |
+wc -l`), empty folders, and links that point nowhere, checked from inside the root
 (`chroot distro/root /bin/busybox find / -xdev -type l ! -exec test -e {} \; -print`;
 busybox's links are absolute, so a check from outside sees them all as dangling).
 
-After trimming, `/etc` holds: bash, dbus-1 (session.conf), fonts, group, gtk-3.0,
-hostname, hosts, inputrc, machine-id, modprobe.d, mtab, passwd, profile, profile.d,
-protocols, pulse, services, shadow, shells, ssl, sudoers, sudoers.d, terminfo, udev. Kept
-on purpose: `modprobe.d` (driver blacklists matter on real hardware), `/lib/firmware`
-(the real machine's GPU needs firmware), `/var/tmp`, `/var/run` and `/var/lock` (programs
-expect them). sudo's first-use lecture is turned off (`Defaults lecture=never`). The only setuid program left is
+After trimming, `/etc` holds: bash, dbus-1 (session.conf), fonts, group, hostname,
+hosts, inputrc, machine-id, mtab, passwd, profile, profile.d, protocols, services, shadow,
+shells, ssl, sudoers, sudoers.d, terminfo, udev. Kept on purpose: `/var/tmp`, `/var/run`
+and `/var/lock` (programs expect them). sudo's first-use lecture is turned off (`Defaults lecture=never`). The only setuid program left is
 `sudo` (the Network applet needs it).
 
 Checked after trimming, with a test image that writes a report: all services run, the
