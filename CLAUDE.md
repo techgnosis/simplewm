@@ -1,236 +1,157 @@
 # simplewm
 
-A small stacking Wayland compositor in Rust on Smithay. It draws all of its own UI: a top
-bar, window title bars and a Windows-style Control Panel of settings applets. simplewm is
-still growing: the user is open to experiments and new features, within the rules below.
+A small stacking Wayland compositor in Rust on Smithay. It draws all of its own UI: a top bar,
+window title bars, and a Windows-style Control Panel of settings applets. It's the desktop of
+the user's own distro (`distro/`, see `distro/CLAUDE.md`), where the goal is for simplewm to do
+as much as it can in one process. The user welcomes experiments and new features, within the
+rules below.
 
 ## Working with the user
 
-- They never read the code. They judge simplewm by using it, so report changes in terms of
-  what they'll see and do, not in terms of code.
-- Claude can't see the screen. After a UI change, say exactly what to try. The user runs it with
-  `make run`, nested or on a TTY (the release build, from `target/release`; nothing is copied
-  into the project folder), or `make debug`, which runs a debug build that logs DRM
-  and session details to `simplewm-debug.log`. Their machine has one sound output (HDMI), one wired
-  network card and one monitor.
-- Keep this file current when behavior or structure changes, and fix it whenever you find
-  it wrong, without asking. It's for Claude; nobody else reads it.
-- Claude owns git: commit when a change is done and checked, and push to `origin main`
-  when it sees fit, without asking. Work directly on `main`; no branches or PRs needed.
+- They never read the code. Report changes in terms of what they'll see and do.
+- Claude can't see the screen. After a UI change, say exactly what to try. `make run` runs the
+  release build (left in `target/release`), nested in the running simplewm or alone on a TTY.
+  `make debug` writes a debug build's log to `simplewm-debug.log`. The installed system copy
+  changes only through the distro's build → install → reboot cycle.
+- The user's machine has one sound output in use (HDMI), one wired network card and one
+  monitor.
+- Keep this file and `distro/CLAUDE.md` current and short. Record what *is*, not history
+  (that's what git is for). Fix them whenever they're wrong, without asking.
+- Claude owns git: work on `main`, commit each change once it's checked, and push to
+  `origin main` when it makes sense, without asking.
 
 ## Rules simplewm keeps
 
-- No keyboard shortcuts, not even Ctrl+Alt+F1… for switching virtual terminals (dropped:
-  the user wants one VT that only runs simplewm). Escape cancels a screenshot, which is
-  part of that tool, not a shortcut.
-- No config file, flags or environment variables (not even `RUST_LOG`: the log filter
-  is fixed in `main::init_logging`, more verbose in debug builds). Every setting is changed in a Control
-  Panel applet and saved in `~/.config/simplewm/simplewm.dat`, a small binary file
-  so nobody is tempted to hand-edit it (SQLite was dropped as overkill). The backend is
-  chosen automatically: TTY when there's no `WAYLAND_DISPLAY`, `WAYLAND_SOCKET` or
-  `DISPLAY`, nested otherwise.
-- Wayland only (no Xwayland), one monitor (the first connected one, at its preferred mode,
-  switching when that changes: a resized VM window, another monitor on the connector),
-  US keyboard layout, one bundled font (DejaVu Sans).
-- Windows always float. Title bars are always drawn by simplewm (server-side decorations
-  are forced, through xdg-decoration and KDE's older server-decoration protocol, the only
-  one GTK 3 apps such as Firefox ask). Size moves and resizes a window once (halves, quarters, full screen below
-  the bar) and doesn't snap it there.
-- On a TTY simplewm is the desktop portal itself: it owns `org.freedesktop.portal.Desktop`
-  on the session bus (no `xdg-desktop-portal` process) and only implements FileChooser
-  (OpenFile and SaveFile, version 4), answered with its own File Picker. Other portal
-  interfaces are simply missing. Results are plain file paths, so Flatpak apps can't open
-  them (that would need xdg-document-portal); the user doesn't care about Flatpak. If
-  another process has the name, simplewm queues for it, and stops a leftover
-  `xdg-desktop-portal` by sending its PID SIGTERM. Nothing in simplewm uses `systemctl`.
-  simplewm exports nothing to systemd or D-Bus activation. The portal starts once the
-  session bus is up and restarts when the bus comes back after a stop
-  (`State::ensure_portal`). Nested, it doesn't take the name, so nested apps get the
-  host's file dialogs.
-- simplewm runs the user services it always needs, in place of `systemd --user`
-  (`services.rs`): the session bus (`dbus-daemon`, not dbus-broker, whose launcher needs
-  systemd), `pipewire`, `pipewire-pulse` and `wireplumber`. On a TTY it starts them in
-  that order at startup, each once the one it needs answers on its socket. One that's
-  already running (systemd's socket, a host desktop) is left alone and shown as "Run by
-  PID n (program)". Their output is kept as a log (last 2000 lines each). Nothing restarts
-  them when they exit; the user presses Start. They're stopped when simplewm quits, and
-  get SIGTERM if it dies (`PR_SET_PDEATHSIG`). The Sound applet has Start/Stop and Log for
-  the three sound services, the D-Bus applet for the bus. The user doesn't want a smaller
-  systemd: no unit files, no dependency engine, no other services. To try it on their
-  systemd host they mask the user units `pipewire.socket pipewire.service
-  pipewire-pulse.socket pipewire-pulse.service wireplumber.service dbus.socket`.
-- Long-term goal: boot simplewm in a minimal custom distro (`distro/`), doing as much as
-  it can in one process. The PipeWire tools and the `ip` script are staying.
-- simplewm runs with no special privileges. The Network applet sets a static IPv4 address,
-  gateway and DNS server (no DHCP) only when the user presses Apply: the Password window
-  asks for their password and runs one fixed `ip` script through `sudo -k -S` on a worker
-  thread (`network::apply`, `panel/sudo.rs`). simplewm owns `/etc/resolv.conf`: when a DNS
-  server is set, the script replaces the whole file (renamed into place, replacing any
-  symlink) with a "simplewm owns this file" comment and one `nameserver` line
-  (`network::resolv_conf`). An empty DNS field leaves the file alone. The values reach the
-  script only as separate arguments after `network::parse` has checked them, never as
-  shell text. The password is passed to sudo on stdin and wiped afterwards. Nothing is set
-  at startup; the applet says when the card or resolv.conf lacks the saved settings. polkit
-  is masked on the user's machine, so don't use it. NetworkManager and systemd-resolved
-  must stay masked or they undo the settings.
-- The Sound applet drives PipeWire through `pw-dump` and `wpctl`, and WirePlumber remembers
-  the choices. With one output it just names it; with several it lists them to choose from.
+- No keyboard shortcuts, including VT switching. Escape cancelling a screenshot is part of
+  that tool, not a shortcut.
+- No config file, flags or environment variables (the log filter is fixed in
+  `main::init_logging`). Every setting lives in a Control Panel applet and is saved in
+  `~/.config/simplewm/simplewm.dat`, a small binary file. The backend picks itself: TTY when
+  none of `WAYLAND_DISPLAY`, `WAYLAND_SOCKET` or `DISPLAY` is set, nested otherwise.
+- Wayland only (no Xwayland). One monitor: the first connected one, at its preferred mode,
+  following changes to it. US keyboard layout. One bundled font (DejaVu Sans).
+- Windows always float. simplewm always draws the title bars: server-side decorations are
+  forced through xdg-decoration and KDE's server-decoration protocol (the only one GTK 3
+  asks). Size moves and resizes a window once (halves, quarters, full screen below the
+  bar). It doesn't snap.
+- Runs with no special privileges. Anything root goes through the Password window: `sudo -k
+  -S` on a worker thread, password on stdin and wiped afterwards, values passed only as
+  separate checked arguments, never shell text. polkit is masked, so don't use it. Never
+  test the sudo path with a wrong password: failures count toward faillock.
+- **Portal (TTY only):** simplewm is the desktop portal itself. It owns
+  `org.freedesktop.portal.Desktop` and implements only FileChooser (OpenFile and SaveFile,
+  v4), answered with its File Picker, returning plain paths (Flatpak isn't supported). It
+  queues for the name and sends SIGTERM to a leftover `xdg-desktop-portal`. It starts once
+  the bus is up and restarts when the bus comes back (`State::ensure_portal`). Nested, it
+  leaves the name alone.
+- **User services** (`services.rs`), in place of `systemd --user`: dbus-daemon, pipewire,
+  pipewire-pulse and wireplumber, started on a TTY in that order, each once the one before
+  answers on its socket. One that's already running is left alone and shown as "Run by PID
+  n (program)". Each keeps its last 2000 output lines as a log. Nothing restarts them: the
+  user presses Start. They're stopped when simplewm quits, and get SIGTERM if it dies
+  (`PR_SET_PDEATHSIG`). No unit files, no dependency engine, no other services. Nothing
+  uses `systemctl`, and nothing is exported to D-Bus activation.
+- **Network applet:** a static IPv4 address, gateway and DNS server (no DHCP), set only
+  when the user presses Apply, through one fixed `ip` script run by sudo (`network::apply`,
+  `panel/sudo.rs`). With a DNS server set, the script replaces `/etc/resolv.conf` with a
+  "simplewm owns this file" comment and one `nameserver` line. With the DNS field empty,
+  the file is left alone. Nothing is applied at startup; the applet says when the card
+  doesn't match the saved settings.
+- **Sound applet:** uses `pw-dump` and `wpctl`, and WirePlumber remembers the choices.
+  With one output it just names it; with several it lists them to choose from.
 
 ## Checking a change
 
-- `cargo build`, `cargo clippy --all-targets` (keep it at zero warnings), `cargo test`. Run
+- `cargo build`, `cargo clippy --all-targets` (zero warnings), `cargo test`, and
   `cargo fmt` whenever you like.
-- Tests cover the logic that doesn't need a screen: the settings file, text fields, row
-  lists, File Picker listing and search, bar tab layout, screenshot PNGs, portal globs and checks, network
-  address and DNS parsing, resolv.conf contents, PipeWire output parsing, simplewm-init's
-  account lookup and home partition lookup, and the service manager's process handling (exit descriptions, PID handling, output cleaning). A few only do
-  something on a machine that has the hardware or service.
-- The `#[ignore]`d tests need a setup; each one's doc comment says how to run it. Two
-  exercise D-Bus on a scratch bus: `dbus-run-session -- cargo test bus -- --ignored` drives
-  the portal the way apps do (including the hand-over of the bus name) and checks the
-  Desktop Portal bus checks. Run it after touching `portal.rs`, `portal_check.rs` or zbus.
-  `cargo test runs_the_session_daemon -- --ignored` starts and stops a real dbus-daemon on a
-  scratch socket through `Services`; run it after touching `services.rs`. Don't test
-  starting PipeWire for real: it would fight the user's running PipeWire for the HDMI
-  output. `network::namespace_test`
-  runs the root `ip` script on a dummy card in a throwaway namespace, writing a scratch
-  resolv.conf instead of the real one (no sudo, nothing real touched). Never test the sudo
-  path with a wrong password: failed attempts count toward the account's faillock lockout.
-- `make` builds the release binary with `--locked` (left in `target/release`); `make run`
-  runs it, `make install` puts it in `/usr/bin`.
+- Tests cover the logic that doesn't need a screen. `#[ignore]`d tests need a setup, which
+  each one's doc comment explains:
+  - After touching `portal.rs`, `portal_check.rs` or zbus:
+    `dbus-run-session -- cargo test bus -- --ignored`.
+  - After touching `services.rs`: `cargo test runs_the_session_daemon -- --ignored`.
+  - `network::namespace_test` runs the root `ip` script in a throwaway namespace.
+- Don't start PipeWire in tests: it would fight the running one for HDMI.
+- `make` builds the release with `--locked`. `make install` copies it to `/usr/bin`.
 
 ## Dependencies
 
-- Add crates only when they're really needed: about 200 crates already go into the build,
-  mostly through smithay and zbus.
-- `.cargo/config.toml` sets `global-min-publish-age = "21 days"` (Cargo 1.100+, which is
-  also `rust-version`), so Cargo never picks a version younger than that. If the resolver
-  says a version is "too new", lower the requirement instead of overriding the check. The
-  only exception is an urgent security fix:
-  `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update <crate> --precise <version>`.
-- `make audit` (`audit.py`) checks `Cargo.lock` against the OSV/RustSec database. Its
-  `ACCEPTED` list records advisories that don't affect us, and why. Run it after changing
-  dependencies.
+- Add crates only when they're really needed. About 200 are already in the build.
+- `.cargo/config.toml` sets `global-min-publish-age = "21 days"`. If a version is "too
+  new", lower the requirement. The only exception is an urgent security fix:
+  `CARGO_RESOLVER_INCOMPATIBLE_PUBLISH_AGE=allow cargo update <crate> --precise <v>`.
+- Run `make audit` (`audit.py`, OSV/RustSec) after changing dependencies. Its `ACCEPTED`
+  list says why each advisory there doesn't affect us.
 - zbus 6 has no blocking API, and a connection only runs while some thread is inside
-  `zbus::block_on`. The portal thread stays in it forever, and the Desktop Portal checks
-  wrap their D-Bus calls in it on their worker thread. Never call `block_on` from inside a
+  `zbus::block_on`. The portal thread stays inside it. Never call `block_on` from inside a
   served D-Bus method.
 
 ## Runtime dependencies
 
-What simplewm itself links, loads, runs or reads, on a systemd host (udevd and logind
-running, and a user session that provides `XDG_RUNTIME_DIR`). Check
-linked libraries with `readelf -d target/release/simplewm | grep NEEDED`.
+Check what's linked with `readelf -d target/release/simplewm | grep NEEDED`. Update this
+list when something changes.
 
-- To start (TTY): libseat (talks to logind; seatd would also work), libudev, libinput,
-  libgbm and `libEGL.so.1` (loaded at startup) from Mesa or another GL stack,
-  libxkbcommon plus xkeyboard-config data (startup panics without it), glibc. Nested also needs the host's Wayland or X11 client libraries, which winit loads.
-  The font is compiled in and the cursor is drawn by simplewm.
-- Per feature (simplewm starts without them):
-  - Services simplewm runs (unless something else already does): `dbus-daemon`,
-    `pipewire`, `pipewire-pulse`, `wireplumber`, found on `PATH`.
-  - Sound applet: `pw-dump` (PipeWire) and `wpctl` (WirePlumber).
-  - Portal: the D-Bus session bus (zbus is pure Rust, no libdbus).
-  - File Picker filters by MIME type: `/usr/share/mime/globs2` (shared-mime-info).
-  - Network applet Apply: `/usr/bin/sudo`, `/bin/sh`, `ip` (iproute2), and `mktemp`,
-    `chmod`, `mv`, `rm`. Reading the card uses only `/sys`, `/proc` and netlink.
-  - Launcher: whatever is listed (on first run `/usr/bin/alacritty`, `/usr/bin/gram` and
-    `/usr/bin/firefox`).
-
-Update this list when a change adds or drops one.
-
-## The distro (`distro/`)
-
-Scripts that build a musl distro from Alpine packages, with our own kernel and
-simplewm-init as PID 1, booted in QEMU (`make vm`) or installed on the user's machine (two system slots on
-the first disk, so each can install the other, and the home on the second). Read `distro/CLAUDE.md` before working on it: it has the decisions, each script,
-how Claude tests a boot itself, and the user's hardware. Keep it current.
+- To start: libseat (seatd or logind), libudev, libinput, libgbm, `libEGL.so.1`,
+  libxkbcommon with xkeyboard-config data (it panics without it), and the C library.
+  Nested also needs the host's Wayland client libraries, which winit loads.
+- By feature, starting without them: `dbus-daemon`, `pipewire`, `pipewire-pulse` and
+  `wireplumber` on `PATH`; `pw-dump` and `wpctl` (Sound); a session bus (portal);
+  `/usr/share/mime/globs2` (File Picker filters); `/usr/bin/sudo`, `/bin/sh`, `ip`,
+  `mktemp`, `chmod`, `mv` and `rm` (Network Apply); and whatever the Launcher lists (on
+  first run, alacritty, gram and firefox in `/usr/bin`).
 
 ## Code map (`src/`)
 
-- `main.rs`: picks the backend and runs the calloop event loop.
-- `bin/simplewm-init/`: a second binary, PID 1 of the distro (see `distro/CLAUDE.md`).
-  std + libc only: `main.rs` (the boot sequence, and the supervisor that runs
-  simplewm, gives the user a shell on tty1 whenever it exits and starts simplewm again
-  when that shell exits, and shuts down),
-  `sys.rs` (system call wrappers), `account.rs` (the UID 1000 user from `/etc/passwd`),
-  `home.rs` (mounts the `distro-home` partition on `/home`, if there is one).
-- `state.rs`: `State` holds everything: the Smithay protocol states, the window `Space`,
-  `stack` (the stacking order of client windows and panels together), `Ui`, `Panels` and
-  the backend.
-- `handlers.rs`: the Smithay protocol handlers, including the extra protocols gamescope
-  needs.
-- `udev.rs` (TTY: DRM/KMS, libinput, libseat, and a udev source that follows the
-  monitor's preferred mode) and `winit.rs` (nested). Both rebuild the
-  whole scene every frame and let the damage tracker work out what changed, so state
-  changes show up without asking for a redraw.
-- `input.rs`: all input. `handle_press` sends a click to the bar, a menu, a panel
-  (`PanelHit` → its action) or a client. Keys are filtered in this order: Esc
-  during a screenshot, the focused File Picker, the text field being edited, and otherwise
-  the focused client.
-- `grabs.rs`: moving and resizing windows and panels.
-- `ui.rs`: the bar (including a tab per window, left of the centered buttons: the
-  number it got when it opened and its process name from `/proc/<pid>/comm`, stored as
-  a `WindowTag` in its user data; hovering a tab outlines the window in red (the only time a red outline shows),
-  left click raises it, right click centers it below the bar), menus, the Size picker, decorations, the cursor, toasts and
-  `build_elements` (the whole scene, front-most first), plus drawing helpers (`text_in`,
-  `text_centered`, `text_in_alpha`, `solid`).
-- `text.rs`: font rasterizing with fontdue (`measure`, `fit`).
-- `services.rs`: starts, stops and logs the user services (session bus, PipeWire, its
-  Pulse server, WirePlumber); see the module docs for the threads and PID handling. Also
-  `/proc` helpers (`find_process`, `describe_pid`) and `bus_address`.
-- `clock.rs`: local time through libc's `strftime` (no date crate).
-- Behind the applets, with no UI code:
-  - `network.rs`: reads the card (sysfs, rtnetlink dumps) and `/etc/resolv.conf`, and sets
-    both (sudo + `ip`, then the resolv.conf rewrite).
-  - `sound.rs`: PipeWire.
-  - `screenshot.rs`: offscreen re-render, then the PNG is written on a worker thread.
-  - `portal.rs`: the desktop portal (FileChooser and its Request objects), on its own
-    thread inside `zbus::block_on`. Calls return a handle at once; `serve` sends each
-    answer later as the Response signal, and closes dialogs of apps that leave the bus.
-  - `portal_check.rs`: the Desktop Portal applet's checks, on a worker thread.
-
-  Worker threads report back over calloop channels.
+- `main.rs`: picks the backend and runs the calloop loop.
+- `state.rs`: `State`, which holds the protocol states, the window `Space`, `stack` (the
+  stacking order of windows and panels together), `Ui`, `Panels` and the backend.
+- `handlers.rs`: Smithay protocol handlers, including the extras gamescope needs.
+- `udev.rs` (TTY: DRM/KMS, libinput, libseat, following the preferred mode) and `winit.rs`
+  (nested). Both rebuild the whole scene every frame and let the damage tracker find the
+  changes.
+- `input.rs`: `handle_press` routes clicks to the bar, a menu, a panel (`PanelHit`) or a
+  client. Keys go, in order, to: Esc during a screenshot, the focused File Picker, the text
+  field being edited, the focused client.
+- `grabs.rs`: moving and resizing.
+- `ui.rs`: the bar, menus, Size picker, decorations, cursor, toasts and `build_elements`
+  (the whole scene, front-most first). The bar has a tab per window (its open number and
+  `/proc/<pid>/comm`, a `WindowTag` in user data): hover outlines the window in red, left
+  click raises it, right click centers it.
+- `text.rs`: fontdue rasterizing. `clock.rs`: libc `strftime`.
+- `services.rs`: the user services, plus `/proc` helpers and `bus_address`.
+- Logic behind the applets, with no UI: `network.rs`, `sound.rs`, `screenshot.rs`
+  (offscreen render, PNG written on a worker), `portal.rs` (its own thread, answers sent
+  later as Response signals), `portal_check.rs`. Workers report back over calloop
+  channels.
+- `bin/simplewm-init/`: PID 1 of the distro, std + libc only (see `distro/CLAUDE.md`).
 
 ## Panels (`panel.rs`, `panel/`)
 
-`Panels` owns every window simplewm draws itself. Each `PanelId` gets a `PanelWindow`
-(open flag, position, buffers), and `Panels` also holds each applet's state. `panel.rs`
-has what they all share: placement, the frame, hit-test and render dispatch, `PanelHit`,
-and the shared sizes and colors. Each window has its own file of `impl super::Panels`
-blocks:
+`Panels` owns every window simplewm draws itself: a `PanelWindow` per `PanelId`, plus each
+applet's state. `panel.rs` has the shared parts (placement, frame, hit-test/render
+dispatch, `PanelHit`, sizes and colors). Each window has its own file of
+`impl super::Panels` blocks: `control.rs` (Control Panel and Help), `launcher.rs`,
+`screenshot.rs`, `network.rs`, `sound.rs`, `rows.rs` (Environment, Desktop Portal and the
+shared `RowList`), `services.rs` (the service row, the D-Bus applet, the Log window),
+`picker.rs` (File Picker) and `sudo.rs` (Password window: `ask_password(SudoJob)` →
+`job_finished`). Shared helpers: `text_field.rs` and `store.rs` (to change the settings
+format, bump `VERSION` and keep reading the old one).
 
-- `control.rs`: the Control Panel and Help.
-- `launcher.rs`, `screenshot.rs`, `network.rs` and `sound.rs`: one applet each.
-- `rows.rs`: Environment, Desktop Portal and the `RowList` they share with Network and Log
-  (`set_following` keeps a log scrolled to its end).
-- `services.rs`: the service row (status, Start/Stop, Log) the Sound and D-Bus applets
-  share, the D-Bus applet, and the Log window (opened by a Log button, not in the Control
-  Panel). Service events reach `Panels::service_event`.
-- `picker.rs`: the File Picker.
-- `sudo.rs`: the Password window. An action asks for it with `ask_password(SudoJob)`, and
-  `State::after_panel_action` opens and focuses it. A worker runs the job, and the result
-  comes back as `SudoDone` to `job_finished`.
-
-Two shared files support them: `text_field.rs` (editable fields) and `store.rs` (the settings
-file; bump `VERSION` and keep reading the old one to change the format). Applet files usually go in this order:
-layout constants, a `*Layout` struct of rects, `*_size`, `*_hit`, actions, `render_*`.
+Applet files usually run in this order: layout constants, a `*Layout` struct, `*_size`,
+`*_hit`, actions, `render_*`.
 
 Drawing rules:
 
-- Push elements front-most first: text before the background behind it.
-- Keep each panel's `SolidColorBuffer`s from frame to frame with
-  `bufs(&mut self.<window>.solids, n)`, and comment what each slot holds. The damage
-  tracker tells elements apart by their buffer.
-- Colors are premultiplied RGBA. Hovered controls use the `*_HOT` colors (`button_color`
-  for plain buttons).
+- Push elements front-most first: text before its background.
+- Keep `SolidColorBuffer`s from frame to frame with `bufs(&mut self.<window>.solids, n)`,
+  and comment each slot. The damage tracker tells elements apart by their buffer.
+- Colors are premultiplied RGBA. Hovered controls use `*_HOT` colors (`button_color`).
 
-Adding an applet means touching all of these:
+A new applet needs all of these:
 
-- `PanelId`, its `title` (also the applet's label), `PanelId::ALL` (in the enum's
-  order; a test checks) and `APPLETS`. `Panels::windows` holds a `PanelWindow` per id.
+- `PanelId`, its `title`, `PanelId::ALL` (in enum order, which a test checks) and
+  `APPLETS`.
 - The `content_size`, `hit` and `render` matches.
-- A glyph in `control::applet_glyph` (a test checks that it fits its tile).
-- New `PanelHit` variants and their actions in `input.rs`, plus a refresh in
+- A glyph in `control::applet_glyph` (a test checks that it fits).
+- New `PanelHit` variants with their actions in `input.rs`, and a refresh in
   `State::open_applet` if it shows live state.
-- A new file under `panel/`.
+- A file under `panel/`.
