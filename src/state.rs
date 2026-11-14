@@ -38,6 +38,7 @@ use smithay::{
         single_pixel_buffer::SinglePixelBufferState,
         socket::ListeningSocketSource,
         viewporter::ViewporterState,
+        xdg_foreign::XdgForeignState,
     },
 };
 
@@ -79,6 +80,9 @@ pub struct State {
     pub data_device_state: DataDeviceState,
     pub dmabuf_state: DmabufState,
     pub dmabuf_global: Option<DmabufGlobal>,
+    /// xdg-foreign: lets a client name its window as the parent of another client's
+    /// dialog (Firefox does it for portal file dialogs).
+    pub xdg_foreign_state: XdgForeignState,
     /// Protocols that nested compositors like gamescope require. They need no
     /// handling beyond creating their globals (see handlers.rs).
     #[allow(dead_code)]
@@ -142,6 +146,7 @@ impl State {
         let mut seat_state = SeatState::new();
         let data_device_state = DataDeviceState::new::<Self>(&dh);
         let dmabuf_state = DmabufState::new();
+        let xdg_foreign_state = XdgForeignState::new::<Self>(&dh);
         let clock = Clock::<Monotonic>::new();
         let extra_globals = (
             ViewporterState::new::<Self>(&dh),
@@ -203,6 +208,7 @@ impl State {
             data_device_state,
             dmabuf_state,
             dmabuf_global: None,
+            xdg_foreign_state,
             extra_globals,
             clock,
             seat,

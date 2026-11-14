@@ -5,7 +5,7 @@ use smithay::{
     delegate_compositor, delegate_data_device, delegate_dmabuf, delegate_kde_decoration,
     delegate_output, delegate_pointer_constraints, delegate_presentation,
     delegate_relative_pointer, delegate_seat, delegate_shm, delegate_single_pixel_buffer,
-    delegate_viewporter, delegate_xdg_decoration, delegate_xdg_shell,
+    delegate_viewporter, delegate_xdg_decoration, delegate_xdg_foreign, delegate_xdg_shell,
     desktop::{PopupKind, Window, find_popup_root_surface, get_popup_toplevel_coords},
     input::{
         Seat, SeatHandler, SeatState,
@@ -43,6 +43,7 @@ use smithay::{
             XdgToplevelSurfaceData, decoration::XdgDecorationHandler,
         },
         shm::{ShmHandler, ShmState},
+        xdg_foreign::{XdgForeignHandler, XdgForeignState},
     },
 };
 
@@ -419,6 +420,13 @@ impl KdeDecorationHandler for State {
     }
 }
 delegate_kde_decoration!(State);
+
+impl XdgForeignHandler for State {
+    fn xdg_foreign_state(&mut self) -> &mut XdgForeignState {
+        &mut self.xdg_foreign_state
+    }
+}
+delegate_xdg_foreign!(State);
 
 // ---------------------------------------------------------------------------
 // Protocols for nested compositors (gamescope): viewporter, presentation-time,
