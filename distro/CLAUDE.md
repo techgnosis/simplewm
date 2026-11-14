@@ -372,8 +372,7 @@ to the render node of the GPU it opened.
 fixed it (see "eudev vs libudev-zero").
 
 **Development tools** are in the image, a group of their own in `PACKAGES`: Rust (Alpine's
-`rustup`, whose `rustup-init` installs the toolchain into the user's home as usual; it
-needs `curl`, `ca-certificates` and `git`), C (`build-base`: gcc, musl headers, make,
+`rustup`; it needs `curl`, `ca-certificates` and `git`), C (`build-base`: gcc, musl headers, make,
 binutils; Rust needs a C linker), Go (`go`), Python (`python3`, `py3-pip`), and GNU
 `grep` and `sed` (busybox's lack options people and LLMs use, like `grep -P`). That
 roughly 530 MB took the root filesystem from 753 to 1281 MB, most of it Go and gcc.
@@ -382,6 +381,20 @@ roughly 530 MB took the root filesystem from 753 to 1281 MB, most of it Go and g
 installed, if more): rustup failed with "no space left" when it was sized at what's
 installed plus half. It's a sparse file, so only what the system writes takes room on the
 host (1.4 GB at the time).
+
+**Rust is installed** for the user by the build: `RUST_VERSION` in `build.sh` (1.100,
+simplewm's `rust-version`), minimal profile plus rustfmt and clippy (no rust-docs or
+rust-src; `rustup component add` brings them). Installed with the container's Alpine
+`rustup-init` into `cache/home/` (`HOME` pointed there, so `~/.cargo/env` says `$HOME`;
+rustup warns that `$HOME` differs from root's, harmless), only when that version isn't
+there yet, then copied into `/home/user` (`~/.rustup`, `~/.cargo`, about 800 MB) and
+given to the user. `~/.profile` sources `~/.cargo/env`, so login shells, simplewm and
+its apps have `~/.cargo/bin` on `PATH`. rustup works as usual afterwards (`rustup
+update`, other toolchains). Checked in a chroot: `bash -l` as the user builds and runs a
+`cargo new` project. Testing in a chroot of `root/` needs `/proc` and `/dev/null` bound
+from outside: an apk install script once left its error message in a plain-file
+`/dev/null` (now in `REMOVE`; at boot devtmpfs covers `/dev` anyway), which cargo fed to
+rustc.
 
 **A smaller filesystem.** The user wants as little in the filesystem as possible, to
 lighten the load on whoever looks around it. But it stays a normal userland a developer

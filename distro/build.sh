@@ -18,9 +18,9 @@ fi
 cd /work/distro
 
 # What goes into the root filesystem. wayland-utils (wayland-info) is for checking what
-# simplewm offers apps. The last group is for development: Rust (rustup-init installs the
-# toolchain into the user's home; it needs curl, CA certificates and git, and a C
-# toolchain to link), C (build-base: gcc, musl headers, make, binutils), Go and Python,
+# simplewm offers apps. The last group is for development: Rust (rustup, which the build
+# uses to install RUST_VERSION into the user's home; it needs curl, CA certificates and
+# git, and a C toolchain to link), C (build-base: gcc, musl headers, make, binutils), Go and Python,
 # plus GNU grep and sed (busybox's lack options people and LLMs use, like grep -P).
 PACKAGES="
     alpine-baselayout
@@ -77,6 +77,10 @@ PACKAGES="
 USER_NAME=user
 USER_PASSWORD=simplewm
 USER_GROUPS="seat audio video input wheel"
+
+# The Rust toolchain installed in the user's home (rustup, with rustfmt and clippy), the
+# same as simplewm's rust-version.
+RUST_VERSION=1.100
 
 # What the system doesn't need, removed at the end of the build (see "A smaller
 # filesystem" in CLAUDE.md for why each goes). Nothing can bring them back: there's no
@@ -143,6 +147,7 @@ REMOVE="
 
     /var/spool
     /var/log/apk.log
+    /dev/null
 "
 # REMOVE_DIRS: folders that should be empty (or hold only empty folders). If a package
 # ever puts files in one, the build stops and lists them instead of deleting them.
@@ -239,6 +244,28 @@ rm -f "$ROOT/etc/passwd-" "$ROOT/etc/shadow-" "$ROOT/etc/group-"
 # root without one. Lock it; the user gets root through sudo, with their own password.
 sed -i 's/^root:[^:]*:/root:*:/' "$ROOT/etc/shadow"
 rm -f "$ROOT/usr/libexec/dbus-daemon-launch-helper"
+
+echo "== Rust $RUST_VERSION for $USER_NAME"
+# Installed the way the user would themselves, with Alpine's rustup-init, into their home
+# (~/.rustup, ~/.cargo), so rustup works as usual afterwards. It's installed once into
+# cache/home/ (with HOME pointing there, so ~/.cargo/env says $HOME, not the cache's path)
+# and copied in, so later builds don't download it again.
+RUST_HOME="$CACHE/home"
+if ! ls -d "$RUST_HOME/.rustup/toolchains/$RUST_VERSION-"* >/dev/null 2>&1; then
+    apk add -q rustup
+    rm -rf "$RUST_HOME"
+    mkdir -p "$RUST_HOME"
+    HOME="$RUST_HOME" RUSTUP_HOME="$RUST_HOME/.rustup" CARGO_HOME="$RUST_HOME/.cargo" \
+        rustup-init -y -q --no-modify-path \
+        --profile minimal --component rustfmt,clippy --default-toolchain "$RUST_VERSION"
+fi
+cp -a "$RUST_HOME/.rustup" "$RUST_HOME/.cargo" "$ROOT/home/$USER_NAME/"
+chroot "$ROOT" chown -R "$USER_NAME:$USER_NAME" "/home/$USER_NAME/.rustup" \
+    "/home/$USER_NAME/.cargo"
+# ~/.cargo/bin on PATH for login shells (simplewm is started through one, so its apps
+# get it too).
+echo '. "$HOME/.cargo/env"' > "$ROOT/home/$USER_NAME/.profile"
+chroot "$ROOT" chown "$USER_NAME:$USER_NAME" "/home/$USER_NAME/.profile"
 
 echo "== trimming"
 for path in $REMOVE; do
