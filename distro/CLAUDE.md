@@ -521,6 +521,10 @@ since there's no package manager.
   - `font-terminus` isn't installed at all: the build unpacks the one console font
     simplewm-init loads (`ter-132n.psf.gz`) from its package. The rest
     was 238 more console fonts and Terminus fonts that apps would have listed.
+  - `tzdata` isn't installed either: the build unpacks the one zone in `TIME_ZONE`
+    (`America/Los_Angeles`, the user's) to `/etc/localtime`, which musl reads. There's
+    no `/usr/share/zoneinfo` and no time zone setting yet (a Control Panel applet would be
+    the way, not a config file). The hardware clock is UTC, which the kernel assumes.
   - (Second pass, counting files: about 14,050 before.) Things only another setup would
     read: `/etc/modprobe.d` (no modules), `/etc/pulse/client.conf` (all comments),
     `/usr/lib/sysctl.d` (OpenRC's), GTK's multipress input method config and GTK 2's

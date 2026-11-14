@@ -127,6 +127,10 @@ USER_NAME=user
 USER_PASSWORD=simplewm
 USER_GROUPS="seat audio video input wheel"
 
+# The time zone the clock shows: tzdata's file for it becomes /etc/localtime (musl reads
+# it). The hardware clock stays in UTC.
+TIME_ZONE=America/Los_Angeles
+
 # The Rust toolchain installed in the user's home (rustup, with rustfmt and clippy), the
 # same as simplewm's rust-version.
 RUST_VERSION=1.100
@@ -519,6 +523,12 @@ chroot "$ROOT" glib-compile-schemas /usr/share/glib-2.0/schemas
 mkdir -p "$ROOT/usr/share/consolefonts"
 tar -xzf "$(ls -t "$CACHE"/font-terminus-*.apk | head -n 1)" -C "$ROOT" \
     usr/share/consolefonts/ter-132n.psf.gz 2>/dev/null
+# The one time zone, unpacked from tzdata the same way (the rest is 600-odd zones nobody
+# picks; there's no time zone setting yet).
+tar -xzf "$(ls -t "$CACHE"/tzdata-*.apk | head -n 1)" -C "$ROOT" \
+    "usr/share/zoneinfo/$TIME_ZONE" 2>/dev/null
+mv "$ROOT/usr/share/zoneinfo/$TIME_ZONE" "$ROOT/etc/localtime"
+rm -r "$ROOT/usr/share/zoneinfo"
 for dir in $REMOVE_DIRS; do
     [ -e "$ROOT$dir" ] || continue
     find "$ROOT$dir" -depth -type d -empty -delete
@@ -574,6 +584,8 @@ else
 fi
 # The one console font the system gets (unpacked in the root part).
 alpine_fetch "$CACHE" font-terminus
+# The time zone file (unpacked in the root part).
+alpine_fetch "$CACHE" tzdata
 
 echo "== Rust $RUST_VERSION (for the user's home)"
 # Installed the way the user would themselves, with Alpine's rustup-init, into their home
