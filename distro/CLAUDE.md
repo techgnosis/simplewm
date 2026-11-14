@@ -268,6 +268,9 @@ answers that one too, always "server side". Not in the Launcher by default yet.
   user needs `podman unshare rm -rf` to delete. It passes `--cgroup-manager=cgroupfs
   --events-backend=file`, because when simplewm runs the session bus on a TTY, systemd
   isn't on it and podman's default (asking systemd over D-Bus) fails.
+- `where.sh` and `apk.sh`, sourced by the build scripts: where the build runs (container
+  or distro) and apk set up for either; `keys/` holds Alpine's signing keys. See
+  "Building in the distro".
 **Gram** (https://gram-editor.com, a fork of Zed with no AI or telemetry; 3.5.0) is in
 the image, built from source for musl because Alpine doesn't package it, and it's in the
 Launcher by default (simplewm's first-run entries). `/usr/bin/gram` is its command-line
@@ -299,7 +302,8 @@ editor is 228 MB with its symbols kept (for backtraces; 175 MB without).
   `SHA256`, and if the X11 edit no longer fits the build stops and says so. Don't edit
   `build-gram.sh` while a build runs: the shell reads it as it goes, and an edit
   mid-build ran a fragment of the new text.
-- `build.sh` (run on the host; it re-runs itself in the container) runs
+- `build.sh` (run on the host, where it re-runs itself in the container, or natively in
+  the distro: see "Building in the distro") runs
   `build-simplewm.sh` and `build-gram.sh`, then builds everything else from scratch: `root/` (from `PACKAGES`
   via `apk --root … --initdb`; afterwards apk's records, `/etc/apk` and `/lib/apk`,
   are deleted, so the system has no package manager and is changed only by rebuilding
@@ -429,14 +433,8 @@ simplewm's repository above its source and took simplewm's commit as its own;
 `GIT_CEILING_DIRECTORIES` now stops git at `cache/`.
 Rust links statically on musl by default, so the project's `.cargo/config.toml` turns
 that off for the musl target (`-crt-static`) and a plain `cargo build` works in the
-distro. `build-kernel.sh` and `build-gram.sh` also run natively in the distro, with no
-container (podman isn't in the image: the container was only ever there for apk and
-`/work`, not for musl). Both source `where.sh`, which picks the mode: `/etc/alpine-release`
-means the container (project at `/work`, tools added with apk), `/sbin/simplewm-init`
-means the distro (project wherever the script is, tools checked with `need` instead of
-installed), anything else re-runs the script in the container. Natively Gram uses the
-user's own rustup (`~/.rustup`), not `cache/rustup`. `build.sh` and `build-simplewm.sh`
-still need the container (`build.sh` installs the root filesystem with apk).
+distro. All the build scripts also run natively in the distro: see "Building in the
+distro".
 `ca-certificates` also fills `/etc/ssl/certs`, which was empty: until then only Firefox
 (which carries its own) could check HTTPS certificates. The disk image is 16 GB (or twice what's
 installed, if more): rustup failed with "no space left" when it was sized at what's
@@ -615,6 +613,81 @@ password is locked (`*`): Alpine ships it empty. busybox `su` isn't setuid, so i
 usable, but nothing should be able to log in as root without a password; the user gets
 root through sudo with their own password (checked).
 
+## Building in the distro
+
+Every build script (`build.sh`, `build-simplewm.sh`, `build-gram.sh`, `build-kernel.sh`)
+runs natively in the distro too, with no container. Podman isn't in the image and isn't
+needed: the container was only ever there for apk, a fake root and `/work`, not for musl.
+
+- `where.sh` (sourced by each) picks the mode: `/etc/alpine-release` means the container
+  (project at `/work`, tools added with apk), `/sbin/simplewm-init` means the distro
+  (project wherever the script is; tools are already in the image and only checked, with
+  `need`), anything else (the Arch host) re-runs the script in the container. Natively
+  simplewm and Gram build with the user's own rustup (`~/.rustup`), not `cache/rustup`.
+- `apk.sh` (sourced by `build.sh` and `build-kernel.sh`) sets up apk the same way in both
+  modes: the repositories of `container.sh`'s Alpine release (written to
+  `cache/repositories`) and Alpine's x86_64 signing keys committed in `keys/`, so every
+  package is checked against keys in git rather than ones fetched at build time. In the
+  container apk is the container's own; natively it's `apk.static` from
+  apk-tools-static, pinned by version and SHA256 (`APK_STATIC_*`; apk can't check the
+  download that brings apk) and kept in `cache/`. Natively, build tools go into
+  `cache/tools/` with `--usermode` (no root; e2fsprogs for `mkfs.ext4`, run with that
+  folder's libraries), and `apk fetch` uses that folder's package database (apk.static
+  won't fetch without one). The keys came from the alpine-keys 2.6 package (the three
+  in `usr/share/apk/keys/x86_64`) and matched aports' `main/alpine-keys` on Alpine's
+  GitLab; the apk-tools-static and alpine-keys packages passed `apk.static verify`
+  against them. A new Alpine signing key will stop the build with "UNTRUSTED signature":
+  add it to `keys/` after checking it the same way. Raising `ALPINE` in `container.sh`
+  needs a new `APK_STATIC_VERSION`/`SHA256` (the old version leaves the mirror).
+- Root: natively, installing `root/` needs real root (root-owned files, setuid sudo,
+  `chroot` for package scripts and accounts). `build.sh` runs everything else as the
+  user (compiling, tools, the console font, Rust for the image's home, the kernel) and
+  re-runs itself as `sudo sh distro/build.sh root-part` for the root filesystem and
+  `root.img` only (sudo asks for the password once, after the compiling). The root part
+  gives `out/` and `cache/` back to the user (`SUDO_UID`). In the container the same
+  `root_part` function just runs, as podman's root.
+- The user's home in the distro is setgid (busybox's `adduser` makes it 2755), so every
+  folder created under the project inherits the bit. Found in the first native build:
+  every folder in `root/` was setgid and in the user's group. `build.sh` now makes
+  `root/` root's and clears the bit on it, and clears it in `cache/home/` (the Rust
+  copied into the image's home). In the image only `/home/user` is setgid, as in a
+  container build.
+- Checked natively on 2026-11-14: the user part, the root part (run by the user through
+  sudo, Claude can't type the password), the kernel, and the result's owners and modes
+  (only `sudo` setuid, `/etc/shadow` root:shadow 640, the home the user's). Not booted
+  (no QEMU in the image: `test-boot.sh` and `run.sh` still need the host). A list of
+  the native `root/` (mode, uid, gid, type, path; made as the user, so `/root` and
+  `/etc/sudoers.d` are unlisted inside) is in `out/native-manifest.txt`; it was made
+  before the `cache/home/` setgid fix, so `/home/user/.rustup` and `.cargo` folders
+  still show 2755 there.
+
+### Next steps, on the Arch host (written 2026-11-14 from the distro)
+
+The native build was never compared with a container build, and the container mode of
+`build.sh` and `build-kernel.sh` changed (committed keys, `cache/repositories`,
+`root_part`, firmware in `cache/kernel/firmware`) without being run. On Arch, after
+`git pull`:
+
+1. Check the committed keys against the container's own:
+   `distro/container.sh sh -c 'for k in distro/keys/*; do cmp "$k" "/etc/apk/keys/${k##*/}" && echo "$k same"; done'`.
+2. Check the apk.static pin with the container's apk (which checks signatures with its
+   own keys): `distro/container.sh sh -c 'apk fetch -q -o /tmp apk-tools-static=3.0.9-r0 && sha256sum /tmp/apk-tools-static-3.0.9-r0.apk'`
+   must print `APK_STATIC_SHA256` from `apk.sh`.
+3. Run `distro/build.sh` (container mode) end to end, then `distro/test-boot.sh` on it.
+4. Compare it with the native build: make the same list of the container-built root
+   (`podman unshare` so owners read as in the image, e.g. `podman unshare sh -c 'cd
+   distro/root && find . -xdev | sort | while IFS= read -r f; do stat -c "%a %u %g %F %n" "$f"; done' > /tmp/container-manifest.txt`; uids come out as
+   in the container) and diff it with `out/native-manifest.txt` from the distro's copy
+   of the project. That's on the distro's home partition (GPT name `distro-home`, the
+   user's second disk): mount it read-only, e.g. `sudo mount -o ro
+   /dev/disk/by-partlabel/distro-home /mnt`, the file is
+   `/mnt/user/code/simplewm/distro/out/native-manifest.txt`. Expected differences:
+   the Rust setgid folders noted above, the unlisted insides of `/root` and
+   `/etc/sudoers.d`. Anything else is a bug in one mode.
+5. Optionally boot the native image: copy `/mnt/user/code/simplewm/distro/out/root.img`
+   (sparse, 16 GB: `cp --sparse=always`) into `distro/out/` and run `test-boot.sh`.
+6. Then delete this section and note the results above.
+
 ## Testing a boot
 
 `distro/run.sh` (or `make vm`) boots `out/` in QEMU, straight into simplewm. Claude can
@@ -715,9 +788,8 @@ listed file from Alpine's `linux-firmware-<folder>` package (`amdgpu/…` from
 links to others) into `cache/kernel/firmware/`. `CONFIG_EXTRA_FIRMWARE_DIR` points
 there; the path differs between container and distro, so `build-kernel.sh` appends it to
 the build's `.config` and strips it from what `savedefconfig` writes, and it never
-appears in `kernel.config`. In the container apk fetches the package (checking its
-signature); in the distro, which has no apk, it's downloaded over HTTPS from Alpine's
-mirror, its version read from the package index of `container.sh`'s Alpine release. For
+appears in `kernel.config`. The package comes through `apk.sh` (apk in the container, apk.static in
+the distro), which checks its signature. For
 the RX 480/580 that's the 21 `amdgpu/polaris10_*` files, the ones amdgpu names with
 `MODULE_FIRMWARE` for Polaris 10 plus its video decode and encode (UVD, VCE). Nothing is
 installed in the system's `/lib/firmware`.

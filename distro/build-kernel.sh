@@ -22,6 +22,7 @@
 set -eu
 
 . "$(dirname "$0")/where.sh"
+. "$PROJECT/distro/apk.sh"
 
 # The newest stable kernel when it was picked, and its checksum from kernel.org's
 # sha256sums.asc.
@@ -64,36 +65,16 @@ fi
 # linux-firmware package named after its folder (amdgpu/… from linux-firmware-amdgpu),
 # decompressed (Alpine compresses firmware; the kernel wants it plain) into
 # cache/kernel/firmware/, where CONFIG_EXTRA_FIRMWARE_DIR points the build.
-# In the container apk fetches the package (and checks its signature). The distro has no
-# apk, so there it's downloaded from Alpine's mirror over HTTPS, the version read from
-# the package index of the container's Alpine release.
-fetch_apk() {
-    if [ -z "$NATIVE" ]; then
-        apk fetch --quiet --output "$CACHE" "$1"
-        ls -t "$CACHE/$1"-[0-9]*.apk | head -n 1
-        return
-    fi
-    alpine=$(sed -n 's/^ALPINE=//p' "$PROJECT/distro/container.sh")
-    repo="https://dl-cdn.alpinelinux.org/alpine/v$alpine/main/x86_64"
-    curl -sSf -o "$CACHE/APKINDEX.tar.gz" "$repo/APKINDEX.tar.gz"
-    version=$(tar -xzOf "$CACHE/APKINDEX.tar.gz" APKINDEX 2>/dev/null |
-        awk -v pkg="$1" '$0 == "P:" pkg { found = 1 } found && /^V:/ { print substr($0, 3); exit }')
-    [ -n "$version" ] || { echo "$1 isn't in Alpine $alpine's package index" >&2; exit 1; }
-    file="$CACHE/$1-$version.apk"
-    if [ ! -e "$file" ]; then
-        curl -sSf -o "$file.part" "$repo/$1-$version.apk"
-        mv "$file.part" "$file"
-    fi
-    echo "$file"
-}
-
+# The package comes through apk.sh (apk in the container, apk.static in the distro), which
+# checks its signature.
 firmware=$(sed -n 's/^CONFIG_EXTRA_FIRMWARE="\(.*\)"$/\1/p' "$CONFIG")
 if [ -n "$firmware" ]; then
     echo "== kernel: firmware"
     rm -rf "$FIRMWARE" "$FIRMWARE.zst"
     mkdir -p "$FIRMWARE.zst"
     for pkg in $(for f in $firmware; do echo "linux-firmware-${f%%/*}"; done | sort -u); do
-        apkfile=$(fetch_apk "$pkg")
+        alpine_fetch "$CACHE" "$pkg"
+        apkfile=$(ls -t "$CACHE/$pkg"-[0-9]*.apk | head -n 1)
         for f in $firmware; do
             [ "linux-firmware-${f%%/*}" = "$pkg" ] || continue
             tar -xzf "$apkfile" -C "$FIRMWARE.zst" "lib/firmware/$f.zst" 2>/dev/null ||

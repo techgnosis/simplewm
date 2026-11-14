@@ -1,4 +1,4 @@
-# Sourced by build-gram.sh and build-kernel.sh: where the build runs, and where the
+# Sourced by the build scripts (build.sh, build-*.sh): where the build runs, and where the
 # project is.
 #
 #   In the Alpine container (/etc/alpine-release): the project is mounted at /work, and

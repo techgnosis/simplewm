@@ -1,28 +1,34 @@
 #!/bin/sh
 # Build simplewm and simplewm-init for musl, linking Alpine's C libraries, into
 # target/alpine/release/.
-# Run on the host; it re-runs itself in the Alpine container. build.sh calls it.
+# Run on the host (it re-runs itself in the Alpine container) or in the distro, where it
+# builds natively with the user's own rustup (see where.sh). build.sh calls it.
 #
-# Rust comes from rustup (Alpine's rust package is older than simplewm's rust-version),
-# kept with Cargo's downloads in distro/cache/ so later builds don't fetch them again.
+# In the container Rust comes from rustup (Alpine's rust package is older than simplewm's
+# rust-version), kept with Cargo's downloads in distro/cache/ so later builds don't fetch
+# them again.
 set -eu
 
-if [ ! -e /etc/alpine-release ]; then
-    exec "$(dirname "$0")/container.sh" distro/build-simplewm.sh "$@"
-fi
+. "$(dirname "$0")/where.sh"
 
-export RUSTUP_HOME=/work/distro/cache/rustup
-export CARGO_HOME=/work/distro/cache/cargo
-export CARGO_TARGET_DIR=/work/target/alpine
-export PATH="$CARGO_HOME/bin:$PATH"
+if [ -z "$NATIVE" ]; then
+    export RUSTUP_HOME="$PROJECT/distro/cache/rustup"
+    export CARGO_HOME="$PROJECT/distro/cache/cargo"
+    export PATH="$CARGO_HOME/bin:$PATH"
+fi
+export CARGO_TARGET_DIR="$PROJECT/target/alpine"
 # Link the C libraries dynamically (Rust's musl target links statically by default).
 export RUSTFLAGS="-C target-feature=-crt-static"
 
 echo "== simplewm: build tools"
-apk add -q build-base pkgconf curl \
-    mesa-dev libinput-dev libseat-dev libxkbcommon-dev
+if [ -n "$NATIVE" ]; then
+    need cc pkg-config cargo
+else
+    apk add -q build-base pkgconf curl \
+        mesa-dev libinput-dev libseat-dev libxkbcommon-dev
+fi
 
-if [ ! -x "$CARGO_HOME/bin/cargo" ]; then
+if [ -z "$NATIVE" ] && [ ! -x "$CARGO_HOME/bin/cargo" ]; then
     echo "== simplewm: installing Rust"
     curl -sSf -o /tmp/rustup-init \
         https://static.rust-lang.org/rustup/dist/x86_64-unknown-linux-musl/rustup-init
@@ -31,5 +37,5 @@ if [ ! -x "$CARGO_HOME/bin/cargo" ]; then
 fi
 
 echo "== simplewm: cargo build"
-cd /work
+cd "$PROJECT"
 cargo build --release --locked

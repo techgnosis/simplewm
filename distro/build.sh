@@ -7,16 +7,20 @@
 #   distro/out/vmlinuz            the kernel, built from distro/kernel.config (build-kernel.sh)
 #   distro/out/root.img           distro/root/ as an ext4 disk image
 #
-# Run it on the host; it re-runs itself inside the Alpine container (container.sh).
+# Run it on the host (it re-runs itself inside the Alpine container, container.sh) or in
+# the distro (natively, see where.sh). In the distro, the part that installs the root
+# filesystem needs real root (files owned by root, setuid sudo, chroot): build.sh re-runs
+# itself through sudo for that part only (`build.sh root-part`, asking for your password
+# once), and everything else, the compiling included, runs as you. In the container,
+# podman's root does it all.
 # Each build starts from an empty root, so the image's home (simplewm's settings) starts
 # empty too. Downloaded packages are kept in distro/cache/.
 set -eu
 
-if [ ! -e /etc/alpine-release ]; then
-    exec "$(dirname "$0")/container.sh" distro/build.sh "$@"
-fi
+. "$(dirname "$0")/where.sh"
+. "$PROJECT/distro/apk.sh"
 
-cd /work/distro
+cd "$PROJECT/distro"
 
 # What goes into the root filesystem. Vulkan (the loader, radv for AMD cards, lavapipe
 # for software rendering in the VM) is for Gram, which draws with Vulkan, or OpenGL if
@@ -373,38 +377,48 @@ REMOVE_DIRS="
     /lib/firmware
 "
 
-ROOT=/work/distro/root
-OUT=/work/distro/out
-CACHE=/work/distro/cache
+ROOT="$PROJECT/distro/root"
+OUT="$PROJECT/distro/out"
+CACHE="$PROJECT/distro/cache"
+RUST_HOME="$CACHE/home"
 
-sh build-simplewm.sh
-sh build-gram.sh
+# mkfs.ext4 from e2fsprogs: the container's own, or cache/tools/ in the distro (whose
+# image doesn't have it), run with that folder's libraries.
+mkfs_ext4() {
+    if [ -n "$NATIVE" ]; then
+        LD_LIBRARY_PATH="$APK_TOOLS/usr/lib" "$APK_TOOLS/sbin/mkfs.ext4" "$@"
+    else
+        mkfs.ext4 "$@"
+    fi
+}
 
-echo "== tools"
-apk add -q e2fsprogs
-
+# Everything that needs root: the root filesystem and its disk image.
+root_part() {
 echo "== root filesystem"
 rm -rf "$ROOT" "$OUT"
-mkdir -p "$ROOT" "$OUT" "$CACHE"
+mkdir -p "$ROOT" "$OUT"
+# The system's / : root's, mode 755. In the distro the project usually sits in the user's
+# home, which busybox's adduser makes setgid; without this every folder apk creates
+# would inherit the setgid bit and the user's group.
+chown 0:0 "$ROOT"
+chmod g-s "$ROOT"
+chmod 755 "$ROOT"
 # shellcheck disable=SC2086
-apk --root "$ROOT" --initdb --quiet \
-    --keys-dir /etc/apk/keys --repositories-file /etc/apk/repositories \
-    --cache-dir "$CACHE" \
-    add $PACKAGES
+alpine_apk --root "$ROOT" --initdb --quiet add $PACKAGES
 
 # No package manager in the system: it's changed only by rebuilding it. apk itself was
 # never installed; remove its records (database and settings) too.
 rm -rf "$ROOT/etc/apk" "$ROOT/lib/apk" "$ROOT/var/cache/apk"
 
 echo "== our pieces"
-install -m 755 /work/target/alpine/release/simplewm "$ROOT/usr/bin/simplewm"
+install -m 755 "$PROJECT"/target/alpine/release/simplewm "$ROOT/usr/bin/simplewm"
 # simplewm-init is PID 1; it runs simplewm as the account with UID 1000 (made below).
-install -m 755 /work/target/alpine/release/simplewm-init "$ROOT/sbin/simplewm-init"
+install -m 755 "$PROJECT"/target/alpine/release/simplewm-init "$ROOT/sbin/simplewm-init"
 ln -sf simplewm-init "$ROOT/sbin/init"
 echo simplewm > "$ROOT/etc/hostname"
 # Gram: the `gram` command finds the editor at ../libexec/gram-editor.
-install -m 755 /work/target/gram/release/cli "$ROOT/usr/bin/gram"
-install -D -m 755 /work/target/gram/release/gram "$ROOT/usr/libexec/gram-editor"
+install -m 755 "$PROJECT"/target/gram/release/cli "$ROOT/usr/bin/gram"
+install -D -m 755 "$PROJECT"/target/gram/release/gram "$ROOT/usr/libexec/gram-editor"
 # Without its debug info (as Gram's own packages do; symbols stay, for backtraces).
 strip --strip-debug "$ROOT/usr/bin/gram" "$ROOT/usr/libexec/gram-editor"
 install -m 644 firefox.js "$ROOT/usr/lib/firefox/defaults/pref/simplewm.js"
@@ -443,19 +457,6 @@ sed -i 's/^root:[^:]*:/root:*:/' "$ROOT/etc/shadow"
 rm -f "$ROOT/usr/libexec/dbus-daemon-launch-helper"
 
 echo "== Rust $RUST_VERSION for $USER_NAME"
-# Installed the way the user would themselves, with Alpine's rustup-init, into their home
-# (~/.rustup, ~/.cargo), so rustup works as usual afterwards. It's installed once into
-# cache/home/ (with HOME pointing there, so ~/.cargo/env says $HOME, not the cache's path)
-# and copied in, so later builds don't download it again.
-RUST_HOME="$CACHE/home"
-if ! ls -d "$RUST_HOME/.rustup/toolchains/$RUST_VERSION-"* >/dev/null 2>&1; then
-    apk add -q rustup
-    rm -rf "$RUST_HOME"
-    mkdir -p "$RUST_HOME"
-    HOME="$RUST_HOME" RUSTUP_HOME="$RUST_HOME/.rustup" CARGO_HOME="$RUST_HOME/.cargo" \
-        rustup-init -y -q --no-modify-path \
-        --profile minimal --component rustfmt,clippy --default-toolchain "$RUST_VERSION"
-fi
 cp -a "$RUST_HOME/.rustup" "$RUST_HOME/.cargo" "$ROOT/home/$USER_NAME/"
 chroot "$ROOT" chown -R "$USER_NAME:$USER_NAME" "/home/$USER_NAME/.rustup" \
     "/home/$USER_NAME/.cargo"
@@ -511,7 +512,6 @@ chroot "$ROOT" gtk-query-immodules-3.0 --update-cache
 chroot "$ROOT" glib-compile-schemas /usr/share/glib-2.0/schemas
 # The one console font simplewm-init loads, unpacked from font-terminus (the rest of
 # that package, 238 more console fonts and Terminus for apps, isn't wanted).
-apk fetch --quiet --output "$CACHE" font-terminus
 mkdir -p "$ROOT/usr/share/consolefonts"
 tar -xzf "$(ls -t "$CACHE"/font-terminus-*.apk | head -n 1)" -C "$ROOT" \
     usr/share/consolefonts/ter-132n.psf.gz 2>/dev/null
@@ -543,8 +543,53 @@ used=$(du -sm "$ROOT" | cut -f1)
 # file: space the system never writes takes nothing on the host's disk.
 size=16384
 [ "$size" -gt $((used * 2)) ] || size=$((used * 2))
-mkfs.ext4 -q -L simplewm -d "$ROOT" "$OUT/root.img" "${size}M"
+mkfs_ext4 -q -L simplewm -d "$ROOT" "$OUT/root.img" "${size}M"
+echo "== root ${used} MB, image ${size} MB"
+
+# Through sudo in the distro: give out/ (the image) and cache/ (apk's downloads) back to
+# the user, so their own builds can write there.
+if [ -n "${SUDO_UID:-}" ]; then
+    chown -R "$SUDO_UID:$SUDO_GID" "$OUT" "$CACHE"
+fi
+}
+
+if [ "${1:-}" = root-part ]; then
+    root_part
+    exit
+fi
+
+sh build-simplewm.sh
+sh build-gram.sh
+
+echo "== tools"
+alpine_tools e2fsprogs
+# The one console font the system gets (unpacked in the root part).
+alpine_fetch "$CACHE" font-terminus
+
+echo "== Rust $RUST_VERSION (for the user's home)"
+# Installed the way the user would themselves, with Alpine's rustup-init, into their home
+# (~/.rustup, ~/.cargo), so rustup works as usual afterwards. It's installed once into
+# cache/home/ (with HOME pointing there, so ~/.cargo/env says $HOME, not the cache's path)
+# and copied in, so later builds don't download it again.
+if ! ls -d "$RUST_HOME/.rustup/toolchains/$RUST_VERSION-"* >/dev/null 2>&1; then
+    [ -n "$NATIVE" ] || apk add -q rustup
+    rm -rf "$RUST_HOME"
+    mkdir -p "$RUST_HOME"
+    HOME="$RUST_HOME" RUSTUP_HOME="$RUST_HOME/.rustup" CARGO_HOME="$RUST_HOME/.cargo" \
+        rustup-init -y -q --no-modify-path \
+        --profile minimal --component rustfmt,clippy --default-toolchain "$RUST_VERSION"
+fi
+# In the distro cache/ usually sits in the user's setgid home (busybox's adduser), so its
+# folders inherit the setgid bit; the image's copy shouldn't carry it.
+find "$RUST_HOME" -type d -perm -2000 -exec chmod g-s {} +
+
+if [ -n "$NATIVE" ]; then
+    echo "== root part, through sudo"
+    sudo sh "$PROJECT/distro/build.sh" root-part
+else
+    root_part
+fi
 
 sh build-kernel.sh
 
-echo "== done: root ${used} MB, image ${size} MB"
+echo "== done"
