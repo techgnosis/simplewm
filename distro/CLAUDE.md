@@ -251,7 +251,7 @@ WirePlumber finding the VM's sound card, and alacritty opening from the launcher
 headless (screenshots through QEMU's monitor).
 
 **Firefox** (Alpine's `firefox`, 151 at the time; `firefox-esr` also exists) is in the
-image: the goal is a Firefox OS. It runs natively on Wayland under simplewm, drawing in
+image, and in the Launcher by default: the goal is a Firefox OS. It runs natively on Wayland under simplewm, drawing in
 software in the VM. It roughly doubled the root filesystem (419 to 788 MB). Tested by
 booting a copy of the image whose `~/.bash_profile` starts it in the background (simplewm
 is started through the login shell, so that runs alongside it). `distro/firefox.js` is

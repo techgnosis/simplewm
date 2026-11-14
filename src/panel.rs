@@ -74,7 +74,8 @@ use text_field::{field_char_at, render_field};
 
 /// The launcher's entries on first run: a terminal and the Gram editor (both in the
 /// distro).
-pub const DEFAULT_LAUNCHER_ENTRIES: [&str; 2] = ["/usr/bin/alacritty", "/usr/bin/gram"];
+pub const DEFAULT_LAUNCHER_ENTRIES: [&str; 3] =
+    ["/usr/bin/alacritty", "/usr/bin/gram", "/usr/bin/firefox"];
 
 /// simplewm's own windows. The order is `PanelId::ALL`'s.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

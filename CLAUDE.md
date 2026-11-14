@@ -134,7 +134,8 @@ linked libraries with `readelf -d target/release/simplewm | grep NEEDED`.
   - File Picker filters by MIME type: `/usr/share/mime/globs2` (shared-mime-info).
   - Network applet Apply: `/usr/bin/sudo`, `/bin/sh`, `ip` (iproute2), and `mktemp`,
     `chmod`, `mv`, `rm`. Reading the card uses only `/sys`, `/proc` and netlink.
-  - Launcher: whatever is listed (on first run `/usr/bin/alacritty` and `/usr/bin/gram`).
+  - Launcher: whatever is listed (on first run `/usr/bin/alacritty`, `/usr/bin/gram` and
+    `/usr/bin/firefox`).
 
 Update this list when a change adds or drops one.
 
