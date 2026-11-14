@@ -429,6 +429,15 @@ from outside: an apk install script once left its error message in a plain-file
 `/dev/null` (now in `REMOVE`; at boot devtmpfs covers `/dev` anyway), which cargo fed to
 rustc.
 
+**SSH keys:** the user asked for their host `~/.ssh` (one ed25519 key, `known_hosts`) in
+the image's `/home/user/.ssh`, for git over SSH; `openssh-client-default` (the `ssh`
+client, no server) came with it. `build.sh` copies it on the host side into
+`cache/ssh` (git-ignored; the container sees only the project) before entering the
+container, fresh each build, then into the home as 700/600, owned by the user. So
+`out/root.img` holds a private key and must never be shared or committed. Like the rest
+of the home, it reaches an installed `distro-home` only when that partition is made;
+after that the user copies `~/.ssh` over themselves.
+
 **A smaller filesystem.** The user wants as few files in the filesystem as possible, to
 lighten the load on whoever looks around it: the measure is the number of files, not
 bytes (a 40 MB binary and a one-line config file count the same). But it stays a normal userland a developer

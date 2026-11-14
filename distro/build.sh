@@ -13,6 +13,14 @@
 set -eu
 
 if [ ! -e /etc/alpine-release ]; then
+    # The container only sees the project, so the host user's ~/.ssh (their keys and
+    # known_hosts, for git over SSH) is copied into the git-ignored cache first, fresh
+    # each build. The image (out/root.img) then holds the private key: keep it to yourself.
+    rm -rf "$(dirname "$0")/cache/ssh"
+    if [ -d "$HOME/.ssh" ]; then
+        mkdir -p "$(dirname "$0")/cache"
+        cp -a "$HOME/.ssh" "$(dirname "$0")/cache/ssh"
+    fi
     exec "$(dirname "$0")/container.sh" distro/build.sh "$@"
 fi
 
@@ -67,6 +75,7 @@ PACKAGES="
     curl
     ca-certificates
     git
+    openssh-client-default
     grep
     sed
     build-base
@@ -434,6 +443,16 @@ chroot "$ROOT" chown -R "$USER_NAME:$USER_NAME" "/home/$USER_NAME/.rustup" \
 # get it too).
 echo '. "$HOME/.cargo/env"' > "$ROOT/home/$USER_NAME/.profile"
 chroot "$ROOT" chown "$USER_NAME:$USER_NAME" "/home/$USER_NAME/.profile"
+
+# The host user's ~/.ssh (copied into cache/ssh before entering the container), so git
+# over SSH works with their keys. ssh refuses keys others can read: 700 and 600.
+if [ -d "$CACHE/ssh" ]; then
+    echo "== ~/.ssh for $USER_NAME"
+    cp -a "$CACHE/ssh" "$ROOT/home/$USER_NAME/.ssh"
+    chmod 700 "$ROOT/home/$USER_NAME/.ssh"
+    chmod -R go-rwx "$ROOT/home/$USER_NAME/.ssh"
+    chroot "$ROOT" chown -R "$USER_NAME:$USER_NAME" "/home/$USER_NAME/.ssh"
+fi
 
 echo "== trimming"
 # REMOVE entries may be patterns (gcc's folders are named after its version). One that
