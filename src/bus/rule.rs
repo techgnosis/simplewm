@@ -33,6 +33,18 @@ pub struct Rule {
 pub type Args = Vec<Option<(char, String)>>;
 
 impl Rule {
+    /// The name a rule waits on to get or lose an owner: `arg0` of a rule for the bus's
+    /// NameOwnerChanged signal.
+    pub fn watched_name(&self) -> Option<&str> {
+        if self.member.as_deref() != Some("NameOwnerChanged") {
+            return None;
+        }
+        self.args
+            .iter()
+            .find(|(n, _)| *n == 0)
+            .map(|(_, v)| v.as_str())
+    }
+
     /// Parse a rule such as `type='signal',interface='org.foo',arg0='x'`.
     pub fn parse(text: &str) -> Result<Rule, String> {
         let mut rule = Rule {

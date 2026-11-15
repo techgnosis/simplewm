@@ -192,9 +192,10 @@ impl Services {
         &self.procs[s.index()].log
     }
 
-    /// The programs connected to simplewm's own bus, if it's running.
-    pub fn bus_peers(&self) -> Option<Vec<crate::bus::PeerInfo>> {
-        self.bus.as_ref().map(|b| b.peers())
+    /// Who is connected to simplewm's own bus and which names were asked for in vain,
+    /// if it's running.
+    pub fn bus_snapshot(&self) -> Option<crate::bus::Snapshot> {
+        self.bus.as_ref().map(|b| b.snapshot())
     }
 
     /// One line for the applets: "Running (PID 123)".

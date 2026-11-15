@@ -1,6 +1,7 @@
 //! The services simplewm runs (see `crate::services`) on screen: the service row the
 //! Sound and D-Bus applets share (name, status, Start/Stop and Log buttons), the D-Bus
-//! applet (the session bus simplewm serves and who's connected to it, see `crate::bus`),
+//! applet (the session bus simplewm serves, who's connected to it and which names were
+//! asked for that nobody provides, see `crate::bus`),
 //! and the Log window that shows one service's output.
 
 use smithay::{
@@ -18,6 +19,41 @@ use crate::{
     ui::{self, CustomElement},
 };
 
+/// `12 sent, 3 rules · org.foo, org.bar`: what a connected program has done.
+fn peer_activity(p: &crate::bus::PeerInfo) -> String {
+    let rules = match p.rules {
+        1 => "1 rule".to_string(),
+        n => format!("{n} rules"),
+    };
+    let mut s = format!("{} sent, {rules}", p.sent);
+    if !p.names.is_empty() {
+        s += " · ";
+        s += &p.names.join(", ");
+    }
+    s
+}
+
+/// `pipewire called IsStarted (3 times); pipewire waits for it`.
+fn missing_detail(m: &crate::bus::Missing) -> String {
+    let mut parts = Vec::new();
+    if m.times > 0 {
+        let mut asked = format!("{} {}", m.askers.join(", "), m.how);
+        if m.times > 1 {
+            asked += &format!(" ({} times)", m.times);
+        }
+        parts.push(asked);
+    }
+    if !m.watchers.is_empty() {
+        let verb = if m.watchers.len() == 1 {
+            "waits"
+        } else {
+            "wait"
+        };
+        parts.push(format!("{} {verb} for it", m.watchers.join(", ")));
+    }
+    parts.join("; ")
+}
+
 // --- Layout (logical pixels) -----------------------------------------------
 
 pub(super) const SERVICE_ROW_H: i32 = BTN_H + 6;
@@ -29,7 +65,7 @@ const GAP: i32 = 8;
 const BUS_W: i32 = 640;
 const BUS_LINE_H: i32 = 22;
 /// Rows of connected programs shown at once (the list scrolls).
-const BUS_LIST_ROWS: i32 = 12;
+const BUS_LIST_ROWS: i32 = 16;
 
 pub(super) const LOG_WIN_W: i32 = 860;
 pub(super) const LOG_WIN_H: i32 = 500;
@@ -200,9 +236,9 @@ impl super::Panels {
         self.service_row_hit(Service::Bus, &l.row, p)
     }
 
-    /// The connected programs, or why there's no list.
+    /// The connected programs and the names asked for in vain, or why there's no list.
     fn bus_rows(&self) -> Vec<EnvRow> {
-        let Some(peers) = self.services.bus_peers() else {
+        let Some(snap) = self.services.bus_snapshot() else {
             let why = match self.services.status(Service::Bus) {
                 services::Status::Elsewhere(_) => {
                     "Another program runs the bus, so simplewm can't list who's connected."
@@ -213,9 +249,9 @@ impl super::Panels {
         };
         let mut rows = vec![EnvRow::Header(format!(
             "Connected programs: {}",
-            peers.len()
+            snap.peers.len()
         ))];
-        rows.extend(peers.into_iter().map(|p| {
+        rows.extend(snap.peers.into_iter().map(|p| {
             let program = std::path::Path::new(&p.program)
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
@@ -225,8 +261,24 @@ impl super::Panels {
             } else {
                 format!("{}  {program} ({})", p.name, p.pid)
             };
-            EnvRow::Item(who, p.names.join(", "))
+            EnvRow::Item(who, peer_activity(&p))
         }));
+        rows.push(EnvRow::Header(format!(
+            "Asked for, but nobody provides: {}",
+            snap.missing.len()
+        )));
+        if snap.missing.is_empty() {
+            rows.push(EnvRow::Line("Nothing so far.".into()));
+        } else {
+            rows.extend(
+                snap.missing
+                    .iter()
+                    .map(|m| EnvRow::Item(m.name.clone(), missing_detail(m))),
+            );
+            rows.push(EnvRow::Line(
+                "simplewm doesn't start programs on demand, so these stay unanswered.".into(),
+            ));
+        }
         rows
     }
 

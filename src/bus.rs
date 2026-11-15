@@ -70,6 +70,8 @@ const RELEASED: u32 = 1;
 const NON_EXISTENT: u32 = 2;
 const NOT_OWNER: u32 = 3;
 const ALREADY_RUNNING: u32 = 2;
+/// Names remembered as asked for in vain (more are ignored).
+const MAX_MISSING: usize = 200;
 
 /// What the bus tells `services`.
 pub enum Event {
@@ -91,6 +93,32 @@ pub struct PeerInfo {
     pub program: String,
     /// The well-known names it owns (not the ones it's queued for).
     pub names: Vec<String>,
+    /// Messages it has sent (its Hello included).
+    pub sent: u64,
+    /// Match rules it has.
+    pub rules: usize,
+}
+
+/// A well-known name that programs asked for while nobody owned it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Missing {
+    pub name: String,
+    /// Who asked (program names, or `PID n`), first asker first.
+    pub askers: Vec<String>,
+    /// How many times it was asked for.
+    pub times: u64,
+    /// How it was last asked for: `called IsStarted`, `StartServiceByName`, ...
+    pub how: String,
+    /// Connected programs with a match rule waiting for it to get an owner.
+    pub watchers: Vec<String>,
+}
+
+/// What the D-Bus applet shows.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct Snapshot {
+    pub peers: Vec<PeerInfo>,
+    /// Names nobody owns that were asked for or are waited on, by name.
+    pub missing: Vec<Missing>,
 }
 
 /// The running bus. Dropping it stops it.
@@ -98,7 +126,7 @@ pub struct Bus {
     path: PathBuf,
     stopping: Arc<AtomicBool>,
     tx: mpsc::UnboundedSender<Incoming>,
-    peers: Arc<Mutex<Vec<PeerInfo>>>,
+    snapshot: Arc<Mutex<Snapshot>>,
 }
 
 enum Incoming {
@@ -123,16 +151,16 @@ impl Bus {
         let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700));
         let (tx, rx) = mpsc::unbounded();
         let stopping = Arc::new(AtomicBool::new(false));
-        let peers = Arc::new(Mutex::new(Vec::new()));
+        let snapshot = Arc::new(Mutex::new(Snapshot::default()));
 
         let bus_notify = notify.clone();
-        let bus_peers = peers.clone();
+        let bus_snapshot = snapshot.clone();
         let stop_flag = stopping.clone();
         std::thread::Builder::new()
             .name("bus".into())
             .spawn(move || {
                 let run = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    let mut router = Router::new(rx, bus_notify.clone(), bus_peers);
+                    let mut router = Router::new(rx, bus_notify.clone(), bus_snapshot);
                     zbus::block_on(std::future::poll_fn(move |cx| router.poll(cx)))
                 }));
                 if !stop_flag.load(Ordering::SeqCst) {
@@ -157,13 +185,13 @@ impl Bus {
             path: path.to_path_buf(),
             stopping,
             tx,
-            peers,
+            snapshot,
         })
     }
 
-    /// The connected programs, by unique name.
-    pub fn peers(&self) -> Vec<PeerInfo> {
-        self.peers.lock().map(|p| p.clone()).unwrap_or_default()
+    /// Who's connected and which names were asked for in vain.
+    pub fn snapshot(&self) -> Snapshot {
+        self.snapshot.lock().map(|s| s.clone()).unwrap_or_default()
     }
 
     /// Stop serving: every client is disconnected and the socket file removed.
@@ -305,14 +333,14 @@ struct Router {
     conns: HashMap<u64, Conn>,
     state: State,
     notify: Notify,
-    peers: Arc<Mutex<Vec<PeerInfo>>>,
+    snapshot: Arc<Mutex<Snapshot>>,
 }
 
 impl Router {
     fn new(
         rx: mpsc::UnboundedReceiver<Incoming>,
         notify: Notify,
-        peers: Arc<Mutex<Vec<PeerInfo>>>,
+        snapshot: Arc<Mutex<Snapshot>>,
     ) -> Router {
         let guid: zbus::OwnedGuid = zbus::Guid::generate().into();
         Router {
@@ -323,7 +351,7 @@ impl Router {
             handshakes: Vec::new(),
             conns: HashMap::new(),
             notify,
-            peers,
+            snapshot,
         }
     }
 
@@ -489,9 +517,9 @@ impl Router {
     }
 
     fn publish(&mut self) {
-        let list = self.state.peer_infos();
-        if let Ok(mut peers) = self.peers.lock() {
-            *peers = list;
+        let snapshot = self.state.snapshot();
+        if let Ok(mut shown) = self.snapshot.lock() {
+            *shown = snapshot;
         }
     }
 }
@@ -554,6 +582,14 @@ struct Peer {
     /// Said Hello, so it has its name and can talk.
     hello: bool,
     rules: Vec<Rule>,
+    sent: u64,
+}
+
+/// A name asked for while nobody owned it (see `Missing`).
+struct Asked {
+    askers: Vec<String>,
+    times: u64,
+    how: String,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -573,6 +609,8 @@ struct State {
     peers: BTreeMap<u64, Peer>,
     /// Each well-known name's owner (front) and queue.
     names: BTreeMap<String, VecDeque<Owner>>,
+    /// Well-known names asked for while nobody owned them, until someone does.
+    asked: BTreeMap<String, Asked>,
     out: Vec<Out>,
     notes: Vec<String>,
     /// The peer list changed (for the applet).
@@ -585,6 +623,7 @@ impl State {
             guid,
             peers: BTreeMap::new(),
             names: BTreeMap::new(),
+            asked: BTreeMap::new(),
             out: Vec::new(),
             notes: Vec::new(),
             changed: false,
@@ -601,6 +640,7 @@ impl State {
                 program,
                 hello: false,
                 rules: Vec::new(),
+                sent: 0,
             },
         );
         self.changed = true;
@@ -622,6 +662,85 @@ impl State {
         }
     }
 
+    /// `firefox`, or `PID 123` when its program isn't known.
+    fn program_of(&self, id: u64) -> String {
+        match self.peers.get(&id) {
+            Some(p) => match Path::new(&p.program).file_name() {
+                Some(program) => program.to_string_lossy().into_owned(),
+                None => format!("PID {}", p.cred.pid),
+            },
+            None => unique_name(id),
+        }
+    }
+
+    /// `from` asked for well-known name `name` (`how`), and nobody owns it.
+    fn asked_for(&mut self, from: u64, name: &str, how: String) {
+        if name.starts_with(':') || name == NAME {
+            return;
+        }
+        let asker = self.program_of(from);
+        if let Some(a) = self.asked.get_mut(name) {
+            a.times += 1;
+            a.how = how;
+            if !a.askers.contains(&asker) {
+                a.askers.push(asker);
+            }
+        } else if self.asked.len() < MAX_MISSING {
+            self.notes.push(format!(
+                "{} asked for {name} ({how}), which nobody provides",
+                self.describe(from)
+            ));
+            self.asked.insert(
+                name.to_string(),
+                Asked {
+                    askers: vec![asker],
+                    times: 1,
+                    how,
+                },
+            );
+        }
+        self.changed = true;
+    }
+
+    fn snapshot(&self) -> Snapshot {
+        let mut missing: BTreeMap<&str, Missing> = self
+            .asked
+            .iter()
+            .map(|(name, a)| {
+                let m = Missing {
+                    name: name.clone(),
+                    askers: a.askers.clone(),
+                    times: a.times,
+                    how: a.how.clone(),
+                    watchers: Vec::new(),
+                };
+                (name.as_str(), m)
+            })
+            .collect();
+        for (id, p) in &self.peers {
+            for name in p.rules.iter().filter_map(Rule::watched_name) {
+                if name.starts_with(':') || name == NAME || self.owner(name).is_some() {
+                    continue;
+                }
+                let m = missing.entry(name).or_insert_with(|| Missing {
+                    name: name.to_string(),
+                    askers: Vec::new(),
+                    times: 0,
+                    how: String::new(),
+                    watchers: Vec::new(),
+                });
+                let who = self.program_of(*id);
+                if !m.watchers.contains(&who) {
+                    m.watchers.push(who);
+                }
+            }
+        }
+        Snapshot {
+            peers: self.peer_infos(),
+            missing: missing.into_values().collect(),
+        }
+    }
+
     fn peer_infos(&self) -> Vec<PeerInfo> {
         self.peers
             .iter()
@@ -635,6 +754,8 @@ impl State {
                     .filter(|(_, q)| q.front().is_some_and(|o| o.peer == *id))
                     .map(|(n, _)| n.clone())
                     .collect(),
+                sent: p.sent,
+                rules: p.rules.len(),
             })
             .collect()
     }
@@ -681,9 +802,11 @@ impl State {
 
     /// A message from client `from`, as it sent it (without a sender).
     fn receive(&mut self, from: u64, msg: &Message) {
-        let Some(peer) = self.peers.get(&from) else {
+        let Some(peer) = self.peers.get_mut(&from) else {
             return;
         };
+        peer.sent += 1;
+        self.changed = true;
         let hello = peer.hello;
         let msg = match stamp(msg, &peer.name) {
             Ok(m) => m,
@@ -722,13 +845,21 @@ impl State {
             }
             Some(dest) => match self.owner(dest.as_str()) {
                 Some(to) => self.out.push(Out::Send(to, msg.clone())),
-                None if wants_reply(&msg) => {
-                    let text = format!("The name {dest} was not provided by any .service files");
-                    if let Ok(reply) = error(&hdr, "ServiceUnknown", &text) {
-                        self.out.push(Out::Send(from, reply));
+                None => {
+                    let how = match (msg.message_type(), hdr.member()) {
+                        (Type::MethodCall, Some(m)) => format!("called {m}"),
+                        (Type::Signal, Some(m)) => format!("sent signal {m}"),
+                        _ => "sent a message".into(),
+                    };
+                    self.asked_for(from, dest.as_str(), how);
+                    if wants_reply(&msg) {
+                        let text =
+                            format!("The name {dest} was not provided by any .service files");
+                        if let Ok(reply) = error(&hdr, "ServiceUnknown", &text) {
+                            self.out.push(Out::Send(from, reply));
+                        }
                     }
                 }
-                None => {}
             },
             None => self.broadcast(&msg),
         }
@@ -813,6 +944,7 @@ impl State {
         let new_name = new.map(unique_name).unwrap_or_default();
         self.owner_signal(name, &old_name, &new_name);
         if let Some(new) = new {
+            self.asked.remove(name);
             self.unicast_signal(new, "NameAcquired", name);
             self.notes
                 .push(format!("{} owns {name}", self.describe(new)));
@@ -954,14 +1086,16 @@ impl State {
             }
             (NAME, "GetNameOwner") => {
                 let (name,) = args!((String,));
-                let owner = self
-                    .owner_name(&name)
-                    .ok_or_else(|| no_owner("owner", &name))?;
+                let Some(owner) = self.owner_name(&name) else {
+                    self.asked_for(from, &name, "GetNameOwner".into());
+                    return Err(no_owner("owner", &name));
+                };
                 ok(&(owner,))
             }
             (NAME, "StartServiceByName") => {
                 let (name, _flags) = args!((String, u32));
                 if self.owner_name(&name).is_none() {
+                    self.asked_for(from, &name, "StartServiceByName".into());
                     return Err((
                         "ServiceUnknown",
                         format!("The name {name} was not provided by any .service files"),
@@ -982,6 +1116,7 @@ impl State {
                     return Err(("LimitsExceeded", "too many match rules".into()));
                 }
                 peer.rules.push(rule);
+                self.changed = true;
                 ok(&())
             }
             (NAME, "RemoveMatch") => {
@@ -993,6 +1128,7 @@ impl State {
                     "The given match rule wasn't found".into(),
                 ))?;
                 peer.rules.remove(pos);
+                self.changed = true;
                 ok(&())
             }
             (NAME, "GetConnectionUnixUser") => {
@@ -1295,6 +1431,72 @@ mod tests {
         }
     }
 
+    /// A message from a client, as `State::receive` gets it.
+    fn call_to(dest: &str, member: &str, body: &str) -> Message {
+        let builder =
+            Message::method_call(if dest == NAME { PATH } else { "/" }, member).destination(dest);
+        let builder = if dest == NAME {
+            builder.interface(NAME)
+        } else {
+            builder
+        };
+        if body.is_empty() {
+            builder.build(&()).unwrap()
+        } else {
+            builder.build(&(body,)).unwrap()
+        }
+    }
+
+    #[test]
+    fn remembers_names_nobody_provides() {
+        let mut state = State::new("0".repeat(32));
+        let cred = Cred {
+            pid: std::process::id(),
+            uid: 0,
+            gid: 0,
+        };
+        for id in [1, 2] {
+            state.connected(id, cred);
+            state.receive(id, &call_to(NAME, "Hello", ""));
+        }
+        let watch = "type='signal',sender='org.freedesktop.DBus',\
+                     interface='org.freedesktop.DBus',member='NameOwnerChanged',\
+                     arg0='org.jackaudio.service'";
+        state.receive(1, &call_to(NAME, "AddMatch", watch));
+        state.receive(1, &call_to("org.jackaudio.service", "IsStarted", ""));
+        state.receive(1, &call_to("org.jackaudio.service", "IsStarted", ""));
+        let start = Message::method_call(PATH, "StartServiceByName")
+            .destination(NAME)
+            .interface(NAME)
+            .build(&("org.other", 0u32))
+            .unwrap();
+        state.receive(2, &start);
+
+        let snap = state.snapshot();
+        assert_eq!(snap.peers[0].rules, 1);
+        assert_eq!(snap.peers[0].sent, 4);
+        let names: Vec<&str> = snap.missing.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["org.jackaudio.service", "org.other"]);
+        assert_eq!(snap.missing[1].how, "StartServiceByName");
+        assert!(snap.missing[1].watchers.is_empty());
+        let jack = &snap.missing[0];
+        assert_eq!(jack.times, 2);
+        assert_eq!(jack.how, "called IsStarted");
+        assert_eq!(jack.askers.len(), 1);
+        assert_eq!(jack.watchers, jack.askers);
+        let notes = state.notes.join("\n");
+        assert_eq!(notes.matches("asked for org.jackaudio.service").count(), 1);
+
+        // Once someone owns it, it's no longer missing.
+        state.request_name(2, "org.jackaudio.service", 0).unwrap();
+        let snap = state.snapshot();
+        assert!(
+            snap.missing
+                .iter()
+                .all(|m| m.name != "org.jackaudio.service")
+        );
+    }
+
     #[test]
     fn routes_calls_and_names() {
         let (bus, address, log) = scratch_bus("routes");
@@ -1378,8 +1580,27 @@ mod tests {
                 assert_eq!(id.as_str().len(), 32);
             });
         });
-        assert!(bus.peers().is_empty() || bus.peers().len() <= 2);
+        let snapshot = bus.snapshot();
+        assert!(snapshot.peers.len() <= 2);
+        let nobody = snapshot
+            .missing
+            .iter()
+            .find(|m| m.name == "org.simplewm.Nobody");
+        let nobody = nobody.expect("org.simplewm.Nobody is listed as missing");
+        assert_eq!(nobody.times, 2);
+        assert_eq!(nobody.how, "GetNameOwner");
+        assert!(
+            snapshot
+                .missing
+                .iter()
+                .all(|m| m.name != "org.simplewm.Test")
+        );
         let log = log.lock().unwrap().clone();
+        assert!(
+            log.iter()
+                .any(|l| l.contains("asked for org.simplewm.Nobody (called X)")),
+            "{log:?}"
+        );
         assert!(log.iter().any(|l| l.contains("connected")), "{log:?}");
         assert!(
             log.iter().any(|l| l.contains("owns org.simplewm.Test")),
