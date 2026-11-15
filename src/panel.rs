@@ -292,6 +292,9 @@ pub struct Panels {
     log_service: Option<Service>,
     log_title: String,
     log_rows: RowList,
+    /// The log's lines before wrapping, and whether `log_rows` holds them wrapped.
+    log_lines: Vec<String>,
+    log_wrapped: bool,
     /// The D-Bus applet's connected programs, and its other buffers.
     bus_list: RowList,
     bus_solids: Vec<SolidColorBuffer>,
@@ -329,6 +332,8 @@ impl Panels {
             log_service: None,
             log_title: String::new(),
             log_rows: RowList::default(),
+            log_lines: Vec::new(),
+            log_wrapped: true,
             bus_list: RowList::default(),
             bus_solids: Vec::new(),
             env: RowList::default(),

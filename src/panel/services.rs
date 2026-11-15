@@ -9,7 +9,7 @@ use smithay::{
 };
 
 use super::{
-    BTN_H, HEADER_H, PAD, PanelHit, PanelId, Rect, SEPARATOR, bufs, button_color,
+    BTN_H, HEADER_H, PAD, PanelHit, PanelId, Rect, SCROLLBAR_W, SEPARATOR, bufs, button_color,
     rows::{ENV_ROW_H, EnvRow, RowList},
 };
 use crate::{
@@ -291,7 +291,6 @@ impl super::Panels {
         self.log_title = format!("Log: {}", s.name());
         self.log_rows = RowList::default();
         self.fill_log();
-        self.log_rows.scroll_to_end(self.log_viewport());
         self.open_request = Some(PanelId::Log);
     }
 
@@ -300,19 +299,38 @@ impl super::Panels {
     fn fill_log(&mut self) {
         let Some(s) = self.log_service else { return };
         let log = self.services.log(s);
-        let rows = if log.is_empty() {
+        let lines = if log.is_empty() {
             let why = match self.services.status(s) {
                 services::Status::Elsewhere(who) => {
                     format!("{who} runs {}, so its output goes there.", s.program())
                 }
                 _ => format!("{} hasn't been started by simplewm yet.", s.program()),
             };
-            vec![EnvRow::Line(why)]
+            vec![why]
         } else {
-            log.iter().map(|l| EnvRow::Line(l.clone())).collect()
+            log.iter().cloned().collect()
         };
+        self.log_lines = lines;
+        self.log_wrapped = false;
+    }
+
+    /// Wrap the log's lines to the window's width (it needs the font, so it's done
+    /// when drawing, and only after the log changed).
+    fn wrap_log(&mut self, text: &TextRenderer) {
+        if self.log_wrapped {
+            return;
+        }
         let vp = self.log_viewport();
+        // As wide as `RowList` draws a line next to a scrollbar.
+        let w = vp.size.w - SCROLLBAR_W - 8 - 12;
+        let rows = self
+            .log_lines
+            .iter()
+            .flat_map(|l| text.wrap(l, w))
+            .map(EnvRow::Line)
+            .collect();
         self.log_rows.set_following(rows, vp);
+        self.log_wrapped = true;
     }
 
     pub(super) fn log_viewport(&self) -> Rect {
@@ -329,6 +347,7 @@ impl super::Panels {
         renderer: &mut GlesRenderer,
         elems: &mut Vec<CustomElement>,
     ) {
+        self.wrap_log(text);
         let vp = self.log_viewport();
         self.log_rows.render(
             vp,

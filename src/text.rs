@@ -64,6 +64,43 @@ impl TextRenderer {
         out
     }
 
+    /// Break `text` into lines no wider than `max_width` pixels: at the last space
+    /// where there is one (dropping it), mid-word where a word alone is too wide.
+    pub fn wrap(&self, text: &str, max_width: i32) -> Vec<String> {
+        let adv = |c: char| self.font.metrics(c, FONT_PX).advance_width;
+        let mut lines = Vec::new();
+        let mut line = String::new();
+        let mut width = 0.0f32;
+        // Byte index just after the last space in `line`.
+        let mut after_space: Option<usize> = None;
+        for c in text.chars() {
+            let a = adv(c);
+            if !line.is_empty() && (width + a).ceil() as i32 > max_width {
+                if c == ' ' {
+                    lines.push(std::mem::take(&mut line).trim_end().to_string());
+                    width = 0.0;
+                    after_space = None;
+                    continue;
+                }
+                let rest = match after_space.take() {
+                    Some(i) => line.split_off(i),
+                    None => String::new(),
+                };
+                lines.push(std::mem::replace(&mut line, rest).trim_end().to_string());
+                width = line.chars().map(adv).sum();
+            }
+            line.push(c);
+            width += a;
+            if c == ' ' {
+                after_space = Some(line.len());
+            }
+        }
+        if !line.is_empty() || lines.is_empty() {
+            lines.push(line);
+        }
+        lines
+    }
+
     /// Returns a (cached) white text buffer and its size.
     pub fn get(&mut self, text: &str) -> Option<(MemoryRenderBuffer, (i32, i32))> {
         if text.is_empty() {
@@ -174,4 +211,25 @@ pub fn arrow_cursor() -> MemoryRenderBuffer {
         Transform::Normal,
         None,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wrap_breaks_at_spaces_and_inside_long_words() {
+        let t = TextRenderer::new();
+        assert_eq!(t.wrap("", 100), vec![String::new()]);
+        assert_eq!(t.wrap("short", 100), vec!["short"]);
+        let w = t.measure("hello world");
+        assert_eq!(t.wrap("hello world again", w), vec!["hello world", "again"]);
+        let lines = t.wrap(&"x".repeat(50), t.measure("xxxxxxxxxx"));
+        assert_eq!(lines.len(), 5);
+        assert!(lines.iter().all(|l| l == "xxxxxxxxxx"));
+        let text = "pw.node [W] some long message that goes on and on, /a/very/long/path/name";
+        let lines = t.wrap(text, 120);
+        assert!(lines.iter().all(|l| t.measure(l) <= 120), "{lines:?}");
+        assert_eq!(lines.join(" ").replace(' ', ""), text.replace(' ', ""));
+    }
 }
