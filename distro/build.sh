@@ -406,8 +406,18 @@ mkdir -p "$ROOT" "$OUT"
 chown 0:0 "$ROOT"
 chmod g-s "$ROOT"
 chmod 755 "$ROOT"
+# Packages' install scripts print notes for Alpine users ("install libheif-x265 to
+# encode", "apk add cmd:seatd-launch", …), which apk shows as lines starting "  *". They
+# don't apply here: hide them, and show everything else apk says (all of it on failure).
+apk_log=$(mktemp)
 # shellcheck disable=SC2086
-alpine_apk --root "$ROOT" --initdb --quiet add $PACKAGES
+if ! alpine_apk --root "$ROOT" --initdb --quiet add $PACKAGES > "$apk_log" 2>&1; then
+    cat "$apk_log" >&2
+    rm -f "$apk_log"
+    exit 1
+fi
+grep -v '^  \*' "$apk_log" || true
+rm -f "$apk_log"
 
 # No package manager in the system: it's changed only by rebuilding it. apk itself was
 # never installed; remove its records (database and settings) too.
