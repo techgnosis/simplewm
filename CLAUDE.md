@@ -64,7 +64,9 @@ rules below.
   connection's handshake; `bus.rs` does names, queues, match rules, routing and
   `org.freedesktop.DBus`. Only the user's own uid may connect. No activation
   (`StartServiceByName` only answers for names already owned), no policy, no monitors
-  (`dbus-monitor` falls back to seeing signals only). It runs on its own threads, and a
+  (`dbus-monitor` falls back to seeing signals only). It remembers well-known names asked
+  for while unowned (a call to one, `GetNameOwner`, `StartServiceByName`) until someone
+  owns them, and logs the first ask of each. It runs on its own threads, and a
   panic there stops the bus, not simplewm.
 
 ## Checking a change
@@ -142,8 +144,8 @@ applet's state. `panel.rs` has the shared parts (placement, frame, hit-test/rend
 dispatch, `PanelHit`, sizes and colors). Each window has its own file of
 `impl super::Panels` blocks: `control.rs` (Control Panel and Help), `launcher.rs`,
 `screenshot.rs`, `network.rs`, `sound.rs`, `rows.rs` (Environment, Desktop Portal and the
-shared `RowList`), `services.rs` (the service row, the D-Bus applet with its list of
-connected programs, the Log window), `picker.rs` (File Picker) and `sudo.rs` (Password window: `ask_password(SudoJob)` →
+shared `RowList`), `services.rs` (the service row, the D-Bus applet with connected programs, their
+activity and the names asked for that nobody provides, the Log window), `picker.rs` (File Picker) and `sudo.rs` (Password window: `ask_password(SudoJob)` →
 `job_finished`). Shared helpers: `text_field.rs` and `store.rs` (to change the settings
 format, bump `VERSION` and keep reading the old one).
 
