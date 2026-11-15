@@ -11,7 +11,7 @@ use smithay::{
 
 use super::{
     BTN_H, HEADER_H, PAD, PanelHit, PanelId, Rect, SCROLLBAR_W, SEPARATOR, bufs, button_color,
-    rows::{ENV_ROW_H, EnvRow, RowList},
+    rows::{ENV_ROW_H, EnvRow, NOTE_INDENT, RowList},
 };
 use crate::{
     services::{self, Service, ServiceEvent},
@@ -19,39 +19,74 @@ use crate::{
     ui::{self, CustomElement},
 };
 
-/// `12 sent, 3 rules · org.foo, org.bar`: what a connected program has done.
-fn peer_activity(p: &crate::bus::PeerInfo) -> String {
-    let rules = match p.rules {
-        1 => "1 rule".to_string(),
-        n => format!("{n} rules"),
-    };
-    let mut s = format!("{} sent, {rules}", p.sent);
-    if !p.names.is_empty() {
-        s += " · ";
-        s += &p.names.join(", ");
+/// A plural phrase: `1 match rule`, `3 match rules`.
+fn count(n: u64, what: &str) -> String {
+    if n == 1 {
+        format!("1 {what}")
+    } else {
+        format!("{n} {what}s")
     }
-    s
 }
 
-/// `pipewire called IsStarted (3 times); pipewire waits for it`.
-fn missing_detail(m: &crate::bus::Missing) -> String {
-    let mut parts = Vec::new();
+/// One entry in the D-Bus applet's list: a bright title and dimmer lines under it.
+struct BusEntry {
+    title: String,
+    notes: Vec<String>,
+}
+
+/// `pipewire, PID 812` / `:1.4 · 12 messages sent · 3 match rules` / `Provides: ...`.
+fn peer_entry(p: &crate::bus::PeerInfo) -> BusEntry {
+    let program = std::path::Path::new(&p.program)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let title = if program.is_empty() {
+        format!("PID {}", p.pid)
+    } else {
+        format!("{program}, PID {}", p.pid)
+    };
+    let mut notes = vec![format!(
+        "{}  ·  {}  ·  {}",
+        p.name,
+        format!("{} sent", count(p.sent, "message")),
+        count(p.rules as u64, "match rule")
+    )];
+    if !p.names.is_empty() {
+        notes.push(format!("Provides: {}", p.names.join(", ")));
+    }
+    BusEntry { title, notes }
+}
+
+/// `org.foo.Bar` / `Asked for by pipewire (called IsStarted, 3 times)` / `Waited for by ...`.
+fn missing_entry(m: &crate::bus::Missing) -> BusEntry {
+    let mut notes = Vec::new();
     if m.times > 0 {
-        let mut asked = format!("{} {}", m.askers.join(", "), m.how);
+        let mut how = m.how.clone();
         if m.times > 1 {
-            asked += &format!(" ({} times)", m.times);
+            how = format!("{}, last {how}", count(m.times, "time"));
         }
-        parts.push(asked);
+        notes.push(format!("Asked for by {} ({how})", m.askers.join(", ")));
     }
     if !m.watchers.is_empty() {
-        let verb = if m.watchers.len() == 1 {
-            "waits"
-        } else {
-            "wait"
-        };
-        parts.push(format!("{} {verb} for it", m.watchers.join(", ")));
+        notes.push(format!("Waited for by {}", m.watchers.join(", ")));
     }
-    parts.join("; ")
+    BusEntry {
+        title: m.name.clone(),
+        notes,
+    }
+}
+
+/// Lay entries out as rows: each title, its notes wrapped to `w` pixels, then a gap.
+fn entry_rows(entries: Vec<BusEntry>, text: &TextRenderer, w: i32) -> Vec<EnvRow> {
+    let mut rows = Vec::new();
+    for e in entries {
+        rows.extend(text.wrap(&e.title, w).into_iter().map(EnvRow::Line));
+        for n in &e.notes {
+            rows.extend(text.wrap(n, w - NOTE_INDENT).into_iter().map(EnvRow::Note));
+        }
+        rows.push(EnvRow::Line(String::new()));
+    }
+    rows
 }
 
 // --- Layout (logical pixels) -----------------------------------------------
@@ -62,10 +97,10 @@ const TOGGLE_W: i32 = 64;
 const LOG_W: i32 = 52;
 const GAP: i32 = 8;
 
-const BUS_W: i32 = 640;
+const BUS_W: i32 = 760;
 const BUS_LINE_H: i32 = 22;
 /// Rows of connected programs shown at once (the list scrolls).
-const BUS_LIST_ROWS: i32 = 16;
+const BUS_LIST_ROWS: i32 = 20;
 
 pub(super) const LOG_WIN_W: i32 = 860;
 pub(super) const LOG_WIN_H: i32 = 500;
@@ -237,7 +272,10 @@ impl super::Panels {
     }
 
     /// The connected programs and the names asked for in vain, or why there's no list.
-    fn bus_rows(&self) -> Vec<EnvRow> {
+    /// Lines are wrapped to the list's width, so it takes the font.
+    fn bus_rows(&self, text: &TextRenderer, list: Rect) -> Vec<EnvRow> {
+        // As wide as `RowList` draws a line next to a scrollbar.
+        let w = list.size.w - SCROLLBAR_W - 8 - 12;
         let Some(snap) = self.services.bus_snapshot() else {
             let why = match self.services.status(Service::Bus) {
                 services::Status::Elsewhere(_) => {
@@ -245,24 +283,14 @@ impl super::Panels {
                 }
                 _ => "The bus isn't running.",
             };
-            return vec![EnvRow::Line(why.into())];
+            return text.wrap(why, w).into_iter().map(EnvRow::Line).collect();
         };
         let mut rows = vec![EnvRow::Header(format!(
             "Connected programs: {}",
             snap.peers.len()
         ))];
-        rows.extend(snap.peers.into_iter().map(|p| {
-            let program = std::path::Path::new(&p.program)
-                .file_name()
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            let who = if program.is_empty() {
-                format!("{}  PID {}", p.name, p.pid)
-            } else {
-                format!("{}  {program} ({})", p.name, p.pid)
-            };
-            EnvRow::Item(who, peer_activity(&p))
-        }));
+        let peers = snap.peers.iter().map(peer_entry).collect();
+        rows.extend(entry_rows(peers, text, w));
         rows.push(EnvRow::Header(format!(
             "Asked for, but nobody provides: {}",
             snap.missing.len()
@@ -271,13 +299,16 @@ impl super::Panels {
             rows.push(EnvRow::Line("Nothing so far.".into()));
         } else {
             rows.extend(
-                snap.missing
-                    .iter()
-                    .map(|m| EnvRow::Item(m.name.clone(), missing_detail(m))),
+                text.wrap(
+                    "simplewm doesn't start programs on demand, so these stay unanswered.",
+                    w - NOTE_INDENT,
+                )
+                .into_iter()
+                .map(EnvRow::Note),
             );
-            rows.push(EnvRow::Line(
-                "simplewm doesn't start programs on demand, so these stay unanswered.".into(),
-            ));
+            rows.push(EnvRow::Line(String::new()));
+            let missing = snap.missing.iter().map(missing_entry).collect();
+            rows.extend(entry_rows(missing, text, w));
         }
         rows
     }
@@ -295,7 +326,7 @@ impl super::Panels {
         elems: &mut Vec<CustomElement>,
     ) {
         let l = bus_layout(self.content_rect(PanelId::Bus));
-        let rows = self.bus_rows();
+        let rows = self.bus_rows(text, l.list);
         self.bus_list.set(rows, l.list);
         // Buffers: Start/Stop, Log, separator.
         let solids = bufs(&mut self.bus_solids, 3);
@@ -407,6 +438,40 @@ impl super::Panels {
             text,
             renderer,
             elems,
+        );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn describes_a_missing_name() {
+        let m = crate::bus::Missing {
+            name: "org.freedesktop.portal.Desktop".into(),
+            askers: vec!["pipewire".into(), "firefox".into()],
+            times: 3,
+            how: "called IsStarted".into(),
+            watchers: vec!["wireplumber".into()],
+        };
+        let e = missing_entry(&m);
+        assert_eq!(e.title, "org.freedesktop.portal.Desktop");
+        assert_eq!(
+            e.notes,
+            [
+                "Asked for by pipewire, firefox (3 times, last called IsStarted)",
+                "Waited for by wireplumber",
+            ]
+        );
+        let once = crate::bus::Missing {
+            times: 1,
+            watchers: vec![],
+            ..m
+        };
+        assert_eq!(
+            missing_entry(&once).notes,
+            ["Asked for by pipewire, firefox (called IsStarted)"]
         );
     }
 }

@@ -20,6 +20,8 @@ use crate::{
 
 pub(super) const ENV_ROW_H: i32 = 20;
 const ENV_KEY_W: i32 = 230;
+/// How far an `EnvRow::Note` is indented past a `Line`.
+pub(super) const NOTE_INDENT: i32 = 20;
 
 // Environment applet
 pub(super) const ENV_W: i32 = 700;
@@ -39,6 +41,8 @@ pub enum EnvRow {
     Item(String, String),
     /// Text across the whole row.
     Line(String),
+    /// Dimmer text indented under the line above it.
+    Note(String),
 }
 
 /// A scrollable list of rows.
@@ -128,6 +132,11 @@ impl RowList {
                 EnvRow::Line(line) => {
                     let line = text.fit(line, text_w - 12);
                     elems.extend(ui::text_in(text, renderer, &line, r.loc.x + 6, r));
+                }
+                EnvRow::Note(note) => {
+                    let note = text.fit(note, text_w - 12 - NOTE_INDENT);
+                    let x = r.loc.x + 6 + NOTE_INDENT;
+                    elems.extend(ui::text_in_alpha(text, renderer, &note, x, r, 0.7));
                 }
             }
         }
