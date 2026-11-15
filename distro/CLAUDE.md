@@ -23,7 +23,7 @@ changing it. This file covers what the scripts don't make obvious.
   activation: `/usr/share/dbus-1` is in `REMOVE_DIRS`, so the build stops if a package
   adds a service there.
 - **Apps:** Firefox (`firefox.js` turns off tabs in the title bar and sends file dialogs
-  to simplewm's portal), alacritty, and Gram (built from source by `build-gram.sh`).
+  to simplewm's portal), alacritty, Blender (Wayland, no X11), and Gram (built from source by `build-gram.sh`).
 - **Development tools are in the image:** rustup with `RUST_VERSION` in the user's home,
   gcc/build-base, Go, Python, GNU grep/sed, and the `-dev` packages simplewm, the kernel
   and Gram need. The whole project builds natively here.
