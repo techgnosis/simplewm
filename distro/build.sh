@@ -27,7 +27,9 @@ cd "$PROJECT/distro"
 # there's none. wayland-utils (wayland-info) is for checking what
 # simplewm offers apps. Blender runs on Wayland by itself (it loads the Wayland
 # libraries at run time and uses simplewm's server-side title bars, so it needs no
-# libdecor); with no DISPLAY set it never tries X11. e2fsprogs (with resize2fs and tune2fs, in -extra), sfdisk and lsblk
+# libdecor); with no DISPLAY set it never tries X11. It uses the system Python, and
+# py3-numpy is for its glTF, FBX and Cycles code (blender.org's builds bundle numpy).
+# e2fsprogs (with resize2fs and tune2fs, in -extra), sfdisk and lsblk
 # are for installing the system into its other slot from itself (install.sh), efibootmgr
 # for the firmware's boot entries (efibootmgr.sh). The last
 # group is for development: Rust (rustup, which the build
@@ -74,6 +76,7 @@ PACKAGES="
     alacritty
     firefox
     blender
+    py3-numpy
     hicolor-icon-theme
     vulkan-loader
     mesa-vulkan-ati
