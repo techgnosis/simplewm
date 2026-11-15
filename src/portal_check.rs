@@ -40,7 +40,7 @@ fn item(k: &str, v: impl Into<String>) -> EnvRow {
 }
 
 /// Problems found, shown in the summary at the top: a short description of each
-/// and what to do about it. Keep both short; rows are cut off at the window edge.
+/// and what to do about it. The applet wraps long lines.
 #[derive(Default)]
 struct Problems(Vec<(String, String)>);
 
@@ -57,6 +57,7 @@ fn run() -> Vec<EnvRow> {
     let nested = matches!(status.state, portal::State::Off);
     portal_rows(&status, &mut rows, &mut problems);
     zbus::block_on(bus_rows(nested, &mut rows, &mut problems));
+    request_rows(&status, &mut rows);
 
     let checked = crate::clock::now("%H:%M:%S");
     let mut out = vec![EnvRow::Header("Summary".into())];
@@ -71,7 +72,7 @@ fn run() -> Vec<EnvRow> {
             )));
             for (what, fix) in problems.0 {
                 out.push(EnvRow::Line(format!("• {what}")));
-                out.push(EnvRow::Line(format!("    {fix}")));
+                out.push(EnvRow::Note(fix));
             }
         }
     }
@@ -119,16 +120,55 @@ fn portal_rows(status: &portal::Status, rows: &mut Vec<EnvRow>, problems: &mut P
     rows.push(item("State", state));
     rows.push(item("Requests received", status.requests.to_string()));
     rows.push(item(
-        "Last request",
-        status
-            .last_request
-            .clone()
-            .unwrap_or_else(|| "(none yet)".into()),
-    ));
-    rows.push(item(
         "Session bus address",
         services::bus_address().unwrap_or_else(|| "(none: XDG_RUNTIME_DIR is not set)".into()),
     ));
+}
+
+// --- requests ----------------------------------------------------------------------
+
+/// Every file dialog request kept, newest first: when, what and who on a line, then
+/// the title and how it ended under it. The applet wraps the lines to fit.
+fn request_rows(status: &portal::Status, rows: &mut Vec<EnvRow>) {
+    rows.push(EnvRow::Header("Requests".into()));
+    if status.recent.is_empty() {
+        rows.push(EnvRow::Line("None yet.".into()));
+        return;
+    }
+    let shown = status.recent.len() as u64;
+    if status.requests > shown {
+        rows.push(EnvRow::Note(format!(
+            "The latest {shown} of {}.",
+            status.requests
+        )));
+    }
+    for r in status.recent.iter().rev() {
+        let what = match r.kind {
+            "Save" => "Save a file",
+            _ => "Open a file",
+        };
+        rows.push(EnvRow::Line(format!("{}   {what}, for {}", r.time, r.app)));
+        if !r.title.is_empty() {
+            rows.push(EnvRow::Note(format!("Title: {}", r.title)));
+        }
+        match &r.outcome {
+            portal::Outcome::Waiting => rows.push(EnvRow::Note("Waiting for an answer".into())),
+            portal::Outcome::Chosen(paths) if paths.is_empty() => {
+                rows.push(EnvRow::Note("Chose nothing".into()))
+            }
+            portal::Outcome::Chosen(paths) => {
+                for path in paths {
+                    rows.push(EnvRow::Note(format!("Chose {}", path.display())));
+                }
+            }
+            portal::Outcome::Cancelled => rows.push(EnvRow::Note("Cancelled".into())),
+            portal::Outcome::Closed => {
+                rows.push(EnvRow::Note("Closed by the app before an answer".into()))
+            }
+            portal::Outcome::Failed => rows.push(EnvRow::Note("Failed".into())),
+        }
+        rows.push(EnvRow::Line(String::new()));
+    }
 }
 
 // --- session bus -----------------------------------------------------------------

@@ -141,14 +141,42 @@ pub struct Status {
     pub state: State,
     /// File dialog requests received since startup.
     pub requests: u64,
-    /// The most recent request and how it ended.
-    pub last_request: Option<String>,
+    /// The latest requests (up to `KEPT_REQUESTS`), oldest first.
+    pub recent: Vec<RequestRecord>,
+}
+
+/// How many requests the status keeps for the applet.
+const KEPT_REQUESTS: usize = 100;
+
+/// One file dialog request, for the Desktop Portal applet.
+#[derive(Clone)]
+pub struct RequestRecord {
+    id: u64,
+    /// When it came in, `HH:MM:SS`.
+    pub time: String,
+    /// "Open" or "Save".
+    pub kind: &'static str,
+    /// The dialog title the app asked for.
+    pub title: String,
+    /// The calling program.
+    pub app: String,
+    pub outcome: Outcome,
+}
+
+#[derive(Clone)]
+pub enum Outcome {
+    Waiting,
+    Chosen(Vec<PathBuf>),
+    Cancelled,
+    /// The app closed the dialog (or left) before an answer.
+    Closed,
+    Failed,
 }
 
 static STATUS: Mutex<Status> = Mutex::new(Status {
     state: State::Off,
     requests: 0,
-    last_request: None,
+    recent: Vec::new(),
 });
 
 pub fn status() -> Status {
@@ -373,12 +401,15 @@ async fn finish(conn: &Connection, p: Pending, result: PickResult) {
         .object_server()
         .remove::<Request, _>(p.handle.as_ref())
         .await;
-    note_outcome(match &result {
-        PickResult::Chosen(paths) => format!("chose {} item(s)", paths.len()),
-        PickResult::Cancelled => "cancelled".into(),
-        PickResult::Failed if p.closed.load(Ordering::Relaxed) => "closed".into(),
-        PickResult::Failed => "failed".into(),
-    });
+    note_outcome(
+        p.id,
+        match &result {
+            PickResult::Chosen(paths) => Outcome::Chosen(paths.clone()),
+            PickResult::Cancelled => Outcome::Cancelled,
+            PickResult::Failed if p.closed.load(Ordering::Relaxed) => Outcome::Closed,
+            PickResult::Failed => Outcome::Failed,
+        },
+    );
     if p.closed.load(Ordering::Relaxed) {
         return;
     }
@@ -542,7 +573,7 @@ impl FileChooser {
         if server.at(handle.as_ref(), request).await?.is_some() {
             return Err(fdo::Error::Failed("request handle already in use".into()));
         }
-        note_request(ask.kind, &app, &ask.title);
+        note_request(id, ask.kind, &app, &ask.title);
 
         let (filters, current_filter) = parse_filters(options);
         let (reply, answer) = oneshot::channel();
@@ -561,7 +592,7 @@ impl FileChooser {
         };
         if self.tx.send(PortalEvent::Pick(pick)).is_err() {
             let _ = server.remove::<Request, _>(handle.as_ref()).await;
-            note_outcome("failed".into());
+            note_outcome(id, Outcome::Failed);
             return Err(fdo::Error::Failed("simplewm is shutting down".into()));
         }
         if let Ok(mut pending) = self.shared.pending.lock() {
@@ -599,20 +630,28 @@ async fn app_name(conn: &Connection, sender: &OwnedUniqueName) -> String {
 }
 
 /// Record a request in the status (finished by `note_outcome`).
-fn note_request(kind: &str, app: &str, title: &str) {
-    let time = crate::clock::now("%H:%M:%S");
+fn note_request(id: u64, kind: &'static str, app: &str, title: &str) {
+    let record = RequestRecord {
+        id,
+        time: crate::clock::now("%H:%M:%S"),
+        kind,
+        title: title.to_string(),
+        app: app.to_string(),
+        outcome: Outcome::Waiting,
+    };
     update_status(|s| {
         s.requests += 1;
-        s.last_request = Some(format!("{time} {kind} \"{title}\" from {app}: waiting"));
+        s.recent.push(record);
+        if s.recent.len() > KEPT_REQUESTS {
+            s.recent.remove(0);
+        }
     });
 }
 
-fn note_outcome(outcome: String) {
+fn note_outcome(id: u64, outcome: Outcome) {
     update_status(|s| {
-        if let Some(last) = &mut s.last_request
-            && let Some(stem) = last.strip_suffix("waiting")
-        {
-            *last = format!("{stem}{outcome}");
+        if let Some(r) = s.recent.iter_mut().find(|r| r.id == id) {
+            r.outcome = outcome;
         }
     });
 }

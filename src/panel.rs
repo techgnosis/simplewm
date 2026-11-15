@@ -302,6 +302,9 @@ pub struct Panels {
     env: RowList,
     /// Desktop Portal check results (refreshed on open and by Refresh).
     portal_rows: RowList,
+    /// The Desktop Portal rows as the checks sent them, before `render_portal` wraps them.
+    portal_unwrapped: Vec<EnvRow>,
+    portal_wrapped: bool,
     portal_refresh_buf: Option<SolidColorBuffer>,
     /// Panel with keyboard focus (instead of a client window).
     pub active: Option<PanelId>,
@@ -338,6 +341,8 @@ impl Panels {
             bus_solids: Vec::new(),
             env: RowList::default(),
             portal_rows: RowList::default(),
+            portal_unwrapped: Vec::new(),
+            portal_wrapped: true,
             portal_refresh_buf: None,
             active: None,
             entries,

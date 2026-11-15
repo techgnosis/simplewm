@@ -160,6 +160,22 @@ impl RowList {
     }
 }
 
+/// `rows` with each `Line` and `Note` wrapped to `w` pixels (as wide as `RowList` draws
+/// a line next to its scrollbar is `viewport width - SCROLLBAR_W - 20`).
+pub(super) fn wrap_rows(rows: &[EnvRow], text: &TextRenderer, w: i32) -> Vec<EnvRow> {
+    let mut out = Vec::with_capacity(rows.len());
+    for row in rows {
+        match row {
+            EnvRow::Line(l) => out.extend(text.wrap(l, w).into_iter().map(EnvRow::Line)),
+            EnvRow::Note(n) => {
+                out.extend(text.wrap(n, w - NOTE_INDENT).into_iter().map(EnvRow::Note))
+            }
+            other => out.push(other.clone()),
+        }
+    }
+    out
+}
+
 impl super::Panels {
     /// Replace the Environment rows (done each time the window is opened).
     pub fn set_environment(&mut self, rows: Vec<EnvRow>) {
@@ -167,10 +183,10 @@ impl super::Panels {
         self.env.set(rows, vp);
     }
 
-    /// Replace the Desktop Portal rows (check results).
+    /// Replace the Desktop Portal rows (check results). They're wrapped when next drawn.
     pub fn set_portal_rows(&mut self, rows: Vec<EnvRow>) {
-        let vp = self.portal_viewport();
-        self.portal_rows.set(rows, vp);
+        self.portal_unwrapped = rows;
+        self.portal_wrapped = false;
     }
 
     fn env_viewport(&self) -> Rect {
@@ -252,6 +268,12 @@ impl super::Panels {
     ) {
         let vp = self.portal_viewport();
         let refresh = self.portal_refresh();
+        if !self.portal_wrapped {
+            let w = vp.size.w - SCROLLBAR_W - 8 - 12;
+            let rows = wrap_rows(&self.portal_unwrapped, text, w);
+            self.portal_rows.set(rows, vp);
+            self.portal_wrapped = true;
+        }
         self.portal_rows.render(
             vp,
             &mut self.windows[PanelId::Portal as usize].solids,
