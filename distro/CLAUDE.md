@@ -148,7 +148,8 @@ There's no bootloader: firmware boot entries start our kernels directly.
   and `target/`.
 - The cycle: on one slot, run `distro/build.sh`, then `sudo distro/install.sh` (which
   picks the slot that isn't running and refuses the running one), then reboot into the
-  other slot.
+  other slot. `distro/check.sh` shows which build each slot holds and which is running
+  (`sudo` to read the other slot too).
 - Partitions are found by GPT name and never by `sdX` (`disk.sh`). Each slot gets its own
   filesystem UUID and label at install.
 - `install.sh` and `efibootmgr.sh` need root, so the user runs them (e.g.
