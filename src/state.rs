@@ -456,13 +456,28 @@ impl State {
         {
             cmd.env("DBUS_SESSION_BUS_ADDRESS", bus);
         }
-        if let Err(err) = cmd
+        let mut child = match cmd
             .env("WAYLAND_DISPLAY", &self.socket_name)
             .env("XDG_CURRENT_DESKTOP", "simplewm")
             .env_remove("DISPLAY")
             .spawn()
         {
-            tracing::error!(?err, command, "failed to spawn");
+            Ok(child) => child,
+            Err(err) => {
+                tracing::error!(?err, command, "failed to spawn");
+                return;
+            }
+        };
+        // Reap it when it exits, or it stays a zombie until simplewm quits. A catch-all
+        // reaper would steal the exit statuses `services.rs` waits for.
+        let reaper = std::thread::Builder::new()
+            .name("reap".into())
+            .stack_size(64 * 1024)
+            .spawn(move || {
+                let _ = child.wait();
+            });
+        if let Err(err) = reaper {
+            tracing::warn!(?err, command, "can't watch for it to exit");
         }
     }
 
