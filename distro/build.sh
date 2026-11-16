@@ -143,11 +143,15 @@ TIME_ZONE=America/Los_Angeles
 # same as simplewm's rust-version.
 RUST_VERSION=1.100
 
-# What the system doesn't need, removed at the end of the build (see "A smaller
-# filesystem" in CLAUDE.md for why each goes). Nothing can bring them back: there's no
+# What the system doesn't need, removed at the end of the build (see "Trimming" in
+# CLAUDE.md). Nothing can bring them back: there's no
 # package manager in the system.
 #
-# REMOVE: files and folders deleted with whatever is in them.
+# REMOVE: files and folders deleted with whatever is in them. Comments can't go inside
+# the lists. There's no system shell profile (/etc/profile, profile.d, bash): simplewm-init
+# sets PATH, LANG and PAGER, and the prompt is in the user's ~/.bashrc. musl has the
+# protocols built in, ports are given as numbers (/etc/services), and nothing checks
+# /etc/shells.
 REMOVE="
     /etc/inittab
     /etc/fstab
@@ -170,8 +174,13 @@ REMOVE="
     /etc/busybox-paths.d
     /etc/xdg/autostart
     /etc/xdg/Xwayland-session.d
-    /etc/profile.d/README
-    /etc/profile.d/color_prompt.sh.disabled
+    /etc/profile
+    /etc/profile.d
+    /etc/bash
+    /etc/debuginfod
+    /etc/protocols
+    /etc/services
+    /etc/shells
 
     /usr/lib/udev/hwdb.d
     /usr/libexec/pipewire-launcher

@@ -483,6 +483,8 @@ fn user_command(program: &Path, user: &Account, runtime: &Path, tty: Option<&str
         .env("LOGNAME", &user.name)
         .env("SHELL", &user.shell)
         .env("PATH", PATH)
+        .env("LANG", "C.UTF-8")
+        .env("PAGER", "less")
         .env("XDG_RUNTIME_DIR", runtime)
         .current_dir(&user.home);
     let (uid, gid, groups) = (user.uid, user.gid, user.groups.clone());
@@ -519,9 +521,9 @@ fn user_command(program: &Path, user: &Account, runtime: &Path, tty: Option<&str
 }
 
 /// simplewm as the user, its output appended to ~/simplewm.log. It goes through the
-/// user's login shell (which replaces itself with simplewm), so it gets what the login
-/// profile sets (LANG and so on), exactly like running `simplewm` in the shell given
-/// after failures.
+/// user's login shell (which replaces itself with simplewm), so it gets what the user's
+/// ~/.profile sets, exactly like running `simplewm` in the shell given after failures.
+/// There's no /etc/profile: the system-wide variables are set here.
 fn spawn_simplewm(user: &Account, runtime: &Path) -> io::Result<i32> {
     let mut cmd = user_command(&user.shell, user, runtime, None);
     cmd.args(["-l", "-c", "exec simplewm"]).stdin(Stdio::null());

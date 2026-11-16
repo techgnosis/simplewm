@@ -27,7 +27,9 @@ changing it. This file covers what the scripts don't make obvious.
 - **Development tools are in the image:** rustup with `RUST_VERSION` in the user's home,
   gcc/build-base, Go, Python, GNU grep/sed, and the `-dev` packages simplewm, the kernel
   and Gram need. The whole project builds natively here.
-- `/bin/sh` is busybox; bash is the login shell. Time zone: one zone file
+- `/bin/sh` is busybox; bash is the login shell. There's no `/etc/profile` or system
+  bashrc: simplewm-init sets PATH, LANG and PAGER, and the user's `~/.profile` and
+  `~/.bashrc` (on the home partition) do the rest, the prompt included. Time zone: one zone file
   (`TIME_ZONE`) unpacked to `/etc/localtime`. The hardware clock is UTC. Nothing syncs
   the clock.
 - Accounts: only `root` (password locked) and the user (UID 1000, in seat, audio, video,
