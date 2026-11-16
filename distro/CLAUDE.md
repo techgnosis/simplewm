@@ -68,9 +68,11 @@ from scratch, trims it, and writes `out/root.img` (16 GB sparse ext4) and `out/v
 
 - **Where it runs** (`where.sh`): natively in the distro, which is the normal way, or on
   any other host, where it re-runs itself in an Alpine podman container
-  (`container.sh`). Natively, everything runs as the user except the root filesystem
-  part, which re-runs as `sudo sh distro/build.sh root-part`. Claude can't type the
-  password, so the user runs that part.
+  (`container.sh`). It needs no password: natively, the root filesystem part re-runs
+  in a user namespace (`unshare -r -m sh distro/build.sh root-part`), where files the
+  user makes look root's. That namespace maps only the user, so it can't chown to UID
+  1000: adduser runs with `-H`, and the image's home gets its owner from one `debugfs`
+  run after `mkfs.ext4`. Only `install.sh` needs root.
 - **Packages are verified against keys in git** (`keys/`, Alpine's x86_64 keys). A new
   Alpine key stops the build with "UNTRUSTED signature": check it against aports before
   adding it. Natively apk is `apk.static`, pinned by version and SHA256 in `apk.sh`.

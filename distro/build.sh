@@ -8,11 +8,13 @@
 #   distro/out/root.img           distro/root/ as an ext4 disk image
 #
 # Run it on the host (it re-runs itself inside the Alpine container, container.sh) or in
-# the distro (natively, see where.sh). In the distro, the part that installs the root
-# filesystem needs real root (files owned by root, setuid sudo, chroot): build.sh re-runs
-# itself through sudo for that part only (`build.sh root-part`, asking for your password
-# once), and everything else, the compiling included, runs as you. In the container,
-# podman's root does it all.
+# the distro (natively, see where.sh). Nothing needs a password. In the distro, the part
+# that installs the root filesystem (files owned by root, setuid sudo, chroot) re-runs
+# itself in a user namespace (`unshare -r -m sh build.sh root-part`), where you are root
+# and the files you make look root's; on disk they stay yours. In the container,
+# podman's root does it all. Either way, the files that belong to the user inside the
+# image get their owner from debugfs, after mkfs.ext4 (a namespace that maps only you
+# can't chown to any other uid).
 # Each build starts from an empty root, so the image's home (simplewm's settings) starts
 # empty too. Downloaded packages are kept in distro/cache/.
 set -eu
@@ -447,7 +449,10 @@ echo >> "$ROOT/etc/machine-id"
 
 # bash is the login shell (root's too); /bin/sh stays busybox for scripts.
 sed -i 's|^root:\(.*\):/bin/sh$|root:\1:/bin/bash|' "$ROOT/etc/passwd"
-chroot "$ROOT" adduser -D -u 1000 -s /bin/bash -g "$USER_NAME" "$USER_NAME"
+# -H: adduser would chown the home it makes to the user, which the namespace can't; it's
+# made here instead, and given to the user in the image (see "owners" below).
+chroot "$ROOT" adduser -D -H -u 1000 -s /bin/bash -g "$USER_NAME" "$USER_NAME"
+mkdir -p "$ROOT/home/$USER_NAME"
 for g in $USER_GROUPS; do
     chroot "$ROOT" addgroup "$USER_NAME" "$g"
 done
@@ -473,12 +478,9 @@ sed -i 's/^root:[^:]*:/root:*:/' "$ROOT/etc/shadow"
 
 echo "== Rust $RUST_VERSION for $USER_NAME"
 cp -a "$RUST_HOME/.rustup" "$RUST_HOME/.cargo" "$ROOT/home/$USER_NAME/"
-chroot "$ROOT" chown -R "$USER_NAME:$USER_NAME" "/home/$USER_NAME/.rustup" \
-    "/home/$USER_NAME/.cargo"
 # ~/.cargo/bin on PATH for login shells (simplewm is started through one, so its apps
 # get it too).
 echo '. "$HOME/.cargo/env"' > "$ROOT/home/$USER_NAME/.profile"
-chroot "$ROOT" chown "$USER_NAME:$USER_NAME" "/home/$USER_NAME/.profile"
 
 echo "== trimming"
 # REMOVE entries may be patterns (gcc's folders are named after its version). One that
@@ -565,13 +567,39 @@ used=$(du -sm "$ROOT" | cut -f1)
 size=16384
 [ "$size" -gt $((used * 2)) ] || size=$((used * 2))
 mkfs.ext4 -q -L simplewm -d "$ROOT" "$OUT/root.img" "${size}M"
-echo "== root ${used} MB, image ${size} MB"
 
-# Through sudo in the distro: give out/ (the image) and cache/ (apk's downloads) back to
-# the user, so their own builds can write there.
-if [ -n "${SUDO_UID:-}" ]; then
-    chown -R "$SUDO_UID:$SUDO_GID" "$OUT" "$CACHE"
+echo "== owners"
+# Everything in the image is root's so far. The user's home (and everything in it) is
+# theirs: one debugfs run sets each inode's uid and gid, with the numbers adduser wrote.
+# A new package file owned by anyone but root:root needs a line here too; to find them:
+#   for f in cache/*.apk; do tar -tvzf "$f" | awk '$2 != "root/root"'; done
+ids=$(awk -F: -v u="$USER_NAME" '$1 == u { print $3, $4 }' "$ROOT/etc/passwd")
+uid=${ids% *}
+gid=${ids#* }
+commands=$(mktemp)
+find "$ROOT/home/$USER_NAME" | while IFS= read -r file; do
+    path=${file#"$ROOT"}
+    case $path in
+        *'"'*)
+            echo "can't give $path an owner in the image (a \" in its name)" >&2
+            exit 1
+            ;;
+    esac
+    printf 'sif "%s" uid %s\nsif "%s" gid %s\n' "$path" "$uid" "$path" "$gid"
+done > "$commands"
+# The one package file not owned by root:root (alpine-baselayout-data's /etc/shadow is
+# root:shadow): apk's chgrp failed quietly in the namespace.
+shadow_gid=$(awk -F: '$1 == "shadow" { print $3 }' "$ROOT/etc/group")
+echo "sif /etc/shadow gid $shadow_gid" >> "$commands"
+# debugfs exits 0 even when a command fails: anything it says besides its banner is one.
+errors=$(debugfs -w -f "$commands" "$OUT/root.img" 2>&1 >/dev/null | grep -v '^debugfs ' || true)
+rm -f "$commands"
+if [ -n "$errors" ]; then
+    echo "debugfs couldn't set the owners in the image:" >&2
+    echo "$errors" >&2
+    exit 1
 fi
+echo "== root ${used} MB, image ${size} MB"
 }
 
 if [ "${1:-}" = root-part ]; then
@@ -583,11 +611,19 @@ sh build-simplewm.sh
 sh build-gram.sh
 
 echo "== tools"
-# mkfs.ext4 for the image: the container adds it, the distro has it (e2fsprogs).
+# mkfs.ext4 and debugfs for the image, unshare for the namespace: the container adds
+# them, the distro has them (e2fsprogs, e2fsprogs-extra, busybox).
 if [ -n "$NATIVE" ]; then
-    need mkfs.ext4
+    need mkfs.ext4 debugfs unshare
+    # A root/ left by a build from before the namespace (when this part ran through
+    # sudo) is really root's, and the namespace can't delete it.
+    if [ -e "$ROOT" ] && [ "$(stat -c %u "$ROOT")" != "$(id -u)" ]; then
+        echo "distro/root/ is owned by another user (an older build ran as root);" \
+            "remove it once with: sudo rm -rf $ROOT" >&2
+        exit 1
+    fi
 else
-    alpine_tools e2fsprogs
+    alpine_tools e2fsprogs e2fsprogs-extra
 fi
 # The one console font the system gets (unpacked in the root part).
 alpine_fetch "$CACHE" font-terminus
@@ -612,8 +648,8 @@ fi
 find "$RUST_HOME" -type d -perm -2000 -exec chmod g-s {} +
 
 if [ -n "$NATIVE" ]; then
-    echo "== root part, through sudo"
-    sudo sh "$PROJECT/distro/build.sh" root-part
+    echo "== root part, in a user namespace"
+    unshare -r -m sh "$PROJECT/distro/build.sh" root-part
 else
     root_part
 fi
