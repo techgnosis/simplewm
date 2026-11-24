@@ -26,7 +26,7 @@ changing it. This file covers what the scripts don't make obvious.
   to simplewm's portal), alacritty, Blender (Wayland, no X11; numpy comes from `py3-numpy`), ffmpeg (the `ffmpeg` and `ffprobe` tools; Blender already brings its libraries), and Gram (built from source by `build-gram.sh`).
 - **Development tools are in the image:** rustup with `RUST_VERSION` in the user's home,
   gcc/build-base, Go, Python, GNU grep/sed, and the `-dev` packages simplewm, the kernel
-  and Gram need. The whole project builds natively here.
+  and Gram need, plus `alsa-lib-dev` (ALSA headers for your own programs). The whole project builds natively here.
 - `/bin/sh` is busybox; bash is the login shell. There's no `/etc/profile` or system
   bashrc: simplewm-init sets PATH, LANG and PAGER, and the user's `~/.profile` and
   `~/.bashrc` (on the home partition) do the rest, the prompt included. Time zone: one zone file

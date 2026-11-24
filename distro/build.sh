@@ -124,6 +124,7 @@ PACKAGES="
     zstd-dev
     sqlite-dev
     vulkan-loader-dev
+    alsa-lib-dev
 
     font-dejavu
     wayland-utils
