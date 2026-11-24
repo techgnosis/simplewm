@@ -27,9 +27,11 @@ cd "$PROJECT/distro"
 # What goes into the root filesystem. Vulkan (the loader, radv for AMD cards, lavapipe
 # for software rendering in the VM) is for Gram, which draws with Vulkan, or OpenGL if
 # there's none. wayland-utils (wayland-info) is for checking what
-# simplewm offers apps. Blender runs on Wayland by itself (it loads the Wayland
-# libraries at run time and uses simplewm's server-side title bars, so it needs no
-# libdecor); with no DISPLAY set it never tries X11. It uses the system Python, and
+# simplewm offers apps. capitaine-cursors is a cursor theme (1.9 MB, cursors only): apps
+# that draw their own pointer (winit, so Bevy games and Alacritty; GTK) load it from a
+# theme, and with none they show no cursor at all. Blender runs on Wayland by itself
+# (it loads the Wayland libraries at run time and uses simplewm's server-side title
+# bars, so it needs no libdecor); with no DISPLAY set it never tries X11. It uses the system Python, and
 # py3-numpy is for its glTF, FBX and Cycles code (blender.org's builds bundle numpy).
 # e2fsprogs (with resize2fs and tune2fs, in -extra), sfdisk and lsblk
 # are for installing the system into its other slot from itself (install.sh), efibootmgr
@@ -82,6 +84,7 @@ PACKAGES="
     py3-numpy
     ffmpeg
     hicolor-icon-theme
+    capitaine-cursors
     vulkan-loader
     mesa-vulkan-ati
     mesa-vulkan-swrast
@@ -548,6 +551,15 @@ tar -xzf "$(ls -t "$CACHE"/tzdata-*.apk | head -n 1)" -C "$ROOT" \
     "usr/share/zoneinfo/$TIME_ZONE" 2>/dev/null
 mv "$ROOT/usr/share/zoneinfo/$TIME_ZONE" "$ROOT/etc/localtime"
 rm -r "$ROOT/usr/share/zoneinfo"
+# Apps look for the cursor theme named "default" (unless XCURSOR_THEME is set, and
+# simplewm sets no environment variables); point it at Capitaine, which Alpine ships
+# as capitaine-cursors-dark.
+[ -d "$ROOT/usr/share/icons/capitaine-cursors-dark/cursors" ] || {
+    echo "capitaine-cursors-dark is missing from /usr/share/icons" >&2
+    exit 1
+}
+mkdir -p "$ROOT/usr/share/icons/default"
+printf '[Icon Theme]\nInherits=capitaine-cursors-dark\n' > "$ROOT/usr/share/icons/default/index.theme"
 for dir in $REMOVE_DIRS; do
     [ -e "$ROOT$dir" ] || continue
     find "$ROOT$dir" -depth -type d -empty -delete

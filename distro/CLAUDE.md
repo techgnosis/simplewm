@@ -26,6 +26,9 @@ changing it. This file covers what the scripts don't make obvious.
   adds a service there.
 - **Apps:** Firefox (`firefox.js` turns off tabs in the title bar and sends file dialogs
   to simplewm's portal), alacritty, Blender (Wayland, no X11; numpy comes from `py3-numpy`), ffmpeg (the `ffmpeg` and `ffprobe` tools; Blender already brings its libraries), and Gram (built from source by `build-gram.sh`).
+- **Cursor theme:** `capitaine-cursors` (Alpine ships it as `capitaine-cursors-dark`), made
+  the `default` theme by `/usr/share/icons/default/index.theme`. Apps that draw their own
+  pointer (winit/Bevy, GTK) show no cursor without a theme.
 - **Development tools are in the image:** rustup with `RUST_VERSION` in the user's home,
   gcc/build-base, Go, Python, GNU grep/sed, and the `-dev` packages simplewm, the kernel
   and Gram need, plus `alsa-lib-dev` (ALSA headers and pkg-config files). The whole project builds natively here.
