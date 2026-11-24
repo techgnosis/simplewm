@@ -63,6 +63,7 @@ PACKAGES="
     pipewire
     pipewire-pulse
     pipewire-tools
+    pipewire-alsa
     wireplumber
 
     iproute2
@@ -384,7 +385,6 @@ REMOVE_DIRS="
 
     /etc/opt
     /etc/xdg
-    /etc/alsa
     /etc/udev/rules.d
     /etc/modules-load.d
     /etc/sysctl.d
