@@ -212,7 +212,6 @@ REMOVE="
 
     /var/spool
     /var/log/apk.log
-    /dev/null
 
     /etc/modprobe.d
     /etc/pulse
