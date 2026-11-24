@@ -17,6 +17,8 @@ changing it. This file covers what the scripts don't make obvious.
   at build time. Don't switch to libudev-zero: with it PipeWire finds no sound cards,
   because nothing sets `SOUND_INITIALIZED`. The network card is `eth0`
   (`eudev-netifnames` isn't installed).
+- **Sound:** PipeWire with pipewire-pulse and pipewire-alsa, so programs that use ALSA
+  directly play through PipeWire (its links in `/etc/alsa/conf.d` make it ALSA's default).
 - **Session bus:** simplewm itself. The `dbus` package (dbus-daemon and its tools) isn't
   installed; only `dbus-libs` comes in, for Firefox. `gdbus` (GLib) is the command-line
   client. `/etc/machine-id` is written by `build.sh`. There's no system bus and no D-Bus
