@@ -79,6 +79,7 @@ PACKAGES="
     firefox
     blender
     py3-numpy
+    ffmpeg
     hicolor-icon-theme
     vulkan-loader
     mesa-vulkan-ati
